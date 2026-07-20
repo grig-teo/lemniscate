@@ -41,7 +41,7 @@ describe('enqueueGenerateProposalsNow', () => {
     expect(mocks.add).toHaveBeenCalledWith(
       'generate-proposals',
       { repositoryId: 'repo-1' },
-      expect.objectContaining({ jobId: 'generate-proposals:repo-1' }),
+      expect.objectContaining({ jobId: 'generate-proposals-repo-1' }),
     );
   });
 

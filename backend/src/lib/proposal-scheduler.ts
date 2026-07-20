@@ -61,11 +61,13 @@ export async function enqueueProposalTopUps(): Promise<void> {
 }
 
 // Enqueues a 'run-task' job. jobId dedupes concurrent enqueues of the same task.
+// BullMQ rejects custom jobIds containing ':' unless they have exactly 3
+// segments (legacy repeat-job format), so all our jobIds use dashes.
 export async function enqueueRunTask(taskId: string): Promise<void> {
   await getAgentTasksQueue().add(
     'run-task',
     { taskId },
-    { jobId: `run-task:${taskId}`, removeOnComplete: 100, removeOnFail: 100 },
+    { jobId: `run-task-${taskId}`, removeOnComplete: 100, removeOnFail: 100 },
   );
 }
 
@@ -77,7 +79,7 @@ export async function enqueueGenerateProposalsNow(repositoryId: string): Promise
   await getAgentTasksQueue().add(
     'generate-proposals',
     { repositoryId },
-    { jobId: `generate-proposals:${repositoryId}`, removeOnComplete: true, removeOnFail: true },
+    { jobId: `generate-proposals-${repositoryId}`, removeOnComplete: true, removeOnFail: true },
   );
 }
 
@@ -87,6 +89,6 @@ export async function enqueueReviewTask(taskId: string, attempt = 0): Promise<vo
   await getAgentTasksQueue().add(
     'review-pr',
     { taskId, attempt },
-    { jobId: `review-pr:${taskId}:${attempt}`, removeOnComplete: 100, removeOnFail: 100 },
+    { jobId: `review-pr-${taskId}-${attempt}`, removeOnComplete: 100, removeOnFail: 100 },
   );
 }
