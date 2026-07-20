@@ -3,7 +3,7 @@ import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { config } from '../config.js';
 import { encrypt } from '../lib/crypto.js';
-import { fetchProviderProfile, ProviderError, type ProviderName } from '../lib/git-providers.js';
+import { fetchProviderProfile, hasAnyScope, ProviderError, type ProviderName } from '../lib/git-providers.js';
 import { prisma } from '../lib/prisma.js';
 import { syncConnectionByIdBestEffort } from '../lib/repo-sync.js';
 import { errorMessage } from '../lib/utils.js';
@@ -131,7 +131,7 @@ async function exchangeCode(
   provider: OAuthProviderName,
   providerConfig: OAuthProviderConfig,
   code: string,
-): Promise<string> {
+): Promise<{ accessToken: string; scope?: string }> {
   const response = await fetch(providerConfig.tokenUrl, {
     method: 'POST',
     headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
@@ -139,6 +139,7 @@ async function exchangeCode(
   });
   const data = (await response.json().catch(() => null)) as {
     access_token?: string;
+    scope?: string;
     error?: string;
     error_description?: string;
   } | null;
@@ -148,7 +149,27 @@ async function exchangeCode(
       response.status,
     );
   }
-  return data.access_token;
+  return { accessToken: data.access_token, scope: data.scope };
+}
+
+// The token response echoes the granted scopes. Refuse to store a GitHub
+// token that cannot push (missing `repo` — the classic silent-403 cause),
+// and warn when org repositories will not sync (missing `read:org`).
+function assertGrantedScopes(
+  provider: OAuthProviderName,
+  scope: string | undefined,
+  log: FastifyRequest['log'],
+): void {
+  if (provider !== 'github') return;
+  if (!hasAnyScope(scope, ['repo'])) {
+    throw new ProviderError(
+      `github: OAuth granted scopes (${scope ?? 'none'}) do not include 'repo', so pushes would fail with a 403. ` +
+        `Re-authorize and make sure the OAuth app requests the 'repo' scope.`,
+    );
+  }
+  if (!hasAnyScope(scope, ['read:org'])) {
+    log.warn('github OAuth token has no read:org scope; organization repositories will not sync');
+  }
 }
 
 // Finds the user behind an OAuth connection, or creates a new user plus
@@ -279,7 +300,8 @@ async function handleOAuthCallback(
   reply: FastifyReply,
 ): Promise<FastifyReply> {
   try {
-    const accessToken = await exchangeCode(provider, providerConfig, code);
+    const { accessToken, scope } = await exchangeCode(provider, providerConfig, code);
+    assertGrantedScopes(provider, scope, request.log);
     // OAuth access tokens authenticate as Bearer (matters for GitLab).
     const profile = await fetchProviderProfile(provider, accessToken, null, 'oauth');
     const { userId, connectionId } = await resolveOAuthIdentity(

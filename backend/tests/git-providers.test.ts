@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { encrypt } from '../src/lib/crypto.js';
 import {
+  assertRepoPushAccess,
   cloneUrlWithToken,
   fetchProviderProfile,
   getProviderClient,
@@ -10,7 +11,9 @@ import {
   gitverseApiBase,
   gitverseBase,
   gitverseHeaders,
+  hasAnyScope,
   normalizeGitverseRepo,
+  ProviderError,
 } from '../src/lib/git-providers.js';
 
 // Locking tests for the provider header/base-URL helpers. These were
@@ -22,11 +25,12 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-function jsonResponse(body: unknown, status = 200): Response {
+function jsonResponse(body: unknown, status = 200, headers?: Record<string, string>): Response {
   return {
     ok: status >= 200 && status < 300,
     status,
     statusText: `status ${status}`,
+    headers: new Headers(headers),
     json: async () => body,
     text: async () => JSON.stringify(body),
   } as unknown as Response;
@@ -193,5 +197,141 @@ describe('gitverse API client', () => {
       defaultBranch: 'main',
     });
     expect(repos[100]).toMatchObject({ externalId: '100', defaultBranch: 'dev' });
+  });
+});
+
+describe('assertRepoPushAccess', () => {
+  it('passes when the GitHub token has push permission on the repo', async () => {
+    stubFetch((url) => {
+      expect(url).toBe('https://api.github.com/repos/acme/repo');
+      return jsonResponse({ full_name: 'acme/repo', permissions: { push: true } });
+    });
+    await expect(assertRepoPushAccess('github', 'tok', 'acme/repo')).resolves.toBeUndefined();
+  });
+
+  it('throws an actionable ProviderError when the GitHub token cannot push', async () => {
+    stubFetch(() =>
+      jsonResponse({ full_name: 'acme/repo', permissions: { push: false, pull: true } }),
+    );
+    const err = await assertRepoPushAccess('github', 'tok', 'acme/repo').catch((e) => e);
+    expect(err).toBeInstanceOf(ProviderError);
+    expect(err.message).toContain('acme/repo');
+    expect(err.message).toMatch(/write|push/i);
+  });
+
+  it('propagates the provider error when the repo is not visible to the token', async () => {
+    stubFetch(() => jsonResponse({ message: 'Not Found' }, 404));
+    await expect(assertRepoPushAccess('github', 'tok', 'acme/private')).rejects.toBeInstanceOf(
+      ProviderError,
+    );
+  });
+
+  it('passes for GitLab at developer access level and throws below it', async () => {
+    stubFetch((url) => {
+      expect(url).toBe('https://gitlab.com/api/v4/projects/acme%2Frepo');
+      return jsonResponse({ permissions: { project_access: { access_level: 30 } } });
+    });
+    await expect(assertRepoPushAccess('gitlab', 'tok', 'acme/repo')).resolves.toBeUndefined();
+
+    stubFetch(() =>
+      jsonResponse({ permissions: { project_access: { access_level: 20 } } }),
+    );
+    await expect(assertRepoPushAccess('gitlab', 'tok', 'acme/repo')).rejects.toBeInstanceOf(
+      ProviderError,
+    );
+  });
+
+  it('uses namespace_access for GitLab when project_access is absent', async () => {
+    stubFetch(() =>
+      jsonResponse({
+        permissions: { project_access: null, namespace_access: { access_level: 40 } },
+      }),
+    );
+    await expect(assertRepoPushAccess('gitlab', 'tok', 'acme/repo')).resolves.toBeUndefined();
+  });
+
+  it('throws for GitVerse when permissions say no push, passes when absent', async () => {
+    stubFetch((url) => {
+      expect(url).toBe('https://api.gitverse.ru/repos/acme/repo');
+      return jsonResponse({ full_name: 'acme/repo', permissions: { push: false } });
+    });
+    await expect(assertRepoPushAccess('gitverse', 'tok', 'acme/repo')).rejects.toBeInstanceOf(
+      ProviderError,
+    );
+
+    stubFetch(() => jsonResponse({ full_name: 'acme/repo' }));
+    await expect(assertRepoPushAccess('gitverse', 'tok', 'acme/repo')).resolves.toBeUndefined();
+  });
+});
+
+describe('hasAnyScope', () => {
+  it('parses comma/space separated scope lists', () => {
+    expect(hasAnyScope('repo, read:user, read:org', ['repo'])).toBe(true);
+    expect(hasAnyScope('repo read:user', ['read:org'])).toBe(false);
+    expect(hasAnyScope('', ['repo'])).toBe(false);
+    expect(hasAnyScope(null, ['repo'])).toBe(false);
+  });
+
+  it('accepts any of the wanted scopes', () => {
+    expect(hasAnyScope('public_repo', ['repo', 'public_repo'])).toBe(true);
+    expect(hasAnyScope('read:user', ['repo', 'public_repo'])).toBe(false);
+  });
+});
+
+describe('assertRepoPushAccess github OAuth scopes', () => {
+  it('throws when push permission is present but the repo scope is missing', async () => {
+    stubFetch(() =>
+      jsonResponse(
+        { full_name: 'acme/repo', private: true, permissions: { push: true } },
+        200,
+        { 'x-oauth-scopes': 'read:user, read:org' },
+      ),
+    );
+    const err = await assertRepoPushAccess('github', 'tok', 'acme/repo').catch((e) => e);
+    expect(err).toBeInstanceOf(ProviderError);
+    expect(err.message).toMatch(/repo/);
+    expect(err.message).toMatch(/scope/i);
+  });
+
+  it('passes with the repo scope on a private repo', async () => {
+    stubFetch(() =>
+      jsonResponse(
+        { full_name: 'acme/repo', private: true, permissions: { push: true } },
+        200,
+        { 'x-oauth-scopes': 'repo, read:user' },
+      ),
+    );
+    await expect(assertRepoPushAccess('github', 'tok', 'acme/repo')).resolves.toBeUndefined();
+  });
+
+  it('accepts public_repo scope for a public repo', async () => {
+    stubFetch(() =>
+      jsonResponse(
+        { full_name: 'acme/repo', private: false, permissions: { push: true } },
+        200,
+        { 'x-oauth-scopes': 'public_repo' },
+      ),
+    );
+    await expect(assertRepoPushAccess('github', 'tok', 'acme/repo')).resolves.toBeUndefined();
+  });
+
+  it('requires the full repo scope for a private repo', async () => {
+    stubFetch(() =>
+      jsonResponse(
+        { full_name: 'acme/repo', private: true, permissions: { push: true } },
+        200,
+        { 'x-oauth-scopes': 'public_repo' },
+      ),
+    );
+    await expect(assertRepoPushAccess('github', 'tok', 'acme/repo')).rejects.toBeInstanceOf(
+      ProviderError,
+    );
+  });
+
+  it('relies on permissions alone when no scope header is sent (fine-grained PAT)', async () => {
+    stubFetch(() =>
+      jsonResponse({ full_name: 'acme/repo', private: true, permissions: { push: true } }),
+    );
+    await expect(assertRepoPushAccess('github', 'tok', 'acme/repo')).resolves.toBeUndefined();
   });
 });

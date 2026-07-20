@@ -57,11 +57,16 @@ export class ProviderError extends Error {
   }
 }
 
-async function requestJson(
+interface JsonMeta {
+  data: unknown;
+  headers: Headers;
+}
+
+async function requestJsonMeta(
   url: string,
   headers: Record<string, string>,
   provider: string,
-): Promise<unknown> {
+): Promise<JsonMeta> {
   let response: Response;
   try {
     response = await fetch(url, { headers });
@@ -77,7 +82,27 @@ async function requestJson(
       response.status,
     );
   }
-  return response.json();
+  return { data: await response.json(), headers: response.headers };
+}
+
+async function requestJson(
+  url: string,
+  headers: Record<string, string>,
+  provider: string,
+): Promise<unknown> {
+  return (await requestJsonMeta(url, headers, provider)).data;
+}
+
+// Parses an OAuth scope list ("repo, read:user" or "repo read:user") and
+// reports whether any of the wanted scopes is granted. Single home for scope
+// parsing — used by the push pre-flight and the OAuth exchange validation.
+export function hasAnyScope(
+  granted: string | null | undefined,
+  wanted: string[],
+): boolean {
+  if (!granted) return false;
+  const scopes = granted.split(/[\s,]+/).filter(Boolean);
+  return wanted.some((scope) => scopes.includes(scope));
 }
 
 // ---------------------------------------------------------------------------
@@ -129,6 +154,43 @@ async function githubProfile(token: string): Promise<ProviderProfile> {
     login: string;
   };
   return { username: data.login };
+}
+
+// Shared failure for the push pre-flight: one message shape for every
+// provider so the task error always tells the user how to fix it.
+function noPushAccessError(provider: string, repoFullName: string, detail?: string): ProviderError {
+  return new ProviderError(
+    `${provider}: the stored token has no write (push) access to ${repoFullName}. ` +
+      (detail ? `${detail} ` : '') +
+      `Reconnect the ${provider} connection with a token that can write to this repository ` +
+      `(github: 'repo' scope or a fine-grained PAT with Contents: write).`,
+  );
+}
+
+// GitHub: `permissions.push` alone is not enough — for OAuth tokens it
+// reflects the *user's* repo permissions, so a token without the `repo`
+// scope still shows push=true and the push then fails with a 403. OAuth and
+// classic tokens carry their granted scopes in the X-OAuth-Scopes header;
+// fine-grained PATs send no header and are judged by permissions alone.
+async function githubAssertPushAccess(token: string, repoFullName: string): Promise<void> {
+  const { data, headers } = await requestJsonMeta(
+    `${GITHUB_API}/repos/${repoFullName}`,
+    githubHeaders(token),
+    'github',
+  );
+  const repo = data as { private?: boolean; permissions?: { push?: boolean } };
+  if (repo.permissions?.push !== true) {
+    throw noPushAccessError('github', repoFullName);
+  }
+  const grantedScopes = headers.get('x-oauth-scopes');
+  if (grantedScopes === null) return;
+  const wanted = repo.private === false ? ['repo', 'public_repo'] : ['repo'];
+  if (hasAnyScope(grantedScopes, wanted)) return;
+  throw noPushAccessError(
+    'github',
+    repoFullName,
+    `The token's OAuth scopes (${grantedScopes}) do not include '${wanted[0]}'.`,
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -194,6 +256,33 @@ async function gitlabProfile(
     'gitlab',
   )) as { username: string };
   return { username: data.username };
+}
+
+// GitLab: pushing needs Developer (access_level 30) or above, from either
+// project membership or the containing namespace/group.
+const GITLAB_DEVELOPER_ACCESS = 30;
+
+async function gitlabAssertPushAccess(
+  token: string,
+  tokenType: ProviderTokenType,
+  repoFullName: string,
+): Promise<void> {
+  const data = (await requestJson(
+    `${gitlabApiBase()}/projects/${encodeURIComponent(repoFullName)}`,
+    gitlabHeaders(token, tokenType),
+    'gitlab',
+  )) as {
+    permissions?: {
+      project_access?: { access_level?: number } | null;
+      namespace_access?: { access_level?: number } | null;
+    };
+  };
+  const level = Math.max(
+    data.permissions?.project_access?.access_level ?? 0,
+    data.permissions?.namespace_access?.access_level ?? 0,
+  );
+  if (level >= GITLAB_DEVELOPER_ACCESS) return;
+  throw noPushAccessError('gitlab', repoFullName);
 }
 
 // ---------------------------------------------------------------------------
@@ -280,6 +369,24 @@ async function gitverseProfile(
   return { username: data.login };
 }
 
+// GitVerse's API is GitHub-shaped, but support for the `permissions` field
+// is unverified — a missing object means "cannot determine" and passes
+// rather than blocking the job; an explicit push=false still fails fast.
+async function gitverseAssertPushAccess(
+  baseUrl: string | null | undefined,
+  token: string,
+  repoFullName: string,
+): Promise<void> {
+  const data = (await requestJson(
+    `${gitverseApiBase(baseUrl)}/repos/${repoFullName}`,
+    gitverseHeaders(token),
+    'gitverse',
+  )) as { permissions?: { push?: boolean } };
+  if (data.permissions?.push === false) {
+    throw noPushAccessError('gitverse', repoFullName);
+  }
+}
+
 // Returns an https clone URL with the token embedded, for use at clone time
 // (never persisted to the database).
 export function cloneUrlWithToken(cloneUrl: string, token: string): string {
@@ -306,20 +413,32 @@ interface ProviderApi {
     baseUrl: string | null | undefined,
     tokenType: ProviderTokenType,
   ): Promise<NormalizedRepo[]>;
+  assertPushAccess(
+    token: string,
+    baseUrl: string | null | undefined,
+    tokenType: ProviderTokenType,
+    repoFullName: string,
+  ): Promise<void>;
 }
 
 const providerApis: Record<ProviderName, ProviderApi> = {
   github: {
     profile: (token) => githubProfile(token),
     listRepos: (token) => githubListRepos(token),
+    assertPushAccess: (token, _baseUrl, _tokenType, repoFullName) =>
+      githubAssertPushAccess(token, repoFullName),
   },
   gitlab: {
     profile: (token, _baseUrl, tokenType) => gitlabProfile(token, tokenType),
     listRepos: (token, _baseUrl, tokenType) => gitlabListRepos(token, tokenType),
+    assertPushAccess: (token, _baseUrl, tokenType, repoFullName) =>
+      gitlabAssertPushAccess(token, tokenType, repoFullName),
   },
   gitverse: {
     profile: (token, baseUrl) => gitverseProfile(baseUrl, token),
     listRepos: (token, baseUrl) => gitverseListRepos(baseUrl, token),
+    assertPushAccess: (token, baseUrl, _tokenType, repoFullName) =>
+      gitverseAssertPushAccess(baseUrl, token, repoFullName),
   },
 };
 
@@ -332,6 +451,19 @@ export async function fetchProviderProfile(
   tokenType: ProviderTokenType = 'pat',
 ): Promise<ProviderProfile> {
   return providerApis[provider].profile(token, baseUrl, tokenType);
+}
+
+// Pre-flight check run before any agent job: fails fast with an actionable
+// ProviderError when the stored token cannot push to the repository, instead
+// of discovering the 403 after the LLM work is done.
+export async function assertRepoPushAccess(
+  provider: ProviderName,
+  token: string,
+  repoFullName: string,
+  baseUrl?: string | null,
+  tokenType: ProviderTokenType = 'pat',
+): Promise<void> {
+  return providerApis[provider].assertPushAccess(token, baseUrl, tokenType, repoFullName);
 }
 
 const notImplementedPr = (provider: ProviderName) =>

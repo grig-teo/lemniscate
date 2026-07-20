@@ -1,7 +1,7 @@
 import type { GitConnection, LlmConfig, Repository, Task } from '@prisma/client';
 import { z } from 'zod';
 import { decrypt } from './crypto.js';
-import { cloneUrlWithToken } from './git-providers.js';
+import { assertRepoPushAccess, cloneUrlWithToken, type ProviderName } from './git-providers.js';
 import { chatCompletions, type ChatMessage, type ThinkingLevel } from './llm-client.js';
 import { parseTaskThinkingLevel } from './task-attachments.js';
 import { prisma } from './prisma.js';
@@ -199,6 +199,14 @@ export async function prepareAgentRuntime(
 ): Promise<AgentRunContext> {
   const token = decrypt(repository.connection.accessTokenEnc);
   secrets.push(token);
+  // Fail fast when the token cannot push, before cloning and LLM spend.
+  await assertRepoPushAccess(
+    repository.connection.provider as ProviderName,
+    token,
+    repository.fullName,
+    repository.connection.baseUrl,
+    repository.connection.tokenType === 'oauth' ? 'oauth' : 'pat',
+  );
   const cloneUrl = cloneUrlWithToken(repository.cloneUrl, token);
   secrets.push(cloneUrl);
   const llmConfig = await resolveLlmConfig(task, repository, repository.connection.userId);
