@@ -37,12 +37,12 @@ export function ConsoleLog({
   return (
     <div
       ref={scrollRef}
-      className="min-h-0 flex-1 overflow-y-auto bg-zinc-950 px-4 py-3 font-mono text-xs leading-5 text-zinc-200"
+      className="min-h-0 flex-1 overflow-y-auto bg-white px-4 py-3 font-mono text-xs leading-5 text-zinc-900 dark:bg-zinc-950 dark:text-zinc-200"
       aria-live="polite"
     >
       {historyQuery.isLoading && <p className="text-zinc-500">Loading task history…</p>}
       {historyQuery.isError && (
-        <p className="text-red-400">
+        <p className="text-red-600 dark:text-red-400">
           Failed to load task history: {historyQuery.error?.message}
         </p>
       )}
@@ -53,7 +53,7 @@ export function ConsoleLog({
         <LogLinePre key={line.key} line={line} />
       ))}
       {streamError && (
-        <p className="mt-2 text-yellow-400">— connection lost; reconnecting to the event stream…</p>
+        <p className="mt-2 text-yellow-600 dark:text-yellow-400">— connection lost; reconnecting to the event stream…</p>
       )}
       {!historyQuery.isLoading && historyLogs.length === 0 && liveLogs.length === 0 && (
         <p className="text-zinc-500">Waiting for agent output…</p>

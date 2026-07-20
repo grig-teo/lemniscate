@@ -1,12 +1,10 @@
 import { useState } from 'react';
-import { ChevronDown, ChevronRight, Eye, EyeOff, Loader2, Settings } from 'lucide-react';
+import { ChevronDown, ChevronRight, Eye, EyeOff, Settings } from 'lucide-react';
 
-import { useTasks, useUpdateRepositoryFlags, type Repository, type Task } from '@/lib/hooks';
+import { useUpdateRepositoryFlags, type Repository } from '@/lib/hooks';
 import { repoDisplayName } from '@/lib/repo-display';
-import { useWorkspaceSelection } from '@/lib/selection';
 import { cn } from '@/lib/utils';
-import { StatusBadge } from '@/components/StatusBadge';
-import { Badge } from '@/components/ui/badge';
+import { RepoTasks } from '@/components/repo-tree/RepoTasks';
 import { Button } from '@/components/ui/button';
 import { Switch } from '@/components/ui/switch';
 
@@ -159,80 +157,5 @@ function HideRepoButton({ repo }: { repo: Repository }) {
     >
       <Icon className="h-3.5 w-3.5" />
     </Button>
-  );
-}
-
-function TaskRow({
-  task,
-  selected,
-  onSelect,
-}: {
-  task: Task;
-  selected: boolean;
-  onSelect: () => void;
-}) {
-  return (
-    <li>
-      <button
-        type="button"
-        onClick={onSelect}
-        className={cn(
-          'flex w-full items-center gap-2 rounded-md px-2 py-1 text-left text-xs hover:bg-accent',
-          selected && 'bg-accent font-medium',
-        )}
-      >
-        <span className="min-w-0 flex-1 truncate">{task.title}</span>
-        {task.kind === 'proposal' && (
-          <Badge variant="outline" className="shrink-0 px-1.5 py-0 text-[10px]">
-            proposal
-          </Badge>
-        )}
-        <StatusBadge status={task.status} className="px-1.5 py-0 text-[10px]" />
-      </button>
-    </li>
-  );
-}
-
-function RepoTasks({ repositoryId }: { repositoryId: string }) {
-  const tasksQuery = useTasks(repositoryId);
-  const { selectedTask, selectTask } = useWorkspaceSelection();
-
-  if (tasksQuery.isLoading) {
-    return (
-      <div className="flex items-center gap-2 py-2 pl-9 text-xs text-muted-foreground">
-        <Loader2 className="h-3 w-3 animate-spin" aria-hidden />
-        Loading tasks…
-      </div>
-    );
-  }
-  if (tasksQuery.isError) {
-    return <p className="py-1 pl-9 text-xs text-destructive">Failed to load tasks.</p>;
-  }
-  const tasks = tasksQuery.data ?? [];
-  if (tasks.length === 0) {
-    return <p className="py-1 pl-9 text-xs text-muted-foreground/70">No tasks yet.</p>;
-  }
-
-  return (
-    <ul className="flex flex-col gap-0.5 py-1 pl-5">
-      {tasks.map((task) => (
-        <TaskRow
-          key={task.id}
-          task={task}
-          selected={selectedTask?.id === task.id}
-          onSelect={() =>
-            selectTask({
-              id: task.id,
-              title: task.title,
-              status: task.status,
-              kind: task.kind,
-              repositoryId: task.repositoryId,
-              branchName: task.branchName ?? null,
-              prUrl: task.prUrl ?? null,
-            })
-          }
-        />
-      ))}
-    </ul>
   );
 }

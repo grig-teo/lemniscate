@@ -298,6 +298,28 @@ export function useCreateTask() {
   });
 }
 
+/** POST /api/tasks/:id/start — queue a pending proposal for implementation. */
+export function useStartTask() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => api.post<unknown>(`/api/tasks/${id}/start`),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['tasks'] });
+    },
+  });
+}
+
+/** POST /api/repositories/:id/proposals — enqueue on-demand proposal generation (202). */
+export function useGenerateProposals() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => api.post<unknown>(`/api/repositories/${id}/proposals`),
+    onSettled: (_data, _error, id) => {
+      void queryClient.invalidateQueries({ queryKey: ['tasks', id] });
+    },
+  });
+}
+
 function useInvalidateLlmConfigs() {
   const queryClient = useQueryClient();
   return () => {

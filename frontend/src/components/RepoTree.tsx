@@ -80,7 +80,7 @@ function RepoTreeBody({
  * tasks are started from the + button in the console pane (opens the
  * composer dialog).
  */
-export function RepoTree() {
+export function RepoTree({ width }: { width: number }) {
   const reposQuery = useRepositories();
   const syncConnection = useSyncConnection();
   const { expanded, toggle } = useExpandedMap();
@@ -88,7 +88,7 @@ export function RepoTree() {
   const groups = React.useMemo(() => groupByConnection(reposQuery.data ?? []), [reposQuery.data]);
 
   return (
-    <aside className="flex h-full w-72 shrink-0 flex-col border-r bg-card">
+    <aside className="flex h-full shrink-0 flex-col border-r bg-card" style={{ width }}>
       <div className="flex items-center justify-between border-b px-3 py-2">
         <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
           Repositories

@@ -121,6 +121,30 @@ const repositoriesRoutes: FastifyPluginAsync = async (app) => {
     await syncProposalSchedule(request, repository.id, data.autoPropose, repository.autoPropose);
     return { repository: updated };
   });
+
+  // Round-button trigger: enqueue one proposal generation run for the repo.
+  // The job itself tops pending proposals up to 5 and dedupes by title.
+  app.post('/repositories/:id/proposals', async (request, reply) => {
+    const userId = authenticatedUserId(request);
+    const params = parseOrReply(idParamsSchema, request.params, reply, 'Invalid repository id');
+    if (params === null) return;
+
+    const repository = await prisma.repository.findFirst({
+      where: { id: params.id, connection: { userId } },
+      select: { id: true },
+    });
+    if (!repository) {
+      return reply.code(404).send({ error: 'Repository not found' });
+    }
+    try {
+      const scheduler = await import('../lib/proposal-scheduler.js');
+      await scheduler.enqueueGenerateProposalsNow(repository.id);
+    } catch (err) {
+      request.log.error({ err }, 'failed to enqueue proposal generation');
+      return reply.code(502).send({ error: 'Failed to enqueue proposal generation' });
+    }
+    return reply.code(202).send({ enqueued: true });
+  });
 };
 
 export default repositoriesRoutes;

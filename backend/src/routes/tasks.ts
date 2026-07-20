@@ -2,7 +2,7 @@ import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
 import { Redis } from 'ioredis';
 import { z } from 'zod';
 import { config } from '../config.js';
-import { getAgentTasksQueue } from '../lib/proposal-scheduler.js';
+import { enqueueRunTask, getAgentTasksQueue } from '../lib/proposal-scheduler.js';
 import { prisma } from '../lib/prisma.js';
 import { taskImagesSchema, taskThinkingLevelSchema } from '../lib/task-attachments.js';
 import { publishTaskEvent, serializeTaskEvent } from '../lib/task-events.js';
@@ -136,6 +136,39 @@ async function getTask(request: FastifyRequest, reply: FastifyReply) {
   return { task };
 }
 
+// Start eligibility for POST /tasks/:id/start: returns why a task cannot be
+// started, or null when it can. Only pending proposals are click-to-run.
+export function startBlocker(task: { kind: string; status: string }): string | null {
+  if (task.kind !== 'proposal') return 'only proposal tasks can be started';
+  if (task.status !== 'pending') return `task is ${task.status}, not pending`;
+  return null;
+}
+
+// Start a pending proposal task: mark it queued and enqueue its run-task job.
+async function startTask(request: FastifyRequest, reply: FastifyReply) {
+  const userId = authenticatedUserId(request);
+  const params = parseOrReply(idParamsSchema, request.params, reply, 'Invalid task id');
+  if (params === null) return;
+  const task = await prisma.task.findFirst({
+    where: ownedTaskWhere(userId, params.id),
+    select: { id: true, kind: true, status: true },
+  });
+  if (!task) {
+    return reply.code(404).send({ error: 'Task not found' });
+  }
+  const blocker = startBlocker(task);
+  if (blocker) {
+    return reply.code(400).send({ error: blocker });
+  }
+
+  const updated = await prisma.task.update({
+    where: { id: task.id },
+    data: { status: 'queued' },
+  });
+  await enqueueRunTask(task.id);
+  return { task: updated };
+}
+
 // Cancel a task that hasn't finished yet.
 async function cancelTask(request: FastifyRequest, reply: FastifyReply) {
   const userId = authenticatedUserId(request);
@@ -190,6 +223,7 @@ const tasksRoutes: FastifyPluginAsync = async (app) => {
   app.get('/tasks', listTasks);
   app.post('/tasks', createTask);
   app.get('/tasks/:id', getTask);
+  app.post('/tasks/:id/start', startTask);
   app.post('/tasks/:id/cancel', cancelTask);
   app.get('/tasks/:id/events', getTaskEvents);
 };
