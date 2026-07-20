@@ -9,7 +9,7 @@ export interface SplitRepoTasks {
 }
 
 /** A proposal task that has not been started yet (the only startable kind). */
-export function isPendingProposal(task: Task): boolean {
+export function isPendingProposal(task: { kind?: string; status: string }): boolean {
   return task.kind === 'proposal' && task.status === 'pending';
 }
 

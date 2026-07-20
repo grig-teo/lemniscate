@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  attachmentsData,
   imagePayloadSchema,
   parseImageDataUrl,
   parseTaskAttachments,
@@ -68,6 +69,19 @@ describe('taskImagesSchema', () => {
 
   it('rejects more than 3 images', () => {
     expect(taskImagesSchema.safeParse([image, image, image, image]).success).toBe(false);
+  });
+});
+
+// Prisma create/update fragment shared by POST /tasks and POST /tasks/:id/start.
+describe('attachmentsData', () => {
+  const image = { name: 'a.png', dataUrl: PNG_DATA_URL };
+
+  it('maps images to the attachments column', () => {
+    expect(attachmentsData([image])).toEqual({ attachments: [image] });
+  });
+
+  it('returns no fragment when images are absent', () => {
+    expect(attachmentsData(undefined)).toEqual({});
   });
 });
 

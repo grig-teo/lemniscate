@@ -33,6 +33,13 @@ export type TaskImage = z.infer<typeof imagePayloadSchema>;
 
 export const taskImagesSchema = z.array(imagePayloadSchema).max(MAX_TASK_IMAGES);
 
+// Prisma create/update fragment for the attachments column: images are
+// written only when present, so omitted images leave the column untouched.
+export function attachmentsData(images: TaskImage[] | undefined): { attachments?: TaskImage[] } {
+  if (!images) return {};
+  return { attachments: images };
+}
+
 // Lenient read side for the worker: the stored Json is trusted but still
 // validated; anything malformed degrades to no attachments.
 export function parseTaskAttachments(raw: unknown): TaskImage[] {

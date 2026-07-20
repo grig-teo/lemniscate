@@ -53,7 +53,7 @@ const TEXTAREA_MAX_HEIGHT =
   TEXTAREA_MAX_ROWS * TEXTAREA_LINE_HEIGHT_PX + TEXTAREA_VERTICAL_PADDING_PX;
 
 /** Grows the textarea with its content, clamped to the min/max row bounds. */
-function useAutoResizeTextarea(value: string) {
+export function useAutoResizeTextarea(value: string) {
   const ref = React.useRef<HTMLTextAreaElement | null>(null);
   React.useLayoutEffect(() => {
     const el = ref.current;
@@ -64,13 +64,29 @@ function useAutoResizeTextarea(value: string) {
   return ref;
 }
 
-function readFileAsDataUrl(file: File): Promise<string> {
+export function readFileAsDataUrl(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => resolve(String(reader.result));
     reader.onerror = () => reject(reader.error ?? new Error('failed to read file'));
     reader.readAsDataURL(file);
   });
+}
+
+/** Read accepted image files as data URLs and append them, capped at MAX_IMAGES. */
+export function appendImageFiles(
+  files: FileList | null,
+  setImages: React.Dispatch<React.SetStateAction<TaskImage[]>>,
+) {
+  if (!files) return;
+  const accepted = Array.from(files).filter(isAcceptedImage);
+  for (const file of accepted) {
+    void readFileAsDataUrl(file).then((dataUrl) => {
+      setImages((prev) =>
+        prev.length >= MAX_IMAGES ? prev : [...prev, { name: file.name, dataUrl }],
+      );
+    });
+  }
 }
 
 /** Composer state: repo choice (defaults follow the selected task), prompt, submit. */
@@ -100,17 +116,7 @@ function useTaskComposer(onSubmitted?: () => void) {
   const estimatedTokens = estimateTokens(prompt);
   const contextWindow = resolveContextWindow(llmConfigs, repositories, repositoryId);
 
-  const addImageFiles = (files: FileList | null) => {
-    if (!files) return;
-    const accepted = Array.from(files).filter(isAcceptedImage);
-    for (const file of accepted) {
-      void readFileAsDataUrl(file).then((dataUrl) => {
-        setImages((prev) =>
-          prev.length >= MAX_IMAGES ? prev : [...prev, { name: file.name, dataUrl }],
-        );
-      });
-    }
-  };
+  const addImageFiles = (files: FileList | null) => appendImageFiles(files, setImages);
 
   const removeImage = (index: number) => {
     setImages((prev) => prev.filter((_, i) => i !== index));
@@ -298,7 +304,7 @@ function AttachImagesButton({
   );
 }
 
-function ImageThumbnails({
+export function ImageThumbnails({
   images,
   onRemove,
 }: {

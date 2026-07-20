@@ -133,6 +133,8 @@ export type Task = {
   kind: string;
   title: string;
   status: TaskStatus;
+  /** Full prompt — only included by GET /api/tasks/:id, not by list endpoints. */
+  prompt?: string;
   branchName?: string | null;
   prUrl?: string | null;
   thinkingLevel?: TaskThinkingLevel | null;
@@ -146,6 +148,13 @@ export type CreateTaskBody = {
   repositoryId: string;
   prompt: string;
   thinkingLevel?: TaskThinkingLevel;
+  images?: TaskImage[];
+};
+
+/** POST /api/tasks/:id/start body — proposal edits applied before queueing. */
+export type StartTaskBody = {
+  title?: string;
+  prompt?: string;
   images?: TaskImage[];
 };
 
@@ -206,6 +215,15 @@ export function useTasks(repositoryId?: string | null) {
   return useQuery({
     queryKey: ['tasks', repositoryId ?? null],
     queryFn: () => api.get<{ tasks: Task[] }>(tasksPath(repositoryId)).then((res) => res.tasks),
+  });
+}
+
+/** One task by id, including the full prompt; disabled until an id is set. */
+export function useTask(id: string | null | undefined) {
+  return useQuery({
+    queryKey: ['task', id ?? null],
+    queryFn: () => api.get<{ task: Task }>(`/api/tasks/${id}`).then((res) => res.task),
+    enabled: Boolean(id),
   });
 }
 
@@ -302,9 +320,13 @@ export function useCreateTask() {
 export function useStartTask() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (id: string) => api.post<unknown>(`/api/tasks/${id}/start`),
+    mutationFn: (args: string | { id: string; body?: StartTaskBody }) => {
+      const { id, body } = typeof args === 'string' ? { id: args, body: undefined } : args;
+      return api.post<unknown>(`/api/tasks/${id}/start`, body);
+    },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['tasks'] });
+      void queryClient.invalidateQueries({ queryKey: ['task'] });
     },
   });
 }

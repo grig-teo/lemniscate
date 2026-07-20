@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { config } from '../config.js';
 import { enqueueRunTask, getAgentTasksQueue } from '../lib/proposal-scheduler.js';
 import { prisma } from '../lib/prisma.js';
-import { taskImagesSchema, taskThinkingLevelSchema } from '../lib/task-attachments.js';
+import { attachmentsData, taskImagesSchema, taskThinkingLevelSchema } from '../lib/task-attachments.js';
 import { publishTaskEvent, serializeTaskEvent } from '../lib/task-events.js';
 import { authenticatedUserId, requireAuth } from '../plugins/auth.js';
 import { parseOrReply } from './helpers.js';
@@ -28,16 +28,30 @@ const listQuerySchema = z.object({
   repositoryId: z.string().min(1).optional(),
 });
 
+const promptSchema = z.string().min(1).max(8000);
+
 const createBodySchema = z
   .object({
     repositoryId: z.string().min(1),
-    prompt: z.string().min(1).max(8000),
+    prompt: promptSchema,
     // Per-task override of the LLM config's thinkingLevel; omit to inherit.
     thinkingLevel: taskThinkingLevelSchema.optional(),
     // Image attachments sent to the agent as multimodal content (max 3).
     images: taskImagesSchema.optional(),
   })
   .strict();
+
+// Optional edits applied when a pending proposal is started. Absent body
+// (the left-nav play button) parses as {} and changes nothing.
+export const startBodySchema = z
+  .object({
+    title: z.string().min(1).max(200).optional(),
+    prompt: promptSchema.optional(),
+    images: taskImagesSchema.optional(),
+  })
+  .strict()
+  .default({});
+export type StartBody = z.infer<typeof startBodySchema>;
 
 const idParamsSchema = z.object({ id: z.string().min(1) });
 
@@ -110,7 +124,7 @@ async function createTask(request: FastifyRequest, reply: FastifyReply) {
       status: 'queued',
       llmConfigId,
       thinkingLevel: data.thinkingLevel ?? null,
-      ...(data.images ? { attachments: data.images } : {}),
+      ...attachmentsData(data.images),
     },
   });
 
@@ -144,11 +158,27 @@ export function startBlocker(task: { kind: string; status: string }): string | n
   return null;
 }
 
-// Start a pending proposal task: mark it queued and enqueue its run-task job.
+// Update applied when a proposal is started: always queues the task; any
+// edited fields (title/prompt/attachments) are written in the same update.
+export function buildStartUpdate(body: StartBody) {
+  return {
+    status: 'queued' as const,
+    ...(body.title !== undefined ? { title: body.title } : {}),
+    ...(body.prompt !== undefined ? { prompt: body.prompt } : {}),
+    ...attachmentsData(body.images),
+  };
+}
+
+// Start a pending proposal task: apply any edits, mark it queued, and
+// enqueue its run-task job.
 async function startTask(request: FastifyRequest, reply: FastifyReply) {
   const userId = authenticatedUserId(request);
   const params = parseOrReply(idParamsSchema, request.params, reply, 'Invalid task id');
   if (params === null) return;
+  const body = parseOrReply(startBodySchema, request.body ?? {}, reply, 'Invalid request body', {
+    includeIssues: true,
+  });
+  if (body === null) return;
   const task = await prisma.task.findFirst({
     where: ownedTaskWhere(userId, params.id),
     select: { id: true, kind: true, status: true },
@@ -163,7 +193,7 @@ async function startTask(request: FastifyRequest, reply: FastifyReply) {
 
   const updated = await prisma.task.update({
     where: { id: task.id },
-    data: { status: 'queued' },
+    data: buildStartUpdate(body),
   });
   await enqueueRunTask(task.id);
   return { task: updated };

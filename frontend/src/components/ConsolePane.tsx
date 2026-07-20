@@ -1,9 +1,11 @@
 import { Terminal } from 'lucide-react';
 
+import { isPendingProposal } from '@/lib/repo-tasks';
 import { useWorkspaceSelection } from '@/lib/selection';
 
 import { ConsoleHeader } from '@/components/console/ConsoleHeader';
 import { ConsoleLog } from '@/components/console/ConsoleLog';
+import { ProposalDetail } from '@/components/console/ProposalDetail';
 import { TaskComposerFab } from '@/components/console/TaskComposer';
 import { useTaskConsole } from '@/components/console/useTaskConsole';
 
@@ -34,6 +36,8 @@ function EmptyConsole() {
  * GET /api/tasks/:id/events, then streamed over SSE (same endpoint, which
  * replays history first — replayed events are deduped by id). `status`
  * events update the header badge. See console/useTaskConsole.ts.
+ * A pending proposal shows the editable ProposalDetail instead of the log;
+ * once started it flips to queued and the log view takes over.
  * The floating + button opens the TaskComposerDialog to start a new prompt
  * task on a chosen repository.
  */
@@ -45,15 +49,20 @@ export function ConsolePane() {
   if (!selectedTask) return <EmptyConsole />;
 
   const status = liveStatus ?? consoleState.historyStatus ?? selectedTask.status;
+  const showProposalDetail = isPendingProposal(selectedTask) && status === 'pending';
   return (
     <section className="relative flex h-full min-w-0 flex-1 flex-col">
       <ConsoleHeader task={selectedTask} status={status} />
-      <ConsoleLog
-        historyQuery={consoleState.historyQuery}
-        historyLogs={consoleState.historyLogs}
-        liveLogs={consoleState.liveLogs}
-        streamError={consoleState.streamError}
-      />
+      {showProposalDetail ? (
+        <ProposalDetail key={selectedTask.id} taskId={selectedTask.id} />
+      ) : (
+        <ConsoleLog
+          historyQuery={consoleState.historyQuery}
+          historyLogs={consoleState.historyLogs}
+          liveLogs={consoleState.liveLogs}
+          streamError={consoleState.streamError}
+        />
+      )}
       <TaskComposerFab />
     </section>
   );
