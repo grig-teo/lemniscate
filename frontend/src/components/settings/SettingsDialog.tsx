@@ -14,12 +14,13 @@ import { cn } from '@/lib/utils';
 
 import { ConnectionsSection } from '@/components/settings/ConnectionsSection';
 import { LlmConfigsSection } from '@/components/settings/LlmConfigsSection';
+import { RepoFlagsSection } from '@/components/settings/RepoFlagsSection';
 
-type SettingsTab = 'llm' | 'git';
+type SettingsTab = 'llm' | 'git' | 'repos';
 
 /**
- * Settings dialog: LLM configurations and git host connections.
- * Opened from the gear button in the top nav.
+ * Settings dialog: LLM configurations, git host connections, and repository
+ * automation flags. Opened from the gear button in the top nav.
  */
 export function SettingsDialog() {
   const [open, setOpen] = React.useState(false);
@@ -35,7 +36,9 @@ export function SettingsDialog() {
       <DialogContent className="max-w-2xl">
         <DialogHeader>
           <DialogTitle>Settings</DialogTitle>
-          <DialogDescription>Manage LLM configurations and git host connections.</DialogDescription>
+          <DialogDescription>
+            Manage LLM configurations, git host connections, and repository automation.
+          </DialogDescription>
         </DialogHeader>
 
         <div className="flex gap-1 border-b" role="tablist" aria-label="Settings sections">
@@ -45,10 +48,15 @@ export function SettingsDialog() {
           <TabButton active={tab === 'git'} onClick={() => setTab('git')}>
             Git connections
           </TabButton>
+          <TabButton active={tab === 'repos'} onClick={() => setTab('repos')}>
+            Repositories
+          </TabButton>
         </div>
 
         <div className="max-h-[60vh] overflow-y-auto pr-1">
-          {tab === 'llm' ? <LlmConfigsSection /> : <ConnectionsSection />}
+          {tab === 'llm' && <LlmConfigsSection />}
+          {tab === 'git' && <ConnectionsSection />}
+          {tab === 'repos' && <RepoFlagsSection />}
         </div>
       </DialogContent>
     </Dialog>

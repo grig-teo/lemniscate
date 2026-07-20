@@ -17,7 +17,16 @@ const patchBodySchema = z
   })
   .strict();
 
+export const bulkFlagsSchema = z
+  .object({
+    autoCreatePr: z.boolean(),
+    autoReviewPr: z.boolean(),
+    autoMergePr: z.boolean(),
+  })
+  .strict();
+
 type PatchBody = z.infer<typeof patchBodySchema>;
+type BulkFlagsBody = z.infer<typeof bulkFlagsSchema>;
 
 // Only the fields that were actually sent are written.
 export function buildPatchData(data: PatchBody) {
@@ -30,14 +39,24 @@ export function buildPatchData(data: PatchBody) {
   };
 }
 
+// Bulk writes set every flag, so the update object is the body itself.
+export function buildBulkFlagsUpdate(data: BulkFlagsBody) {
+  return {
+    autoCreatePr: data.autoCreatePr,
+    autoReviewPr: data.autoReviewPr,
+    autoMergePr: data.autoMergePr,
+  };
+}
+
 // Auto-merge only makes sense on top of an LLM review: merging without a
-// review would bypass human oversight entirely.
-function autoMergeViolation(
-  data: PatchBody,
-  current: { autoReviewPr: boolean },
-): boolean {
-  const effectiveAutoReview = data.autoReviewPr ?? current.autoReviewPr;
-  return data.autoMergePr === true && !effectiveAutoReview;
+// review would bypass human oversight entirely. `flags` carries the effective
+// (post-update) values: the PATCH handler merges body over current state
+// first, the bulk handler passes its all-required body directly.
+export function autoMergeViolation(flags: {
+  autoMergePr?: boolean;
+  autoReviewPr: boolean;
+}): boolean {
+  return flags.autoMergePr === true && !flags.autoReviewPr;
 }
 
 async function ownedLlmConfigExists(userId: string, llmConfigId: string): Promise<boolean> {
@@ -63,6 +82,25 @@ const repositoriesRoutes: FastifyPluginAsync = async (app) => {
     return { repositories };
   });
 
+  // Registered before '/repositories/:id' so Fastify matches the literal
+  // 'flags' segment instead of capturing it as an :id.
+  app.post('/repositories/flags', async (request, reply) => {
+    const userId = authenticatedUserId(request);
+    const data = parseOrReply(bulkFlagsSchema, request.body, reply, 'Invalid body', {
+      includeIssues: true,
+    });
+    if (data === null) return;
+    if (autoMergeViolation(data)) {
+      return reply.code(400).send({ error: 'autoMergePr requires autoReviewPr to be enabled' });
+    }
+
+    const result = await prisma.repository.updateMany({
+      where: { connection: { userId } },
+      data: buildBulkFlagsUpdate(data),
+    });
+    return { updated: result.count };
+  });
+
   app.patch('/repositories/:id', async (request, reply) => {
     const userId = authenticatedUserId(request);
     const params = parseOrReply(idParamsSchema, request.params, reply, 'Invalid repository id');
@@ -79,7 +117,11 @@ const repositoriesRoutes: FastifyPluginAsync = async (app) => {
     if (!repository) {
       return reply.code(404).send({ error: 'Repository not found' });
     }
-    if (autoMergeViolation(data, repository)) {
+    const effectiveFlags = {
+      autoMergePr: data.autoMergePr,
+      autoReviewPr: data.autoReviewPr ?? repository.autoReviewPr,
+    };
+    if (autoMergeViolation(effectiveFlags)) {
       return reply.code(400).send({ error: 'autoMergePr requires autoReviewPr to be enabled' });
     }
     if (data.llmConfigId && !(await ownedLlmConfigExists(userId, data.llmConfigId))) {

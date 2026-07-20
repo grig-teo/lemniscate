@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { ChevronDown, ChevronRight, Settings } from 'lucide-react';
 
 import { useUpdateRepositoryFlags, type Repository } from '@/lib/hooks';
+import { setAutoReview } from '@/lib/repo-flags';
 import { repoDisplayName } from '@/lib/repo-display';
 import { cn } from '@/lib/utils';
 import { RepoTasks } from '@/components/repo-tree/RepoTasks';
@@ -11,7 +12,7 @@ import { Switch } from '@/components/ui/switch';
 const SWITCH_CLASS =
   'h-4 w-7 [&>span]:h-3 [&>span]:w-3 [&>span]:data-[state=checked]:translate-x-3';
 
-function FlagSwitch({
+export function FlagSwitch({
   label,
   ariaLabel,
   checked,
@@ -63,10 +64,7 @@ function RepoFlags({ repo }: { repo: Repository }) {
         label="review"
         ariaLabel={`Auto-review PRs for ${repo.fullName}`}
         checked={repo.autoReviewPr}
-        // Disabling review also disables merge — merging requires a review.
-        onChange={(checked) =>
-          patch(checked ? { autoReviewPr: true } : { autoReviewPr: false, autoMergePr: false })
-        }
+        onChange={(checked) => patch(setAutoReview(repo, checked))}
       />
       <FlagSwitch
         label="merge"

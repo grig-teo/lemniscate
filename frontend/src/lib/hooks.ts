@@ -305,6 +305,18 @@ export function useUpdateRepositoryFlags() {
   });
 }
 
+/** POST /api/repositories/flags — rewrite these flags on ALL repositories. */
+export function useUpdateAllRepositoryFlags() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (flags: Required<RepoFlagsPatch>) =>
+      api.post<{ updated: number }>('/api/repositories/flags', { ...flags }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['repositories'] });
+    },
+  });
+}
+
 /** POST /api/tasks — create a prompt task. */
 export function useCreateTask() {
   const queryClient = useQueryClient();
