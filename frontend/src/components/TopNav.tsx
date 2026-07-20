@@ -1,9 +1,11 @@
 import { Infinity as InfinityIcon } from 'lucide-react';
 
 import { SettingsDialog } from '@/components/settings/SettingsDialog';
+import { ThemeToggle } from '@/components/ThemeToggle';
 
 /**
- * Top navigation bar: logo + app name on the left, settings dialog on the right.
+ * Top navigation bar: logo + app name on the left, theme toggle and
+ * settings dialog on the right.
  */
 export function TopNav() {
   return (
@@ -13,7 +15,10 @@ export function TopNav() {
         <span className="text-lg font-semibold tracking-tight">Lemniscate</span>
       </div>
 
-      <SettingsDialog />
+      <div className="flex items-center gap-1">
+        <ThemeToggle />
+        <SettingsDialog />
+      </div>
     </header>
   );
 }
