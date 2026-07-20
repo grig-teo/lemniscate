@@ -4,6 +4,9 @@ import path from 'node:path';
 
 // https://vite.dev/config/
 export default defineConfig({
+  // VITE_BASE_PATH lets the same image serve the SPA under a subpath
+  // (e.g. /lemniscate/ on a shared domain). Defaults to root.
+  base: process.env.VITE_BASE_PATH ?? '/',
   plugins: [react()],
   resolve: {
     alias: {

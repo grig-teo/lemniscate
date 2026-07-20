@@ -1,6 +1,11 @@
 # ---------- build: compile the Vite app ----------
 FROM node:22-alpine AS build
 WORKDIR /app
+# Bake-time configuration (subpath deploys set these via compose build args)
+ARG VITE_BASE_PATH=/
+ARG VITE_API_URL=
+ENV VITE_BASE_PATH=$VITE_BASE_PATH
+ENV VITE_API_URL=$VITE_API_URL
 COPY package.json package-lock.json* ./
 RUN npm ci
 COPY . .
