@@ -1,0 +1,149 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum GitProvider {
+  github
+  gitverse
+  gitlab
+}
+
+enum ThinkingLevel {
+  off
+  low
+  medium
+  high
+}
+
+enum TaskKind {
+  proposal
+  prompt
+}
+
+enum TaskStatus {
+  pending
+  queued
+  running
+  awaiting_review
+  done
+  failed
+}
+
+enum TaskEventKind {
+  log
+  diff
+  status
+}
+
+model User {
+  id             String          @id @default(cuid())
+  createdAt      DateTime        @default(now())
+  gitConnections GitConnection[]
+  llmConfigs     LlmConfig[]
+}
+
+model GitConnection {
+  id             String       @id @default(cuid())
+  userId         String
+  provider       GitProvider
+  baseUrl        String?
+  username       String
+  accessTokenEnc String
+  // How the stored token authenticates: 'pat' (GitLab PRIVATE-TOKEN header)
+  // or 'oauth' (Authorization: Bearer). GitHub/GitVerse ignore this.
+  tokenType      String?      @default("pat")
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  repositories   Repository[]
+
+  @@index([userId])
+}
+
+model LlmConfig {
+  id                String        @id @default(cuid())
+  userId            String
+  name              String
+  baseUrl           String
+  apiKeyEnc         String
+  model             String
+  thinkingLevel     ThinkingLevel @default(off)
+  temperature       Float         @default(0.2)
+  maxTokens         Int
+  contextWindow     Int
+  systemPromptExtra String?
+  timeoutSeconds    Int           @default(120)
+  maxRetries        Int           @default(3)
+  requestsPerMinute Int
+  maxTokensPerRun   Int?
+  customHeaders     Json          @default("{}")
+  isDefault         Boolean       @default(false)
+  enabled           Boolean       @default(true)
+  user              User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  repositories      Repository[]
+  tasks             Task[]
+
+  @@index([userId])
+}
+
+model Repository {
+  id            String       @id @default(cuid())
+  connectionId  String
+  externalId    String
+  name          String
+  fullName      String
+  cloneUrl      String
+  defaultBranch String
+  autoPropose   Boolean      @default(false)
+  autoCreatePr  Boolean      @default(true)
+  // autoMergePr requires autoReviewPr: a PR is only merged after the LLM
+  // review approves it (enforced in the PATCH route).
+  autoReviewPr  Boolean      @default(false)
+  autoMergePr   Boolean      @default(false)
+  llmConfigId   String?
+  connection    GitConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  llmConfig     LlmConfig?    @relation(fields: [llmConfigId], references: [id], onDelete: SetNull)
+  tasks         Task[]
+
+  @@unique([connectionId, externalId])
+  @@index([llmConfigId])
+}
+
+model Task {
+  id           String      @id @default(cuid())
+  repositoryId String
+  kind         TaskKind
+  title        String
+  prompt       String?
+  status       TaskStatus  @default(pending)
+  branchName   String?
+  prUrl        String?
+  llmConfigId  String?
+  // Cumulative LLM token usage across run/review/fix jobs; seeds the
+  // maxTokensPerRun budget so it spans the whole task, not a single job.
+  llmTokensUsed Int        @default(0)
+  error        String?
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+  repository   Repository  @relation(fields: [repositoryId], references: [id], onDelete: Cascade)
+  llmConfig    LlmConfig?  @relation(fields: [llmConfigId], references: [id], onDelete: SetNull)
+  events       TaskEvent[]
+
+  @@index([repositoryId])
+  @@index([status])
+  @@index([llmConfigId])
+}
+
+model TaskEvent {
+  id        String        @id @default(cuid())
+  taskId    String
+  createdAt DateTime      @default(now())
+  kind      TaskEventKind
+  payload   Json
+  task      Task          @relation(fields: [taskId], references: [id], onDelete: Cascade)
+
+  @@index([taskId, createdAt])
+}

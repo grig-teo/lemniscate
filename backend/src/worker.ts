@@ -1,0 +1,66 @@
+import { Worker, type Job } from 'bullmq';
+import { Redis } from 'ioredis';
+import { z } from 'zod';
+import { config } from './config.js';
+import { generateProposals, reviewTask, runTask } from './lib/agent-loop.js';
+import {
+  AGENT_QUEUE_NAME,
+  bootstrapProposalSchedules,
+} from './lib/proposal-scheduler.js';
+
+const runTaskDataSchema = z.object({ taskId: z.string().min(1) });
+const reviewPrDataSchema = z.object({
+  taskId: z.string().min(1),
+  attempt: z.number().int().min(0).default(0),
+});
+const generateProposalsDataSchema = z.object({ repositoryId: z.string().min(1) });
+
+// BullMQ requires maxRetriesPerRequest: null on blocking connections.
+const connection = new Redis(config.REDIS_URL, {
+  maxRetriesPerRequest: null,
+});
+
+const worker = new Worker(
+  AGENT_QUEUE_NAME,
+  async (job: Job) => {
+    switch (job.name) {
+      case 'run-task': {
+        const { taskId } = runTaskDataSchema.parse(job.data);
+        await runTask(taskId);
+        return;
+      }
+      case 'review-pr': {
+        const { taskId, attempt } = reviewPrDataSchema.parse(job.data);
+        await reviewTask(taskId, attempt);
+        return;
+      }
+      case 'generate-proposals': {
+        const { repositoryId } = generateProposalsDataSchema.parse(job.data);
+        await generateProposals(repositoryId);
+        return;
+      }
+      default:
+        throw new Error(`unknown job name: ${job.name}`);
+    }
+  },
+  { connection, concurrency: 2 },
+);
+
+worker.on('failed', (job, err) => {
+  console.error(`job ${job?.id} (${job?.name}) failed:`, err);
+});
+
+await worker.waitUntilReady();
+console.log(`worker ready, consuming queue '${AGENT_QUEUE_NAME}' via ${config.REDIS_URL}`);
+
+// Re-register repeatable 'generate-proposals' jobs for repos with autoPropose=true.
+await bootstrapProposalSchedules();
+
+for (const signal of ['SIGINT', 'SIGTERM'] as const) {
+  process.once(signal, () => {
+    void worker.close().then(
+      () => connection.quit(),
+      () => connection.disconnect(),
+    );
+  });
+}
