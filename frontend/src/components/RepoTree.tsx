@@ -77,7 +77,8 @@ function RepoTreeBody({
  * Repositories grouped by git-host connection (provider icon + username),
  * each repo expandable to show its tasks; per-repo toggles (autoPropose,
  * autoCreatePr, autoReviewPr, autoMergePr); per-group Sync. New prompt
- * tasks are started from the TaskComposer at the bottom of the console pane.
+ * tasks are started from the + button in the console pane (opens the
+ * composer dialog).
  */
 export function RepoTree() {
   const reposQuery = useRepositories();

@@ -5,6 +5,7 @@ import {
   githubHeaders,
   gitlabApiBase,
   gitlabHeaders,
+  gitverseApiBase,
   gitverseBase,
   gitverseHeaders,
   ProviderError,
@@ -419,56 +420,105 @@ async function gitlabOpenPullRequest(
 }
 
 // ---------------------------------------------------------------------------
-// GitVerse (Gitea-style API)
+// GitVerse (public API: api.<host>, GitHub-shaped pulls)
 // ---------------------------------------------------------------------------
 
-const giteaPullSchema = z.object({ html_url: z.string() });
-const giteaPullListSchema = z.array(
-  z.object({
-    html_url: z.string(),
-    head: z.object({ ref: z.string() }),
-    base: z.object({ ref: z.string() }),
-  }),
-);
-const giteaPullLookupSchema = z.array(
-  z.object({
-    number: z.number(),
-    html_url: z.string(),
-    head: z.object({ ref: z.string() }),
-    base: z.object({ ref: z.string() }),
-  }),
-);
+// Merge execution is not part of the documented public API — the message the
+// agent loop records so the task stays awaiting_review for a human.
+const GITVERSE_MERGE_UNSUPPORTED =
+  'gitverse: merge via API is not supported by the public API — merge manually';
+
+const gitversePullSchema = z.object({
+  number: z.number(),
+  html_url: z.string().optional(),
+  head: z.object({ ref: z.string() }),
+  base: z.object({ ref: z.string() }),
+});
+const gitversePullListSchema = z.array(gitversePullSchema);
+const gitverseCreatedPullSchema = z.object({
+  number: z.number(),
+  html_url: z.string().optional(),
+});
+
+// One file entry of a compare / pull-files payload (GitHub-shaped).
+export interface GitverseDiffFile {
+  filename: string;
+  previous_filename?: string;
+  patch?: string;
+}
+
+const gitverseDiffFileSchema = z.object({
+  filename: z.string(),
+  previous_filename: z.string().optional(),
+  patch: z.string().optional(),
+});
+const gitverseCompareSchema = z.object({ files: z.array(gitverseDiffFileSchema) });
+const gitverseFilesSchema = z.array(gitverseDiffFileSchema);
+
+// Assembles unified-diff text from per-file patches. Pure for tests.
+export function assembleUnifiedDiff(files: GitverseDiffFile[]): string {
+  return files
+    .map((file) => {
+      const oldPath = file.previous_filename ?? file.filename;
+      return (
+        `diff --git a/${oldPath} b/${file.filename}\n` +
+        `--- a/${oldPath}\n+++ b/${file.filename}\n${file.patch ?? ''}`
+      );
+    })
+    .join('\n');
+}
+
+// True only when a payload clearly says the PR is not mergeable.
+function indicatesUnmergeable(body: unknown): boolean {
+  if (!body || typeof body !== 'object') return false;
+  const state = body as { mergeable?: unknown; mergeable_state?: unknown };
+  return state.mergeable === false || state.mergeable_state === 'dirty';
+}
 
 function gitversePullsUrl(connection: PrConnectionInput, repoFullName: string): string {
-  return `${gitverseBase(connection.baseUrl)}/api/v1/repos/${repoFullName}/pulls`;
+  return `${gitverseApiBase(connection.baseUrl)}/repos/${repoFullName}/pulls`;
 }
 
 function gitverseOpenPullsQueryUrl(
   connection: PrConnectionInput,
-  repoFullName: string,
+  input: PullRequestRefInput,
 ): string {
-  return `${gitversePullsUrl(connection, repoFullName)}?state=open&limit=50`;
+  return (
+    `${gitversePullsUrl(connection, input.repoFullName)}?state=open` +
+    `&head=${encodeURIComponent(input.headBranch)}&per_page=100`
+  );
 }
 
-function matchesGiteaRef(pull: { head: { ref: string }; base: { ref: string } }, input: PullRequestRefInput): boolean {
+function gitversePrWebUrl(
+  connection: PrConnectionInput,
+  repoFullName: string,
+  pull: { number: number; html_url?: string },
+): string {
+  return pull.html_url ?? `${gitverseBase(connection.baseUrl)}/${repoFullName}/pulls/${pull.number}`;
+}
+
+function matchesGitverseRef(
+  pull: { head: { ref: string }; base: { ref: string } },
+  input: PullRequestRefInput,
+): boolean {
   return pull.head.ref === input.headBranch && pull.base.ref === input.baseBranch;
 }
 
-// Finds the open PR index for the head branch (indexes are not stored).
-async function gitverseLookupPullIndex(
+// Finds the open PR number for the head branch (numbers are not stored).
+async function gitverseLookupPullNumber(
   connection: PrConnectionInput,
   token: string,
   input: PullRequestRefInput,
-): Promise<{ index: number; prUrl: string }> {
-  const url = gitverseOpenPullsQueryUrl(connection, input.repoFullName);
+): Promise<{ number: number; prUrl: string }> {
+  const url = gitverseOpenPullsQueryUrl(connection, input);
   const { body } = await apiRequest('gitverse', 'GET', url, gitverseHeaders(token), token);
-  const match = giteaPullLookupSchema.parse(body).find((pull) => matchesGiteaRef(pull, input));
+  const match = gitversePullListSchema.parse(body).find((pull) => matchesGitverseRef(pull, input));
   if (!match) {
     throw new ProviderError(
       `gitverse: no open pull request for ${input.headBranch} -> ${input.baseBranch}`,
     );
   }
-  return { index: match.number, prUrl: match.html_url };
+  return { number: match.number, prUrl: gitversePrWebUrl(connection, input.repoFullName, match) };
 }
 
 async function gitverseFindExistingPrUrl(
@@ -476,10 +526,43 @@ async function gitverseFindExistingPrUrl(
   token: string,
   input: OpenPullRequestInput,
 ): Promise<string | null> {
-  const url = gitverseOpenPullsQueryUrl(connection, input.repoFullName);
+  const url = gitverseOpenPullsQueryUrl(connection, input);
   const { body } = await apiRequest('gitverse', 'GET', url, gitverseHeaders(token), token);
-  const match = giteaPullListSchema.parse(body).find((pull) => matchesGiteaRef(pull, input));
-  return match?.html_url ?? null;
+  const match = gitversePullListSchema.parse(body).find((pull) => matchesGitverseRef(pull, input));
+  return match ? gitversePrWebUrl(connection, input.repoFullName, match) : null;
+}
+
+// A 409 counts as a conflict only when something clearly says mergeable=false:
+// the error body itself, or the documented GET /pulls/{n}/merge status check.
+async function gitverseConfirmsConflict(
+  mergeUrl: string,
+  token: string,
+  err: ProviderError,
+): Promise<boolean> {
+  if (/conflict|mergeable["']?\s*:\s*false/i.test(err.message)) return true;
+  try {
+    const { body } = await apiRequest('gitverse', 'GET', mergeUrl, gitverseHeaders(token), token);
+    return indicatesUnmergeable(body);
+  } catch {
+    return false; // status check unavailable — cannot confirm a conflict
+  }
+}
+
+async function gitverseMergeFailure(
+  mergeUrl: string,
+  token: string,
+  prUrl: string,
+  err: unknown,
+): Promise<MergePullRequestResult> {
+  if (!(err instanceof ProviderError)) throw err;
+  // 404/405 = the public API has no merge-execution endpoint.
+  if (err.status === 404 || err.status === 405) {
+    throw new ProviderError(GITVERSE_MERGE_UNSUPPORTED, err.status);
+  }
+  if (err.status === 409 && (await gitverseConfirmsConflict(mergeUrl, token, err))) {
+    return { merged: false, conflict: true, prUrl };
+  }
+  throw err;
 }
 
 async function gitverseMergePullRequest(
@@ -487,15 +570,28 @@ async function gitverseMergePullRequest(
   token: string,
   input: PullRequestRefInput,
 ): Promise<MergePullRequestResult> {
-  const { index, prUrl } = await gitverseLookupPullIndex(connection, token, input);
-  const url = `${gitversePullsUrl(connection, input.repoFullName)}/${index}/merge`;
+  const { number, prUrl } = await gitverseLookupPullNumber(connection, token, input);
+  const url = `${gitversePullsUrl(connection, input.repoFullName)}/${number}/merge`;
   try {
-    await apiRequest('gitverse', 'POST', url, gitverseHeaders(token), token, { Do: 'merge' });
+    // GitHub-style merge execution; the public API may not expose it.
+    await apiRequest('gitverse', 'PUT', url, gitverseHeaders(token), token, {});
     return { merged: true, prUrl };
   } catch (err) {
-    // 405 = not mergeable, 409 = head branch moved / conflict.
-    return conflictOrThrow(err, [405, 409], prUrl);
+    return gitverseMergeFailure(url, token, prUrl, err);
   }
+}
+
+// Preferred diff source: the compare endpoint (documented 'git diff' analog).
+async function gitverseCompareDiff(
+  connection: PrConnectionInput,
+  token: string,
+  input: PullRequestRefInput,
+): Promise<string> {
+  const url =
+    `${gitverseApiBase(connection.baseUrl)}/repos/${input.repoFullName}` +
+    `/compare/${input.baseBranch}...${input.headBranch}`;
+  const { body } = await apiRequest('gitverse', 'GET', url, gitverseHeaders(token), token);
+  return assembleUnifiedDiff(gitverseCompareSchema.parse(body).files);
 }
 
 async function gitversePullRequestDiff(
@@ -503,9 +599,15 @@ async function gitversePullRequestDiff(
   token: string,
   input: PullRequestRefInput,
 ): Promise<string> {
-  const { index } = await gitverseLookupPullIndex(connection, token, input);
-  const url = `${gitversePullsUrl(connection, input.repoFullName)}/${index}.diff`;
-  return apiTextRequest('gitverse', url, gitverseHeaders(token), token);
+  try {
+    return await gitverseCompareDiff(connection, token, input);
+  } catch {
+    // Compare unavailable or an unexpected shape — use the PR files endpoint.
+  }
+  const { number } = await gitverseLookupPullNumber(connection, token, input);
+  const url = `${gitversePullsUrl(connection, input.repoFullName)}/${number}/files`;
+  const { body } = await apiRequest('gitverse', 'GET', url, gitverseHeaders(token), token);
+  return assembleUnifiedDiff(gitverseFilesSchema.parse(body));
 }
 
 async function gitverseOpenPullRequest(
@@ -517,15 +619,16 @@ async function gitverseOpenPullRequest(
   return createOrFindExistingPr({
     create: async () => {
       const { body } = await apiRequest('gitverse', 'POST', url, gitverseHeaders(token), token, {
-        head: input.headBranch,
-        base: input.baseBranch,
         title: input.title,
         body: input.body,
+        head: input.headBranch,
+        base: input.baseBranch,
       });
-      return giteaPullSchema.parse(body).html_url;
+      const pull = gitverseCreatedPullSchema.parse(body);
+      return gitversePrWebUrl(connection, input.repoFullName, pull);
     },
-    // 409 = a PR for this head branch already exists.
-    alreadyExistsStatuses: [409],
+    // 409/422 = a PR for this head branch already exists.
+    alreadyExistsStatuses: [409, 422],
     findExisting: () => gitverseFindExistingPrUrl(connection, token, input),
   });
 }

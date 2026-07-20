@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Loader2, Paperclip, Send, X } from 'lucide-react';
+import { Loader2, Paperclip, Plus, Send, X } from 'lucide-react';
 
 import { defaultRepositoryId } from '@/lib/default-repository';
 import {
@@ -23,6 +23,14 @@ import {
 import { ProviderIcon } from '@/lib/providers';
 import { useWorkspaceSelection } from '@/lib/selection';
 import { Button } from '@/components/ui/button';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import { FormField } from '@/components/ui/form-field';
 import {
   Select,
   SelectContent,
@@ -66,7 +74,7 @@ function readFileAsDataUrl(file: File): Promise<string> {
 }
 
 /** Composer state: repo choice (defaults follow the selected task), prompt, submit. */
-function useTaskComposer() {
+function useTaskComposer(onSubmitted?: () => void) {
   const repositoriesQuery = useRepositories();
   const llmConfigsQuery = useLlmConfigs();
   const createTask = useCreateTask();
@@ -128,6 +136,7 @@ function useTaskComposer() {
           });
           setPrompt('');
           setImages([]);
+          onSubmitted?.();
         },
       },
     );
@@ -340,58 +349,103 @@ function submitOnCmdEnter(event: React.KeyboardEvent<HTMLTextAreaElement>, submi
   }
 }
 
+function ComposerToolbar({ composer }: { composer: ReturnType<typeof useTaskComposer> }) {
+  return (
+    <div className="flex items-end gap-2 px-2 pb-2">
+      <FormField label="Repository (the agent clones this repo and implements the task there)">
+        <ComposerRepoSelect
+          repositories={composer.repositories}
+          repositoryId={composer.repositoryId}
+          onChange={composer.setManualRepositoryId}
+        />
+      </FormField>
+      <ThinkingLevelSelect value={composer.thinkingLevel} onChange={composer.setThinkingLevel} />
+      <ContextRing tokens={composer.estimatedTokens} contextWindow={composer.contextWindow} />
+      <div className="flex-1" />
+      <AttachImagesButton
+        disabled={composer.images.length >= MAX_IMAGES}
+        onFiles={composer.addImageFiles}
+      />
+      <SendButton
+        canSend={composer.canSend}
+        pending={composer.createTask.isPending}
+        onClick={composer.submit}
+      />
+    </div>
+  );
+}
+
 /**
- * Bottom bar of the agent console — chat-style composer that starts a new
- * prompt task on a chosen repository and selects it. The auto-growing
- * textarea submits on Cmd/Ctrl+Enter or the send button; the toolbar below
- * carries the repo picker, per-prompt thinking level, a context-usage ring,
- * and image attachments. Disabled while a task is being created or when no
- * repositories are connected.
+ * Modal composer that starts a new prompt task on a chosen repository and
+ * selects it. The auto-growing textarea sits on top and submits on
+ * Cmd/Ctrl+Enter or the send button; the toolbar under it carries the repo
+ * picker, per-prompt thinking level, a context-usage ring, and image
+ * attachments. Closes on successful submit.
  */
-export function TaskComposer() {
-  const composer = useTaskComposer();
+export function TaskComposerDialog({
+  open,
+  onOpenChange,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const composer = useTaskComposer(() => onOpenChange(false));
   const textareaRef = useAutoResizeTextarea(composer.prompt);
 
   return (
-    <div className="border-t px-3 py-2">
-      {composer.createTask.isError && (
-        <p className="pb-2 text-xs text-destructive">{composer.createTask.error.message}</p>
-      )}
-      <div className="rounded-lg border bg-background shadow-sm focus-within:ring-1 focus-within:ring-ring">
-        <ImageThumbnails images={composer.images} onRemove={composer.removeImage} />
-        <Textarea
-          ref={textareaRef}
-          value={composer.prompt}
-          onChange={(event) => composer.setPrompt(event.target.value)}
-          onKeyDown={(event) => submitOnCmdEnter(event, composer.submit)}
-          placeholder="Describe a task for the agent… (⌘/Ctrl+Enter to send)"
-          rows={TEXTAREA_MIN_ROWS}
-          aria-label="Prompt"
-          className="resize-none overflow-y-auto border-0 shadow-none focus-visible:ring-0"
-        />
-        <div className="flex items-center gap-2 px-2 pb-2">
-          <ComposerRepoSelect
-            repositories={composer.repositories}
-            repositoryId={composer.repositoryId}
-            onChange={composer.setManualRepositoryId}
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-xl">
+        <DialogHeader>
+          <DialogTitle>New task</DialogTitle>
+          <DialogDescription>
+            The agent clones the selected repository, implements your task, and opens a pull
+            request.
+          </DialogDescription>
+        </DialogHeader>
+        {composer.createTask.isError && (
+          <p className="text-xs text-destructive">{composer.createTask.error.message}</p>
+        )}
+        <div className="rounded-lg border bg-background shadow-sm focus-within:ring-1 focus-within:ring-ring">
+          <ImageThumbnails images={composer.images} onRemove={composer.removeImage} />
+          <Textarea
+            ref={textareaRef}
+            value={composer.prompt}
+            onChange={(event) => composer.setPrompt(event.target.value)}
+            onKeyDown={(event) => submitOnCmdEnter(event, composer.submit)}
+            placeholder="Describe a task for the agent… (⌘/Ctrl+Enter to send)"
+            rows={TEXTAREA_MIN_ROWS}
+            aria-label="Prompt"
+            className="resize-none overflow-y-auto border-0 shadow-none focus-visible:ring-0"
           />
-          <ThinkingLevelSelect
-            value={composer.thinkingLevel}
-            onChange={composer.setThinkingLevel}
-          />
-          <ContextRing tokens={composer.estimatedTokens} contextWindow={composer.contextWindow} />
-          <div className="flex-1" />
-          <AttachImagesButton
-            disabled={composer.images.length >= MAX_IMAGES}
-            onFiles={composer.addImageFiles}
-          />
-          <SendButton
-            canSend={composer.canSend}
-            pending={composer.createTask.isPending}
-            onClick={composer.submit}
-          />
+          <ComposerToolbar composer={composer} />
         </div>
-      </div>
-    </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/** Floating round '+' trigger at the bottom-right of the console pane. */
+export function TaskComposerFab() {
+  const [open, setOpen] = React.useState(false);
+  return (
+    <>
+      <TooltipProvider delayDuration={300}>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              type="button"
+              size="icon"
+              onClick={() => setOpen(true)}
+              aria-label="New task"
+              className="absolute bottom-4 right-4 z-10 h-11 w-11 rounded-full shadow-lg"
+            >
+              <Plus className="h-5 w-5" aria-hidden />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent side="left">New task</TooltipContent>
+        </Tooltip>
+      </TooltipProvider>
+      <TaskComposerDialog open={open} onOpenChange={setOpen} />
+    </>
   );
 }

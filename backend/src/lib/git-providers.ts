@@ -200,79 +200,84 @@ async function gitlabProfile(
 // GitVerse
 // ---------------------------------------------------------------------------
 
-// GitVerse's public API is limited and partially undocumented; the calls are
-// isolated here so failures surface with a clear, provider-specific error.
-// Cloning always works over HTTPS with the token embedded (see
-// cloneUrlWithToken), regardless of API availability.
+// GitVerse's public API (gitverse.ru/docs/developers/public-api) is
+// GitHub-shaped and lives on the api. subdomain of the instance. Every call
+// needs the vendor Accept header; tokens authenticate as Bearer.
+// Cloning works over HTTPS with the token embedded (see cloneUrlWithToken).
 
+export const GITVERSE_API = 'https://api.gitverse.ru';
+export const GITVERSE_ACCEPT = 'application/vnd.gitverse.object+json;version=1';
+
+// Web base URL of the GitVerse instance (clone + PR page URLs).
 export function gitverseBase(baseUrl?: string | null): string {
   return (baseUrl ?? config.GITVERSE_BASE_URL).replace(/\/+$/, '');
 }
 
-// GitVerse exposes a Gitea-style API: PATs go in the Authorization header.
+// REST API base for a connection: the api. subdomain of the web host.
+export function gitverseApiBase(baseUrl?: string | null): string {
+  if (!baseUrl) return GITVERSE_API;
+  return `https://api.${new URL(gitverseBase(baseUrl)).host}`;
+}
+
 export function gitverseHeaders(token: string): Record<string, string> {
-  return { Authorization: `token ${token}` };
+  return { Authorization: `Bearer ${token}`, Accept: GITVERSE_ACCEPT };
 }
 
-async function gitverseApi(
-  baseUrl: string | null | undefined,
-  token: string,
-  path: string,
-): Promise<unknown> {
-  try {
-    return await requestJson(`${gitverseBase(baseUrl)}${path}`, gitverseHeaders(token), 'gitverse');
-  } catch (err) {
-    if (err instanceof ProviderError) {
-      throw new ProviderError(
-        `gitverse: API call ${path} failed (${err.message}). ` +
-          'The GitVerse API is limited; if this endpoint is unavailable, ' +
-          'cloning still works via the HTTPS token URL.',
-        err.status,
-      );
-    }
-    throw err;
-  }
-}
-
-interface GitverseRepo {
+export interface GitverseRepo {
   id: number | string;
   name: string;
   full_name: string;
-  clone_url?: string;
+  clone_url?: string | null;
   default_branch?: string | null;
+}
+
+// Maps the GitHub-shaped API repo to the normalized shape; pure for tests.
+export function normalizeGitverseRepo(
+  repo: GitverseRepo,
+  baseUrl?: string | null,
+): NormalizedRepo {
+  return {
+    externalId: String(repo.id),
+    name: repo.name,
+    fullName: repo.full_name,
+    cloneUrl: repo.clone_url ?? `${gitverseBase(baseUrl)}/${repo.full_name}.git`,
+    defaultBranch: repo.default_branch ?? 'main',
+  };
 }
 
 async function gitverseListRepos(
   baseUrl: string | null | undefined,
   token: string,
 ): Promise<NormalizedRepo[]> {
-  const data = (await gitverseApi(baseUrl, token, '/api/v1/user/repos?limit=100')) as
-    | GitverseRepo[]
-    | { repos?: GitverseRepo[] };
-  const list = Array.isArray(data) ? data : (data.repos ?? []);
-  const base = gitverseBase(baseUrl);
-  return list.map((repo) => ({
-    externalId: String(repo.id),
-    name: repo.name,
-    fullName: repo.full_name,
-    cloneUrl: repo.clone_url ?? `${base}/${repo.full_name}.git`,
-    defaultBranch: repo.default_branch ?? 'main',
-  }));
+  const repos: NormalizedRepo[] = [];
+  // Paginate with page/per_page (the API also sends Link rel="next"; a short
+  // page means we are done either way).
+  for (let page = 1; ; page += 1) {
+    const data = (await requestJson(
+      `${gitverseApiBase(baseUrl)}/user/repos?per_page=100&page=${page}`,
+      gitverseHeaders(token),
+      'gitverse',
+    )) as GitverseRepo[];
+    for (const repo of data) {
+      repos.push(normalizeGitverseRepo(repo, baseUrl));
+    }
+    if (data.length < 100) return repos;
+  }
 }
 
 async function gitverseProfile(
   baseUrl: string | null | undefined,
   token: string,
 ): Promise<ProviderProfile> {
-  const data = (await gitverseApi(baseUrl, token, '/api/v1/user')) as {
-    login?: string;
-    username?: string;
-  };
-  const username = data.login ?? data.username;
-  if (!username) {
-    throw new ProviderError('gitverse: /api/v1/user did not return a username');
+  const data = (await requestJson(
+    `${gitverseApiBase(baseUrl)}/user`,
+    gitverseHeaders(token),
+    'gitverse',
+  )) as { login?: string };
+  if (!data.login) {
+    throw new ProviderError('gitverse: GET /user did not return a login');
   }
-  return { username };
+  return { username: data.login };
 }
 
 // Returns an https clone URL with the token embedded, for use at clone time
