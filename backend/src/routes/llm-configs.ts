@@ -77,7 +77,9 @@ function toClientParams(record: LlmConfig) {
 }
 
 const TEST_PROMPT = 'Reply with the word ok';
-const TEST_MAX_TOKENS = 8;
+// Reasoning models (e.g. Kimi k3) spend tokens on reasoning_content first —
+// 8 tokens would be exhausted before any visible reply.
+const TEST_MAX_TOKENS = 64;
 const TEST_TIMEOUT_CAP_SECONDS = 30;
 
 // Clears the isDefault flag on the user's other configs (single home for
