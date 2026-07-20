@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildRerunUpdate, buildStartUpdate, rerunBlocker, startBlocker, startBodySchema } from '../src/routes/tasks.js';
+import { buildRerunUpdate, buildStartUpdate, rerunBlocker, startBlocker, startBodySchema, wantsSse } from '../src/routes/tasks.js';
 
 // Locking tests for POST /tasks/:id/start eligibility: only pending proposal
 // tasks can be started (queued → enqueued) by the user.
@@ -104,5 +104,21 @@ describe('buildRerunUpdate', () => {
       branchName: null,
       prUrl: null,
     });
+  });
+});
+
+// Event-endpoint negotiation: SSE only when the client explicitly asks for
+// it (EventSource always sends Accept: text/event-stream); anything else —
+// including fetch's default — gets the JSON history.
+describe('wantsSse', () => {
+  it('is true only for an explicit text/event-stream accept', () => {
+    expect(wantsSse('text/event-stream')).toBe(true);
+    expect(wantsSse('text/event-stream, application/json')).toBe(true);
+  });
+
+  it('is false for json, wildcard, or missing accept', () => {
+    expect(wantsSse('application/json')).toBe(false);
+    expect(wantsSse('*/*')).toBe(false);
+    expect(wantsSse(undefined)).toBe(false);
   });
 });

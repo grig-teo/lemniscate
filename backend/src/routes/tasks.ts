@@ -261,6 +261,14 @@ async function cancelTask(request: FastifyRequest, reply: FastifyReply) {
   return { task: updated };
 }
 
+// SSE is served only when the client explicitly asks for it (EventSource
+// always sends Accept: text/event-stream). Everything else — fetch's
+// default included — gets the JSON history; otherwise a plain fetch hangs
+// on the open stream forever ("Loading task history…" bug).
+export function wantsSse(accept: string | undefined): boolean {
+  return accept?.includes('text/event-stream') ?? false;
+}
+
 // Task events: full history as JSON when the client asks for it,
 // otherwise a live SSE stream (history replay + pub/sub follow).
 async function getTaskEvents(request: FastifyRequest, reply: FastifyReply) {
@@ -275,7 +283,7 @@ async function getTaskEvents(request: FastifyRequest, reply: FastifyReply) {
     return reply.code(404).send({ error: 'Task not found' });
   }
 
-  if (request.headers.accept?.includes('application/json')) {
+  if (!wantsSse(request.headers.accept)) {
     const events = await prisma.taskEvent.findMany({
       where: { taskId: task.id },
       orderBy: { createdAt: 'asc' },

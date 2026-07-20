@@ -57,7 +57,10 @@ async function request<T>(method: string, path: string, body?: JsonBody): Promis
   const res = await fetch(`${BASE_URL}${path}`, {
     method,
     credentials: 'include',
-    headers: body !== undefined ? { 'Content-Type': 'application/json' } : undefined,
+    headers: {
+      Accept: 'application/json',
+      ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}),
+    },
     body: body !== undefined ? JSON.stringify(body) : undefined,
   });
 
