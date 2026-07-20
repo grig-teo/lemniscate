@@ -95,15 +95,19 @@ export function RepoTree({ width }: { width: number }) {
         </span>
       </div>
 
-      <ScrollArea className="flex-1">
-        <RepoTreeBody
-          reposQuery={reposQuery}
-          groups={groups}
-          syncing={syncConnection.isPending}
-          onSync={(connectionId) => syncConnection.mutate(connectionId)}
-          expanded={expanded}
-          onToggleRepo={toggle}
-        />
+      <ScrollArea className="flex-1" horizontal>
+        {/* Natural content width lets long names overflow into the
+            horizontal scrollbar instead of truncating. */}
+        <div className="w-max min-w-full">
+          <RepoTreeBody
+            reposQuery={reposQuery}
+            groups={groups}
+            syncing={syncConnection.isPending}
+            onSync={(connectionId) => syncConnection.mutate(connectionId)}
+            expanded={expanded}
+            onToggleRepo={toggle}
+          />
+        </div>
       </ScrollArea>
     </aside>
   );
