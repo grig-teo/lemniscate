@@ -1,0 +1,18 @@
+# Production override — used on the VPS behind the host nginx at a subpath.
+# Usage: docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+# Bind exposed services to localhost only, on non-default ports (3000/8080 are
+# taken by other apps on the host); postgres/redis stay inside the network.
+services:
+  postgres:
+    ports: !reset []
+
+  redis:
+    ports: !reset []
+
+  backend:
+    ports: !reset
+      - "127.0.0.1:3100:3000"
+
+  frontend:
+    ports: !reset
+      - "127.0.0.1:8180:80"
