@@ -1,51 +1,52 @@
 import { describe, expect, it } from 'vitest';
 
-import type { Task, TaskStatus } from '@/lib/hooks';
-import { isPendingProposal, PROPOSAL_TARGET_COUNT, splitRepoTasks } from '@/lib/repo-tasks';
+import type { Task } from '@/lib/hooks';
+import {
+  proposalPollInterval,
+  PROPOSAL_POLL_INTERVAL_MS,
+  PROPOSAL_TARGET_COUNT,
+} from '@/lib/repo-tasks';
 
-function makeTask(id: string, status: TaskStatus, kind = 'prompt'): Task {
+function makeTask(overrides: Partial<Task>): Task {
   return {
-    id,
+    id: 't1',
     repositoryId: 'r1',
-    kind,
-    title: `Task ${id}`,
-    status,
-    createdAt: '2026-01-01T00:00:00.000Z',
-    updatedAt: '2026-01-01T00:00:00.000Z',
+    kind: 'proposal',
+    title: 'Do a thing',
+    status: 'pending',
+    createdAt: '2024-01-01T00:00:00Z',
+    updatedAt: '2024-01-01T00:00:00Z',
+    ...overrides,
   };
 }
 
-describe('isPendingProposal', () => {
-  it('is true only for proposal tasks still pending', () => {
-    expect(isPendingProposal(makeTask('t1', 'pending', 'proposal'))).toBe(true);
+function pendingProposals(count: number): Task[] {
+  return Array.from({ length: count }, (_, i) => makeTask({ id: `t${i}` }));
+}
+
+describe('proposalPollInterval', () => {
+  it('polls when no tasks have loaded yet', () => {
+    expect(proposalPollInterval(undefined)).toBe(PROPOSAL_POLL_INTERVAL_MS);
   });
 
-  it('is false for started proposals and pending prompts', () => {
-    expect(isPendingProposal(makeTask('t1', 'queued', 'proposal'))).toBe(false);
-    expect(isPendingProposal(makeTask('t2', 'pending', 'prompt'))).toBe(false);
+  it('polls while pending proposals are below the target count', () => {
+    expect(proposalPollInterval([])).toBe(PROPOSAL_POLL_INTERVAL_MS);
+    expect(proposalPollInterval(pendingProposals(PROPOSAL_TARGET_COUNT - 1))).toBe(
+      PROPOSAL_POLL_INTERVAL_MS,
+    );
   });
-});
 
-describe('splitRepoTasks', () => {
-  it('puts fresh proposals first and everything else in processes, order preserved', () => {
+  it('stops polling once the target count of pending proposals is reached', () => {
+    expect(proposalPollInterval(pendingProposals(PROPOSAL_TARGET_COUNT))).toBe(false);
+    expect(proposalPollInterval(pendingProposals(PROPOSAL_TARGET_COUNT + 2))).toBe(false);
+  });
+
+  it('ignores non-proposal and started tasks', () => {
     const tasks = [
-      makeTask('p1', 'pending', 'proposal'),
-      makeTask('r1', 'running', 'prompt'),
-      makeTask('p2', 'pending', 'proposal'),
-      makeTask('q1', 'queued', 'proposal'),
+      ...pendingProposals(1),
+      makeTask({ id: 'p1', kind: 'prompt' }),
+      makeTask({ id: 's1', status: 'running' }),
     ];
-    const { proposals, processes } = splitRepoTasks(tasks);
-    expect(proposals.map((t) => t.id)).toEqual(['p1', 'p2']);
-    expect(processes.map((t) => t.id)).toEqual(['r1', 'q1']);
-  });
-
-  it('returns empty groups for no tasks', () => {
-    expect(splitRepoTasks([])).toEqual({ proposals: [], processes: [] });
-  });
-});
-
-describe('PROPOSAL_TARGET_COUNT', () => {
-  it('is 5 (the badge target)', () => {
-    expect(PROPOSAL_TARGET_COUNT).toBe(5);
+    expect(proposalPollInterval(tasks)).toBe(PROPOSAL_POLL_INTERVAL_MS);
   });
 });

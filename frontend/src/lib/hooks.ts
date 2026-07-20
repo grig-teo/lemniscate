@@ -5,7 +5,7 @@
  * contract — payloads are camelCase and LLM configs never include `apiKey`
  * in responses (`hasApiKey` flags whether one is stored).
  */
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient, type UseQueryOptions } from '@tanstack/react-query';
 
 import { api } from '@/lib/api';
 
@@ -211,10 +211,14 @@ function tasksPath(repositoryId: string | null | undefined): string {
 }
 
 /** Tasks for one repository, or all of the user's tasks (cap 100) when no id is given. */
-export function useTasks(repositoryId?: string | null) {
+export function useTasks(
+  repositoryId?: string | null,
+  options?: { refetchInterval?: UseQueryOptions<Task[]>['refetchInterval'] },
+) {
   return useQuery({
     queryKey: ['tasks', repositoryId ?? null],
     queryFn: () => api.get<{ tasks: Task[] }>(tasksPath(repositoryId)).then((res) => res.tasks),
+    refetchInterval: options?.refetchInterval,
   });
 }
 
@@ -271,11 +275,9 @@ export function useSyncConnection() {
 }
 
 interface RepoFlagsPatch {
-  autoPropose?: boolean;
   autoCreatePr?: boolean;
   autoReviewPr?: boolean;
   autoMergePr?: boolean;
-  hidden?: boolean;
 }
 
 /** PATCH /api/repositories/:id with an optimistic cache update. */

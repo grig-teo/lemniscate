@@ -1,15 +1,17 @@
 import { Queue } from 'bullmq';
 import { Redis } from 'ioredis';
 import { config } from '../config.js';
+import { MAX_PENDING_PROPOSALS } from './agent-proposals.js';
 import { prisma } from './prisma.js';
 
 // BullMQ queue shared by the API (enqueueing tasks) and the worker
-// (repeatable 'generate-proposals' jobs). The queue name is pinned —
+// (repeatable 'proposals-topup' job). The queue name is pinned —
 // the worker consumes the same name.
 
 export const AGENT_QUEUE_NAME = 'agent-tasks';
 
-const PROPOSAL_INTERVAL_MS = 6 * 60 * 60 * 1000; // every 6h
+const PROPOSAL_TOPUP_INTERVAL_MS = 6 * 60 * 60 * 1000; // every 6h
+const TOPUP_SCHEDULER_ID = 'proposals-topup';
 
 let queue: Queue | null = null;
 
@@ -22,32 +24,40 @@ export function getAgentTasksQueue(): Queue {
   return queue;
 }
 
-const schedulerIdFor = (repositoryId: string): string => `proposals:${repositoryId}`;
-
-// Registers (or refreshes) a repeatable 'generate-proposals' job for the repo.
-export async function scheduleProposals(repositoryId: string): Promise<void> {
+// Registers the single global repeatable 'proposals-topup' job. Called at
+// worker startup so the schedule survives Redis flushes and redeploys.
+export async function registerProposalTopUpSchedule(): Promise<void> {
   await getAgentTasksQueue().upsertJobScheduler(
-    schedulerIdFor(repositoryId),
-    { every: PROPOSAL_INTERVAL_MS },
-    { name: 'generate-proposals', data: { repositoryId } },
+    TOPUP_SCHEDULER_ID,
+    { every: PROPOSAL_TOPUP_INTERVAL_MS },
+    { name: 'proposals-topup', data: {} },
   );
 }
 
-export async function unscheduleProposals(repositoryId: string): Promise<void> {
-  await getAgentTasksQueue().removeJobScheduler(schedulerIdFor(repositoryId));
+// Pending proposal count per repository (repos with none are absent).
+async function pendingProposalCounts(): Promise<Map<string, number>> {
+  const grouped = await prisma.task.groupBy({
+    by: ['repositoryId'],
+    where: { kind: 'proposal', status: 'pending' },
+    _count: { repositoryId: true },
+  });
+  return new Map(grouped.map((row) => [row.repositoryId, row._count.repositoryId]));
 }
 
-// Re-adds repeatable jobs for every repo with autoPropose=true. Called at
-// worker startup so schedules survive Redis flushes and redeploys.
-export async function bootstrapProposalSchedules(): Promise<void> {
-  const repositories = await prisma.repository.findMany({
-    where: { autoPropose: true },
-    select: { id: true },
-  });
+// Job: proposals-topup — enqueues 'generate-proposals' for every repository
+// below MAX_PENDING_PROPOSALS pending proposals, keeping each repo topped up.
+export async function enqueueProposalTopUps(): Promise<void> {
+  const repositories = await prisma.repository.findMany({ select: { id: true } });
+  const counts = await pendingProposalCounts();
+  let enqueued = 0;
   for (const repository of repositories) {
-    await scheduleProposals(repository.id);
+    if ((counts.get(repository.id) ?? 0) >= MAX_PENDING_PROPOSALS) continue;
+    await enqueueGenerateProposalsNow(repository.id);
+    enqueued += 1;
   }
-  console.log(`bootstrapped ${repositories.length} proposal schedule(s)`);
+  console.log(
+    `proposals-topup: enqueued generation for ${enqueued}/${repositories.length} repositories`,
+  );
 }
 
 // Enqueues a 'run-task' job. jobId dedupes concurrent enqueues of the same task.
@@ -59,13 +69,15 @@ export async function enqueueRunTask(taskId: string): Promise<void> {
   );
 }
 
-// Enqueues a one-shot 'generate-proposals' job (e.g. when autoPropose is
-// toggled on). jobId dedupes concurrent enqueues for the same repo.
+// Enqueues a one-shot 'generate-proposals' job (round button / top-up).
+// jobId dedupes enqueues only while a job is waiting/active: finished jobs
+// are removed immediately, otherwise BullMQ would keep them and silently
+// swallow every later enqueue for the same repo.
 export async function enqueueGenerateProposalsNow(repositoryId: string): Promise<void> {
   await getAgentTasksQueue().add(
     'generate-proposals',
     { repositoryId },
-    { jobId: `generate-proposals:${repositoryId}`, removeOnComplete: 100, removeOnFail: 100 },
+    { jobId: `generate-proposals:${repositoryId}`, removeOnComplete: true, removeOnFail: true },
   );
 }
 

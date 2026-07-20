@@ -75,8 +75,8 @@ function RepoTreeBody({
  * LEFT pane — repository sidebar.
  *
  * Repositories grouped by git-host connection (provider icon + username),
- * each repo expandable to show its tasks; per-repo toggles (autoPropose,
- * autoCreatePr, autoReviewPr, autoMergePr); per-group Sync. New prompt
+ * each repo expandable to show its tasks; per-repo toggles (autoCreatePr,
+ * autoReviewPr, autoMergePr); per-group Sync. New prompt
  * tasks are started from the + button in the console pane (opens the
  * composer dialog).
  */

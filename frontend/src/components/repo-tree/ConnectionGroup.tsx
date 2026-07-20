@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { ChevronDown, ChevronRight, Eye, EyeOff, RefreshCw } from 'lucide-react';
+import { ChevronDown, ChevronRight, RefreshCw } from 'lucide-react';
 
 import type { ConnectionGroup as ConnectionGroupData } from '@/lib/group-repos';
 import { providerLabel, ProviderIcon } from '@/lib/providers';
@@ -27,10 +27,6 @@ export function ConnectionGroup({
 }) {
   const label = providerLabel(group.provider, 'capitalized');
   const [collapsed, setCollapsed] = useState(false);
-  const [showHidden, setShowHidden] = useState(false);
-  const hiddenCount = group.repos.filter((repo) => repo.hidden).length;
-  const visibleRepos = showHidden ? group.repos : group.repos.filter((repo) => !repo.hidden);
-  const HiddenIcon = showHidden ? EyeOff : Eye;
   const Chevron = collapsed ? ChevronRight : ChevronDown;
   return (
     <div className="border-b last:border-b-0">
@@ -50,26 +46,10 @@ export function ConnectionGroup({
           <span className="truncate text-xs font-semibold">{label}</span>
           <span className="truncate text-xs text-muted-foreground">@{group.username}</span>
         </button>
-        {hiddenCount > 0 && (
-          <Button
-            variant="ghost"
-            size="icon"
-            className="ml-auto h-6 w-6 shrink-0"
-            aria-label={
-              showHidden ? 'Hide hidden repositories' : `Show ${hiddenCount} hidden repositories`
-            }
-            onClick={(event) => {
-              event.stopPropagation();
-              setShowHidden((prev) => !prev);
-            }}
-          >
-            <HiddenIcon className="h-3.5 w-3.5" />
-          </Button>
-        )}
         <Button
           variant="ghost"
           size="icon"
-          className={cn('h-6 w-6 shrink-0', hiddenCount === 0 && 'ml-auto')}
+          className="ml-auto h-6 w-6 shrink-0"
           aria-label={`Sync ${label} repositories`}
           disabled={syncing}
           onClick={(event) => {
@@ -82,7 +62,7 @@ export function ConnectionGroup({
       </div>
 
       {!collapsed &&
-        visibleRepos.map((repo) => (
+        group.repos.map((repo) => (
           <RepoRow
             key={repo.id}
             repo={repo}

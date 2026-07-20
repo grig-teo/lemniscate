@@ -1,4 +1,4 @@
-import type { FastifyPluginAsync, FastifyRequest } from 'fastify';
+import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 import { prisma } from '../lib/prisma.js';
 import { authenticatedUserId, requireAuth } from '../plugins/auth.js';
@@ -8,7 +8,6 @@ const idParamsSchema = z.object({ id: z.string().min(1) });
 
 const patchBodySchema = z
   .object({
-    autoPropose: z.boolean().optional(),
     autoCreatePr: z.boolean().optional(),
     autoReviewPr: z.boolean().optional(),
     autoMergePr: z.boolean().optional(),
@@ -23,7 +22,6 @@ type PatchBody = z.infer<typeof patchBodySchema>;
 // Only the fields that were actually sent are written.
 export function buildPatchData(data: PatchBody) {
   return {
-    ...(data.autoPropose !== undefined ? { autoPropose: data.autoPropose } : {}),
     ...(data.autoCreatePr !== undefined ? { autoCreatePr: data.autoCreatePr } : {}),
     ...(data.autoReviewPr !== undefined ? { autoReviewPr: data.autoReviewPr } : {}),
     ...(data.autoMergePr !== undefined ? { autoMergePr: data.autoMergePr } : {}),
@@ -48,29 +46,6 @@ async function ownedLlmConfigExists(userId: string, llmConfigId: string): Promis
     select: { id: true },
   });
   return llmConfig !== null;
-}
-
-// Keeps the worker's repeatable 'generate-proposals' job in sync with the
-// autoPropose flag; turning it on also triggers one generation run right
-// away. Scheduling/enqueue failure must not fail the PATCH — log it.
-async function syncProposalSchedule(
-  request: FastifyRequest,
-  repositoryId: string,
-  autoPropose: boolean | undefined,
-  previous: boolean,
-): Promise<void> {
-  if (autoPropose === undefined || autoPropose === previous) return;
-  try {
-    const scheduler = await import('../lib/proposal-scheduler.js');
-    if (autoPropose) {
-      await scheduler.scheduleProposals(repositoryId);
-      await scheduler.enqueueGenerateProposalsNow(repositoryId);
-    } else {
-      await scheduler.unscheduleProposals(repositoryId);
-    }
-  } catch (err) {
-    request.log.error({ err }, 'failed to update proposal schedule');
-  }
 }
 
 const repositoriesRoutes: FastifyPluginAsync = async (app) => {
@@ -99,7 +74,7 @@ const repositoriesRoutes: FastifyPluginAsync = async (app) => {
 
     const repository = await prisma.repository.findFirst({
       where: { id: params.id, connection: { userId } },
-      select: { id: true, autoPropose: true, autoReviewPr: true },
+      select: { id: true, autoReviewPr: true },
     });
     if (!repository) {
       return reply.code(404).send({ error: 'Repository not found' });
@@ -118,7 +93,6 @@ const repositoriesRoutes: FastifyPluginAsync = async (app) => {
         connection: { select: { provider: true, username: true } },
       },
     });
-    await syncProposalSchedule(request, repository.id, data.autoPropose, repository.autoPropose);
     return { repository: updated };
   });
 

@@ -11,6 +11,6 @@ describe('buildPatchData', () => {
 
   it('omits hidden when it was not sent', () => {
     expect(buildPatchData({})).toEqual({});
-    expect(buildPatchData({ autoPropose: true })).toEqual({ autoPropose: true });
+    expect(buildPatchData({ autoCreatePr: true })).toEqual({ autoCreatePr: true });
   });
 });

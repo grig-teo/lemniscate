@@ -15,7 +15,7 @@ import { buildRepoContext } from './repo-context.js';
 
 type RepositoryWithConnection = Repository & { connection: GitConnection };
 
-const MAX_PENDING_PROPOSALS = 5;
+export const MAX_PENDING_PROPOSALS = 5;
 
 type PendingProposalState = { titles: Set<string>; pendingCount: number };
 
@@ -91,8 +91,16 @@ export async function generateProposals(repositoryId: string): Promise<void> {
     console.error(`generate-proposals: repository ${repositoryId} not found`);
     return;
   }
-  // No autoPropose check: the repeatable job is only scheduled while the flag
-  // is on, and the round-button endpoint triggers this job manually.
+  // Triggered by the round-button endpoint and the global 'proposals-topup'
+  // repeatable job. Bail out before cloning when the repo is already topped
+  // up — the LLM call would only produce proposals that get created: 0.
+  const { pendingCount } = await loadPendingProposalState(repositoryId);
+  if (pendingCount >= MAX_PENDING_PROPOSALS) {
+    console.log(
+      `generate-proposals: ${repository.fullName}: ${MAX_PENDING_PROPOSALS} proposals already pending, skipping`,
+    );
+    return;
+  }
 
   const secrets: string[] = [];
   const workdir = path.join(config.AGENT_WORKDIR, `proposals-${repositoryId}`);

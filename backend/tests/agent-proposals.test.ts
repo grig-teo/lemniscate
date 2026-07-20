@@ -108,6 +108,18 @@ describe('generateProposals', () => {
     expect(mocks.taskCreate).not.toHaveBeenCalled();
   });
 
+  it('exits before cloning or calling the LLM when 5 proposals are pending', async () => {
+    mocks.repositoryFindUnique.mockResolvedValue(stubRepository());
+    mocks.taskFindMany.mockResolvedValue(
+      [1, 2, 3, 4, 5].map((i) => ({ title: `Old ${i}`, status: 'pending' })),
+    );
+    await generateProposals('repo-1');
+    expect(mocks.prepareAgentRuntime).not.toHaveBeenCalled();
+    expect(mocks.cloneRepository).not.toHaveBeenCalled();
+    expect(mocks.requestProposals).not.toHaveBeenCalled();
+    expect(mocks.taskCreate).not.toHaveBeenCalled();
+  });
+
   it('generates even when autoPropose is off (manual round-button trigger)', async () => {
     stubHappyPath([proposal(1)]);
     mocks.repositoryFindUnique.mockResolvedValue({ ...stubRepository(), autoPropose: false });

@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { ChevronDown, ChevronRight, Eye, EyeOff, Settings } from 'lucide-react';
+import { ChevronDown, ChevronRight, Settings } from 'lucide-react';
 
 import { useUpdateRepositoryFlags, type Repository } from '@/lib/hooks';
 import { repoDisplayName } from '@/lib/repo-display';
@@ -54,12 +54,6 @@ function RepoFlags({ repo }: { repo: Repository }) {
   return (
     <div className="flex flex-wrap items-center gap-x-4 gap-y-1 pl-7 pr-1 pt-0.5">
       <FlagSwitch
-        label="propose"
-        ariaLabel={`Auto-propose for ${repo.fullName}`}
-        checked={repo.autoPropose}
-        onChange={(checked) => patch({ autoPropose: checked })}
-      />
-      <FlagSwitch
         label="PR"
         ariaLabel={`Auto-create PR for ${repo.fullName}`}
         checked={repo.autoCreatePr}
@@ -110,7 +104,6 @@ export function RepoRow({
         >
           <Settings className="h-3.5 w-3.5" />
         </Button>
-        <HideRepoButton repo={repo} />
       </div>
 
       {settingsOpen && <RepoFlags repo={repo} />}
@@ -140,22 +133,5 @@ function RepoToggle({
       <Chevron className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
       <span className="truncate font-medium">{repoDisplayName(repo)}</span>
     </button>
-  );
-}
-
-/** Hide/unhide the repo in the tree — eye hides, eye-off restores a revealed hidden repo. */
-function HideRepoButton({ repo }: { repo: Repository }) {
-  const updateFlags = useUpdateRepositoryFlags();
-  const Icon = repo.hidden ? EyeOff : Eye;
-  return (
-    <Button
-      variant="ghost"
-      size="icon"
-      className="h-6 w-6 shrink-0"
-      aria-label={repo.hidden ? `Unhide ${repo.fullName}` : `Hide ${repo.fullName}`}
-      onClick={() => updateFlags.mutate({ id: repo.id, patch: { hidden: !repo.hidden } })}
-    >
-      <Icon className="h-3.5 w-3.5" />
-    </Button>
   );
 }

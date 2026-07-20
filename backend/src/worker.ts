@@ -5,7 +5,8 @@ import { config } from './config.js';
 import { generateProposals, reviewTask, runTask } from './lib/agent-loop.js';
 import {
   AGENT_QUEUE_NAME,
-  bootstrapProposalSchedules,
+  enqueueProposalTopUps,
+  registerProposalTopUpSchedule,
 } from './lib/proposal-scheduler.js';
 
 const runTaskDataSchema = z.object({ taskId: z.string().min(1) });
@@ -14,6 +15,7 @@ const reviewPrDataSchema = z.object({
   attempt: z.number().int().min(0).default(0),
 });
 const generateProposalsDataSchema = z.object({ repositoryId: z.string().min(1) });
+const proposalsTopUpDataSchema = z.object({}).strict();
 
 // BullMQ requires maxRetriesPerRequest: null on blocking connections.
 const connection = new Redis(config.REDIS_URL, {
@@ -39,6 +41,11 @@ const worker = new Worker(
         await generateProposals(repositoryId);
         return;
       }
+      case 'proposals-topup': {
+        proposalsTopUpDataSchema.parse(job.data);
+        await enqueueProposalTopUps();
+        return;
+      }
       default:
         throw new Error(`unknown job name: ${job.name}`);
     }
@@ -53,8 +60,8 @@ worker.on('failed', (job, err) => {
 await worker.waitUntilReady();
 console.log(`worker ready, consuming queue '${AGENT_QUEUE_NAME}' via ${config.REDIS_URL}`);
 
-// Re-register repeatable 'generate-proposals' jobs for repos with autoPropose=true.
-await bootstrapProposalSchedules();
+// Register the single global repeatable 'proposals-topup' job (every 6h).
+await registerProposalTopUpSchedule();
 
 for (const signal of ['SIGINT', 'SIGTERM'] as const) {
   process.once(signal, () => {
