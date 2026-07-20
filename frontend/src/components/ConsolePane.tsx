@@ -4,6 +4,7 @@ import { useWorkspaceSelection } from '@/lib/selection';
 
 import { ConsoleHeader } from '@/components/console/ConsoleHeader';
 import { ConsoleLog } from '@/components/console/ConsoleLog';
+import { TaskComposer } from '@/components/console/TaskComposer';
 import { useTaskConsole } from '@/components/console/useTaskConsole';
 
 function EmptyConsole() {
@@ -18,9 +19,10 @@ function EmptyConsole() {
         <Terminal className="h-8 w-8 text-muted-foreground/50" aria-hidden />
         <p className="text-sm text-muted-foreground">Agent output will stream here.</p>
         <p className="text-xs text-muted-foreground/70">
-          Pick a repository on the left and start a task to watch the agent think, edit, and commit.
+          Pick a repository and type a prompt below to watch the agent think, edit, and commit.
         </p>
       </div>
+      <TaskComposer />
     </section>
   );
 }
@@ -33,6 +35,7 @@ function EmptyConsole() {
  * replays history first — replayed events are deduped by id). `status`
  * events update the header badge; `diff` events are forwarded to the
  * workspace selection for the DiffPanel. See console/useTaskConsole.ts.
+ * The bottom TaskComposer starts a new prompt task on a chosen repository.
  */
 export function ConsolePane() {
   const { selectedTask, liveStatus } = useWorkspaceSelection();
@@ -51,6 +54,7 @@ export function ConsolePane() {
         liveLogs={consoleState.liveLogs}
         streamError={consoleState.streamError}
       />
+      <TaskComposer />
     </section>
   );
 }

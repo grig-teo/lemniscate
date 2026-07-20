@@ -11,6 +11,7 @@ export interface SelectedTask {
   title: string;
   status: string;
   kind?: string;
+  repositoryId?: string;
   branchName?: string | null;
   prUrl?: string | null;
 }

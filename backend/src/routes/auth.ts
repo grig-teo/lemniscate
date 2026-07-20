@@ -8,10 +8,12 @@ import { prisma } from '../lib/prisma.js';
 import { syncConnectionByIdBestEffort } from '../lib/repo-sync.js';
 import { errorMessage } from '../lib/utils.js';
 import {
+  AUTH_COOKIE,
   authenticatedUserId,
   clearAuthCookie,
   requireAuth,
   setAuthCookie,
+  verifyAuthToken,
 } from '../plugins/auth.js';
 
 // OAuth login flow for GitHub and GitLab. GitVerse has no public OAuth, so
@@ -178,6 +180,75 @@ async function upsertOAuthConnection(
   return { userId: user.id, connectionId: user.gitConnections[0]?.id as string };
 }
 
+// Returns the logged-in user id from the session cookie, or null when the
+// request carries no valid session (missing/invalid/expired token, or the
+// user was deleted). Used to attach new OAuth connections to the current
+// user instead of creating a new identity.
+async function sessionUserId(request: FastifyRequest): Promise<string | null> {
+  const token = request.cookies[AUTH_COOKIE];
+  if (!token) return null;
+  const userId = verifyAuthToken(token);
+  if (!userId) return null;
+  const user = await prisma.user.findUnique({ where: { id: userId } });
+  return user?.id ?? null;
+}
+
+// Attaches an OAuth connection to the given (logged-in) user. Reconnecting a
+// host refreshes the stored token and re-points the connection at this user —
+// which also merges identities that were split by earlier logins.
+async function attachOAuthConnection(
+  userId: string,
+  provider: OAuthProviderName,
+  username: string,
+  accessToken: string,
+): Promise<string> {
+  const accessTokenEnc = encrypt(accessToken);
+  const existing = await prisma.gitConnection.findFirst({
+    where: { provider, username },
+  });
+  if (existing) {
+    const connection = await prisma.gitConnection.update({
+      where: { id: existing.id },
+      data: { accessTokenEnc, tokenType: 'oauth', userId },
+    });
+    return connection.id;
+  }
+  const connection = await prisma.gitConnection.create({
+    data: { provider, username, accessTokenEnc, tokenType: 'oauth', userId },
+  });
+  return connection.id;
+}
+
+// Decides whose identity the OAuth connection belongs to: the logged-in
+// session user when there is one, otherwise the no-session upsert path.
+async function resolveOAuthIdentity(
+  provider: OAuthProviderName,
+  username: string,
+  accessToken: string,
+  request: FastifyRequest,
+): Promise<{ userId: string; connectionId: string }> {
+  const loggedInUserId = await sessionUserId(request);
+  if (!loggedInUserId) {
+    return upsertOAuthConnection(provider, username, accessToken);
+  }
+  const connectionId = await attachOAuthConnection(loggedInUserId, provider, username, accessToken);
+  return { userId: loggedInUserId, connectionId };
+}
+
+// Sets the session cookie, kicks off a best-effort repo sync, and redirects
+// to the dashboard after a successful OAuth round-trip.
+async function finishOAuthLogin(
+  userId: string,
+  connectionId: string,
+  request: FastifyRequest,
+  reply: FastifyReply,
+): Promise<FastifyReply> {
+  setAuthCookie(reply, userId);
+  // Pull repos right away so the landing/dashboard are populated on first
+  // visit; a failed sync must not break the login.
+  await syncConnectionByIdBestEffort(connectionId, request.log);
+  return reply.redirect(`${config.FRONTEND_URL.replace(/\/+$/, '')}/dashboard`, 302);
+}
 const callbackQuerySchema = z.object({
   code: z.string().min(1),
   state: z.string().min(1),
@@ -211,17 +282,13 @@ async function handleOAuthCallback(
     const accessToken = await exchangeCode(provider, providerConfig, code);
     // OAuth access tokens authenticate as Bearer (matters for GitLab).
     const profile = await fetchProviderProfile(provider, accessToken, null, 'oauth');
-    const { userId, connectionId } = await upsertOAuthConnection(
+    const { userId, connectionId } = await resolveOAuthIdentity(
       provider,
       profile.username,
       accessToken,
+      request,
     );
-    setAuthCookie(reply, userId);
-    // Pull repos right away so the landing/dashboard are populated on first
-    // visit; a failed sync must not break the login.
-    await syncConnectionByIdBestEffort(connectionId, request.log);
-    // Land on the dashboard after a successful OAuth round-trip.
-    return reply.redirect(`${config.FRONTEND_URL.replace(/\/+$/, '')}/dashboard`, 302);
+    return finishOAuthLogin(userId, connectionId, request, reply);
   } catch (err) {
     request.log.error(err, 'oauth callback failed');
     return reply.code(502).send({

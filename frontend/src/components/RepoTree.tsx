@@ -1,13 +1,11 @@
 import * as React from 'react';
-import { GitBranch, Loader2, Plus } from 'lucide-react';
+import { GitBranch, Loader2 } from 'lucide-react';
 
 import { useRepositories, useSyncConnection } from '@/lib/hooks';
 import { groupByConnection, type ConnectionGroup as ConnectionGroupData } from '@/lib/group-repos';
-import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 
 import { ConnectionGroup } from '@/components/repo-tree/ConnectionGroup';
-import { NewPromptDialog } from '@/components/repo-tree/NewPromptDialog';
 import { useExpandedMap } from '@/components/repo-tree/useExpandedMap';
 
 type ReposQuery = ReturnType<typeof useRepositories>;
@@ -78,14 +76,13 @@ function RepoTreeBody({
  *
  * Repositories grouped by git-host connection (provider icon + username),
  * each repo expandable to show its tasks; per-repo toggles (autoPropose,
- * autoCreatePr, autoReviewPr, autoMergePr); per-group Sync; "New prompt"
- * dialog creating a task.
+ * autoCreatePr, autoReviewPr, autoMergePr); per-group Sync. New prompt
+ * tasks are started from the TaskComposer at the bottom of the console pane.
  */
 export function RepoTree() {
   const reposQuery = useRepositories();
   const syncConnection = useSyncConnection();
   const { expanded, toggle } = useExpandedMap();
-  const [promptOpen, setPromptOpen] = React.useState(false);
 
   const groups = React.useMemo(() => groupByConnection(reposQuery.data ?? []), [reposQuery.data]);
 
@@ -107,19 +104,6 @@ export function RepoTree() {
           onToggleRepo={toggle}
         />
       </ScrollArea>
-
-      <div className="border-t p-3">
-        <Button size="sm" className="w-full" onClick={() => setPromptOpen(true)}>
-          <Plus className="h-4 w-4" />
-          New prompt
-        </Button>
-      </div>
-
-      <NewPromptDialog
-        open={promptOpen}
-        onOpenChange={setPromptOpen}
-        repositories={reposQuery.data ?? []}
-      />
     </aside>
   );
 }

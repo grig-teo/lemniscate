@@ -172,6 +172,7 @@ function RepoTasks({ repositoryId }: { repositoryId: string }) {
               title: task.title,
               status: task.status,
               kind: task.kind,
+              repositoryId: task.repositoryId,
               branchName: task.branchName ?? null,
               prUrl: task.prUrl ?? null,
             })
