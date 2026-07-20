@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildStartUpdate, startBlocker, startBodySchema } from '../src/routes/tasks.js';
+import { buildRerunUpdate, buildStartUpdate, rerunBlocker, startBlocker, startBodySchema } from '../src/routes/tasks.js';
 
 // Locking tests for POST /tasks/:id/start eligibility: only pending proposal
 // tasks can be started (queued → enqueued) by the user.
@@ -78,5 +78,31 @@ describe('buildStartUpdate', () => {
     const update = buildStartUpdate({ title: 'Only title' });
     expect(update).not.toHaveProperty('prompt');
     expect(update).not.toHaveProperty('attachments');
+  });
+});
+
+// Locking tests for POST /tasks/:id/rerun: only failed tasks can be rerun;
+// the rerun resets the run state (error/branch/pr) and re-queues the task.
+describe('rerunBlocker', () => {
+  it('allows a failed task (including user-cancelled)', () => {
+    expect(rerunBlocker({ status: 'failed' })).toBeNull();
+  });
+
+  it.each(['pending', 'queued', 'running', 'awaiting_review', 'done'])(
+    'rejects tasks that are %s',
+    (status) => {
+      expect(rerunBlocker({ status })).toBe(`task is ${status}, not failed`);
+    },
+  );
+});
+
+describe('buildRerunUpdate', () => {
+  it('re-queues and clears the previous run state', () => {
+    expect(buildRerunUpdate()).toEqual({
+      status: 'queued',
+      error: null,
+      branchName: null,
+      prUrl: null,
+    });
   });
 });

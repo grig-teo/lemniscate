@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
-import { Loader2, Play } from 'lucide-react';
+import { Loader2, Play, RotateCcw } from 'lucide-react';
 
-import { useStartTask, useTasks, type Task } from '@/lib/hooks';
+import { useRerunTask, useStartTask, useTasks, type Task } from '@/lib/hooks';
 import { isPendingProposal, splitRepoTasks } from '@/lib/repo-tasks';
 import { useWorkspaceSelection } from '@/lib/selection';
 import { cn } from '@/lib/utils';
@@ -93,6 +93,7 @@ function TaskRow({ task }: { task: Task }) {
         )}
         <StatusBadge status={task.status} className="px-1.5 py-0 text-[10px]" />
         {isPendingProposal(task) && <StartTaskButton task={task} />}
+        {task.status === 'failed' && <RerunTaskButton task={task} />}
       </button>
     </li>
   );
@@ -129,6 +130,30 @@ function StartTaskButton({ task }: { task: Task }) {
         <Loader2 className="h-3 w-3 animate-spin" />
       ) : (
         <Play className="h-3 w-3" />
+      )}
+    </Button>
+  );
+}
+
+/** Rerun button that re-queues a failed task with fresh run state. */
+function RerunTaskButton({ task }: { task: Task }) {
+  const rerunTask = useRerunTask();
+  return (
+    <Button
+      variant="ghost"
+      size="icon"
+      className="h-5 w-5 shrink-0"
+      aria-label={`Rerun ${task.title}`}
+      disabled={rerunTask.isPending}
+      onClick={(event) => {
+        event.stopPropagation();
+        rerunTask.mutate(task.id);
+      }}
+    >
+      {rerunTask.isPending ? (
+        <Loader2 className="h-3 w-3 animate-spin" />
+      ) : (
+        <RotateCcw className="h-3 w-3" />
       )}
     </Button>
   );

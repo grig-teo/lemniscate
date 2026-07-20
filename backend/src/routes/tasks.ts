@@ -199,6 +199,44 @@ async function startTask(request: FastifyRequest, reply: FastifyReply) {
   return { task: updated };
 }
 
+// Rerun eligibility for POST /tasks/:id/rerun: only failed tasks (including
+// user-cancelled ones, which are stored as failed) can be run again.
+export function rerunBlocker(task: { status: string }): string | null {
+  if (task.status !== 'failed') return `task is ${task.status}, not failed`;
+  return null;
+}
+
+// Rerunning resets the run state: re-queued from scratch with a fresh
+// branch, no leftover error or PR link.
+export function buildRerunUpdate() {
+  return { status: 'queued' as const, error: null, branchName: null, prUrl: null };
+}
+
+// Rerun a failed task: reset its run state, re-queue, and enqueue run-task.
+async function rerunTask(request: FastifyRequest, reply: FastifyReply) {
+  const userId = authenticatedUserId(request);
+  const params = parseOrReply(idParamsSchema, request.params, reply, 'Invalid task id');
+  if (params === null) return;
+  const task = await prisma.task.findFirst({
+    where: ownedTaskWhere(userId, params.id),
+    select: { id: true, status: true },
+  });
+  if (!task) {
+    return reply.code(404).send({ error: 'Task not found' });
+  }
+  const blocker = rerunBlocker(task);
+  if (blocker) {
+    return reply.code(400).send({ error: blocker });
+  }
+
+  const updated = await prisma.task.update({
+    where: { id: task.id },
+    data: buildRerunUpdate(),
+  });
+  await enqueueRunTask(task.id);
+  return { task: updated };
+}
+
 // Cancel a task that hasn't finished yet.
 async function cancelTask(request: FastifyRequest, reply: FastifyReply) {
   const userId = authenticatedUserId(request);
@@ -254,6 +292,7 @@ const tasksRoutes: FastifyPluginAsync = async (app) => {
   app.post('/tasks', createTask);
   app.get('/tasks/:id', getTask);
   app.post('/tasks/:id/start', startTask);
+  app.post('/tasks/:id/rerun', rerunTask);
   app.post('/tasks/:id/cancel', cancelTask);
   app.get('/tasks/:id/events', getTaskEvents);
 };

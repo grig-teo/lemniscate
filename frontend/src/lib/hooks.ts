@@ -356,6 +356,18 @@ export function useGenerateProposals() {
   });
 }
 
+/** POST /api/tasks/:id/rerun — re-queue a failed task with fresh run state. */
+export function useRerunTask() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => api.post<unknown>(`/api/tasks/${id}/rerun`),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['tasks'] });
+      void queryClient.invalidateQueries({ queryKey: ['task'] });
+    },
+  });
+}
+
 function useInvalidateLlmConfigs() {
   const queryClient = useQueryClient();
   return () => {
