@@ -62,8 +62,12 @@ you want to support; the callback URL is `{BACKEND_URL}/api/auth/{provider}/call
 
 - **GitHub** (https://github.com/settings/developers → New OAuth App)
   - Callback: `http://localhost:3000/api/auth/github/callback`
-  - Scopes requested by the app: `repo`, `read:user`
+  - Scopes requested by the app: `repo`, `read:user`, `read:org`
   - Set `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET` in `backend/.env`
+  - Must be a classic **OAuth App**, not a **GitHub App** (client IDs starting
+    with `Iv`). GitHub App tokens carry no OAuth scopes, so pushes fail with
+    a 403 and organization repositories never sync; the login route rejects
+    such a client ID with an explicit error.
 - **GitLab** (https://gitlab.com/-/user_settings/applications, or your
   self-managed instance)
   - Callback: `http://localhost:3000/api/auth/gitlab/callback`

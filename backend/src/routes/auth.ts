@@ -87,6 +87,19 @@ function isOAuthConfigured(providerConfig: OAuthProviderConfig): boolean {
   return Boolean(providerConfig.clientId && providerConfig.clientSecret);
 }
 
+// GitHub App client IDs start with 'Iv'. A GitHub App mints scope-less user
+// tokens (ghu_…) — no OAuth scopes means pushes 403 and org repos never
+// sync, so reject the misconfiguration at login time with the fix spelled
+// out. Classic OAuth App IDs are 20 hex chars or start with 'Ov'.
+export function githubAppClientIdError(clientId: string | undefined): string | null {
+  if (!clientId?.startsWith('Iv')) return null;
+  return (
+    `GITHUB_CLIENT_ID (${clientId.slice(0, 4)}…) belongs to a GitHub App, but login requires ` +
+    `a classic OAuth App — create one at https://github.com/settings/developers → ` +
+    `"New OAuth App" (see README "OAuth app setup")`
+  );
+}
+
 function buildAuthorizeUrl(
   provider: OAuthProviderName,
   providerConfig: OAuthProviderConfig,
@@ -345,6 +358,11 @@ const authRoutes: FastifyPluginAsync = async (app) => {
         return reply.code(501).send({
           error: `OAuth login via ${provider} is not configured: set ${provider.toUpperCase()}_CLIENT_ID and ${provider.toUpperCase()}_CLIENT_SECRET`,
         });
+      }
+      const appKindError =
+        provider === 'github' ? githubAppClientIdError(providerConfig.clientId) : null;
+      if (appKindError) {
+        return reply.code(400).send({ error: appKindError });
       }
       const state = signState(randomBytes(16).toString('base64url'));
       setStateCookie(reply, state);
