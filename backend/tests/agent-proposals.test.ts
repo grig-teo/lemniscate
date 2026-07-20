@@ -108,6 +108,17 @@ describe('generateProposals', () => {
     expect(mocks.taskCreate).not.toHaveBeenCalled();
   });
 
+  it('skips cleanly when the repository is empty (clone finds no branch)', async () => {
+    stubHappyPath([proposal(1)]);
+    mocks.taskFindMany.mockResolvedValue([]);
+    mocks.cloneRepository.mockRejectedValueOnce(
+      new Error('git clone failed: fatal: Remote branch master not found in upstream origin'),
+    );
+    await expect(generateProposals('repo-1')).resolves.toBeUndefined();
+    expect(mocks.requestProposals).not.toHaveBeenCalled();
+    expect(mocks.taskCreate).not.toHaveBeenCalled();
+  });
+
   it('exits before cloning or calling the LLM when 5 proposals are pending', async () => {
     mocks.repositoryFindUnique.mockResolvedValue(stubRepository());
     mocks.taskFindMany.mockResolvedValue(

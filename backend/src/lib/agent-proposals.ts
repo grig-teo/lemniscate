@@ -67,13 +67,27 @@ async function createProposalTasks(
   return created;
 }
 
+// Empty repositories have no branch to clone; detect that specific failure
+// so the job can skip quietly instead of failing on every top-up run.
+function isEmptyRepoCloneError(err: unknown): boolean {
+  return (
+    err instanceof Error && /Remote branch .+ not found|couldn't find remote ref/.test(err.message)
+  );
+}
+
 async function executeGenerateProposals(
   repository: RepositoryWithConnection,
   workdir: string,
   secrets: string[],
 ): Promise<void> {
   const { cloneUrl, rt } = await prepareAgentRuntime(null, repository, secrets);
-  await cloneRepository(workdir, cloneUrl, repository.defaultBranch, secrets);
+  try {
+    await cloneRepository(workdir, cloneUrl, repository.defaultBranch, secrets);
+  } catch (err) {
+    if (!isEmptyRepoCloneError(err)) throw err;
+    console.log(`generate-proposals: ${repository.fullName}: repository is empty, skipping`);
+    return;
+  }
   const repoContext = await buildRepoContext(workdir, rt.cfg.contextWindow);
   const proposals = await requestProposals(rt, repository, repoContext);
   const created = await createProposalTasks(repository, proposals);
