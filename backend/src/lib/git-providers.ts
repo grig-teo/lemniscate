@@ -107,7 +107,7 @@ async function githubListRepos(token: string): Promise<NormalizedRepo[]> {
   // Paginate: /user/repos returns up to 100 per page.
   for (let page = 1; ; page += 1) {
     const data = (await requestJson(
-      `${GITHUB_API}/user/repos?per_page=100&page=${page}&sort=updated`,
+      `${GITHUB_API}/user/repos?per_page=100&page=${page}&sort=updated&affiliation=owner,collaborator,organization_member`,
       githubHeaders(token),
       'github',
     )) as GithubRepo[];

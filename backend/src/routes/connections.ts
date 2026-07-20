@@ -4,12 +4,14 @@ import { z } from 'zod';
 import { encrypt } from '../lib/crypto.js';
 import {
   fetchProviderProfile,
-  getProviderClient,
   ProviderError,
-  type NormalizedRepo,
   type ProviderName,
 } from '../lib/git-providers.js';
 import { prisma } from '../lib/prisma.js';
+import {
+  syncConnectionByIdBestEffort,
+  syncConnectionRepositories,
+} from '../lib/repo-sync.js';
 import {
   AUTH_COOKIE,
   authenticatedUserId,
@@ -111,6 +113,7 @@ async function connectByPatIdentity(
   username: string,
   baseUrl: string | undefined,
   accessTokenEnc: string,
+  request: FastifyRequest,
   reply: FastifyReply,
 ): Promise<FastifyReply> {
   const existing = await prisma.gitConnection.findFirst({
@@ -123,6 +126,7 @@ async function connectByPatIdentity(
       select: connectionSelect,
     });
     setAuthCookie(reply, existing.userId);
+    await syncConnectionByIdBestEffort(connection.id, request.log);
     return reply.code(200).send({ connection });
   }
   const user = await prisma.user.create({
@@ -134,59 +138,11 @@ async function connectByPatIdentity(
     include: { gitConnections: { select: connectionSelect } },
   });
   setAuthCookie(reply, user.id);
-  return reply.code(201).send({ connection: user.gitConnections[0] });
-}
-
-// Upserts one provider repo; returns true when an existing row was updated.
-async function upsertRepository(
-  connectionId: string,
-  repo: NormalizedRepo,
-): Promise<boolean> {
-  const key = { connectionId, externalId: repo.externalId };
-  const existing = await prisma.repository.findUnique({
-    where: { connectionId_externalId: key },
-    select: { id: true },
-  });
-  await prisma.repository.upsert({
-    where: { connectionId_externalId: key },
-    create: { connectionId, ...repo },
-    update: {
-      name: repo.name,
-      fullName: repo.fullName,
-      cloneUrl: repo.cloneUrl,
-      defaultBranch: repo.defaultBranch,
-    },
-  });
-  return existing !== null;
-}
-
-async function syncRepositories(
-  connectionId: string,
-  repos: NormalizedRepo[],
-): Promise<{ created: number; updated: number }> {
-  let created = 0;
-  let updated = 0;
-  for (const repo of repos) {
-    if (await upsertRepository(connectionId, repo)) updated += 1;
-    else created += 1;
+  const connection = user.gitConnections[0];
+  if (connection) {
+    await syncConnectionByIdBestEffort(connection.id, request.log);
   }
-  return { created, updated };
-}
-
-// Returns the provider's repo list, or null after sending a 502.
-async function listProviderRepos(
-  connection: Parameters<typeof getProviderClient>[0],
-  reply: FastifyReply,
-): Promise<NormalizedRepo[] | null> {
-  try {
-    return await getProviderClient(connection).listRepos();
-  } catch (err) {
-    if (err instanceof ProviderError) {
-      void reply.code(502).send({ error: `Failed to list repositories: ${err.message}` });
-      return null;
-    }
-    throw err;
-  }
+  return reply.code(201).send({ connection });
 }
 
 async function listConnections(request: FastifyRequest) {
@@ -231,9 +187,10 @@ async function connectWithPat(request: FastifyRequest, reply: FastifyReply) {
       baseUrl,
       accessTokenEnc,
     );
+    await syncConnectionByIdBestEffort(connection.id, request.log);
     return reply.code(created ? 201 : 200).send({ connection });
   }
-  return connectByPatIdentity(provider, username, baseUrl, accessTokenEnc, reply);
+  return connectByPatIdentity(provider, username, baseUrl, accessTokenEnc, request, reply);
 }
 
 async function deleteConnection(request: FastifyRequest, reply: FastifyReply) {
@@ -264,10 +221,14 @@ async function syncConnectionRepos(request: FastifyRequest, reply: FastifyReply)
     return reply.code(404).send({ error: 'Connection not found' });
   }
 
-  const repos = await listProviderRepos(connection, reply);
-  if (repos === null) return;
-  const { created, updated } = await syncRepositories(connection.id, repos);
-  return { synced: repos.length, created, updated };
+  try {
+    return await syncConnectionRepositories(connection);
+  } catch (err) {
+    if (err instanceof ProviderError) {
+      return reply.code(502).send({ error: `Failed to list repositories: ${err.message}` });
+    }
+    throw err;
+  }
 }
 
 const connectionsRoutes: FastifyPluginAsync = async (app) => {

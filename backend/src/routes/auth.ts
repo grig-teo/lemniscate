@@ -5,6 +5,7 @@ import { config } from '../config.js';
 import { encrypt } from '../lib/crypto.js';
 import { fetchProviderProfile, ProviderError, type ProviderName } from '../lib/git-providers.js';
 import { prisma } from '../lib/prisma.js';
+import { syncConnectionByIdBestEffort } from '../lib/repo-sync.js';
 import { errorMessage } from '../lib/utils.js';
 import {
   authenticatedUserId,
@@ -40,7 +41,8 @@ function oauthProviders(): Record<OAuthProviderName, OAuthProviderConfig> {
       clientSecret: config.GITHUB_CLIENT_SECRET,
       authorizeUrl: 'https://github.com/login/oauth/authorize',
       tokenUrl: 'https://github.com/login/oauth/access_token',
-      scope: 'repo read:user',
+      // read:org is required to see private organization repositories.
+      scope: 'repo read:user read:org',
     },
     gitlab: {
       clientId: config.GITLAB_CLIENT_ID,
@@ -153,17 +155,17 @@ async function upsertOAuthConnection(
   provider: OAuthProviderName,
   username: string,
   accessToken: string,
-): Promise<string> {
+): Promise<{ userId: string; connectionId: string }> {
   const accessTokenEnc = encrypt(accessToken);
   const existing = await prisma.gitConnection.findFirst({
     where: { provider, username },
   });
   if (existing) {
-    await prisma.gitConnection.update({
+    const connection = await prisma.gitConnection.update({
       where: { id: existing.id },
       data: { accessTokenEnc, tokenType: 'oauth' },
     });
-    return existing.userId;
+    return { userId: connection.userId, connectionId: connection.id };
   }
   const user = await prisma.user.create({
     data: {
@@ -171,8 +173,9 @@ async function upsertOAuthConnection(
         create: { provider, username, accessTokenEnc, tokenType: 'oauth' },
       },
     },
+    include: { gitConnections: { select: { id: true } } },
   });
-  return user.id;
+  return { userId: user.id, connectionId: user.gitConnections[0]?.id as string };
 }
 
 const callbackQuerySchema = z.object({
@@ -208,8 +211,15 @@ async function handleOAuthCallback(
     const accessToken = await exchangeCode(provider, providerConfig, code);
     // OAuth access tokens authenticate as Bearer (matters for GitLab).
     const profile = await fetchProviderProfile(provider, accessToken, null, 'oauth');
-    const userId = await upsertOAuthConnection(provider, profile.username, accessToken);
+    const { userId, connectionId } = await upsertOAuthConnection(
+      provider,
+      profile.username,
+      accessToken,
+    );
     setAuthCookie(reply, userId);
+    // Pull repos right away so the landing/dashboard are populated on first
+    // visit; a failed sync must not break the login.
+    await syncConnectionByIdBestEffort(connectionId, request.log);
     // Land on the dashboard after a successful OAuth round-trip.
     return reply.redirect(`${config.FRONTEND_URL.replace(/\/+$/, '')}/dashboard`, 302);
   } catch (err) {
