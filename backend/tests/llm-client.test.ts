@@ -1,5 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { backoffMs, chatCompletions, LlmError } from '../src/lib/llm-client.js';
+import {
+  backoffMs,
+  chatCompletions,
+  LlmError,
+  toReasoningEffort,
+} from '../src/lib/llm-client.js';
 
 // Locking tests for the OpenAI-compatible chat client. fetch is stubbed;
 // no network is touched. apiKey 'sk-secret' must never appear in errors.
@@ -73,6 +78,28 @@ describe('chatCompletions', () => {
     expect(JSON.parse(String(calls[1]?.init.body)).reasoning_effort).toBeUndefined();
   });
 
+  it('maps thinkingLevel max to reasoning_effort xhigh', async () => {
+    const calls = stubFetch(jsonResponse({ choices: [{ message: { content: 'ok' } }] }));
+    await chatCompletions({ ...BASE, thinkingLevel: 'max' });
+    expect(JSON.parse(String(calls[0]?.init.body)).reasoning_effort).toBe('xhigh');
+  });
+
+  it('passes multimodal content parts through to the request body', async () => {
+    const messages = [
+      {
+        role: 'user' as const,
+        content: [
+          { type: 'text' as const, text: 'what is in this image?' },
+          { type: 'image_url' as const, image_url: { url: 'data:image/png;base64,AAA' } },
+        ],
+      },
+    ];
+    const calls = stubFetch(jsonResponse({ choices: [{ message: { content: 'a cat' } }] }));
+    const result = await chatCompletions({ ...BASE, messages });
+    expect(result.content).toBe('a cat');
+    expect(JSON.parse(String(calls[0]?.init.body)).messages).toEqual(messages);
+  });
+
   it('throws an http LlmError with the apiKey scrubbed from the body', async () => {
     stubFetch(jsonResponse({ detail: `bad key ${API_KEY} here` }, 401));
     const err = await chatCompletions(BASE).catch((e: unknown) => e);
@@ -120,6 +147,18 @@ describe('chatCompletions', () => {
     const err = await chatCompletions(BASE).catch((e: unknown) => e);
     expect((err as LlmError).kind).toBe('protocol');
     expect((err as LlmError).message).toMatch(/missing choices\[0\]\.message\.content/);
+  });
+});
+
+describe('toReasoningEffort', () => {
+  it('passes low/medium/high through unchanged', () => {
+    expect(toReasoningEffort('low')).toBe('low');
+    expect(toReasoningEffort('medium')).toBe('medium');
+    expect(toReasoningEffort('high')).toBe('high');
+  });
+
+  it('maps max to xhigh', () => {
+    expect(toReasoningEffort('max')).toBe('xhigh');
   });
 });
 

@@ -7,6 +7,8 @@ import {
   type LlmRuntime,
 } from './agent-runtime.js';
 import { extractJsonArray, parseLlmJson } from './llm-json.js';
+import type { ChatMessage } from './llm-client.js';
+import { imageContentPart, parseTaskAttachments } from './task-attachments.js';
 
 // Prompt builders, response schemas, and slug/message helpers for the agent
 // loop's LLM calls. Extracted from agent-loop.ts; the pure builders are
@@ -54,15 +56,31 @@ export function changesUserContent(task: Task, repoContext: string): string {
   ].join('\n');
 }
 
+// Main change-request message: plain text, or OpenAI multimodal content
+// parts (text + image_url) when the task carries image attachments.
+export function changesUserMessage(task: Task, repoContext: string): ChatMessage {
+  const text = changesUserContent(task, repoContext);
+  const attachments = parseTaskAttachments(task.attachments);
+  if (attachments.length === 0) return { role: 'user', content: text };
+  return {
+    role: 'user',
+    content: [{ type: 'text', text }, ...attachments.map(imageContentPart)],
+  };
+}
+
 export async function requestChanges(
   rt: LlmRuntime,
   task: Task,
   repoContext: string,
   userContentOverride?: string,
 ): Promise<LlmChangesResponse> {
+  const userMessage: ChatMessage =
+    userContentOverride !== undefined
+      ? { role: 'user', content: userContentOverride }
+      : changesUserMessage(task, repoContext);
   const content = await llmCall(rt, [
     { role: 'system', content: agentSystemPrompt(rt.cfg.systemPromptExtra) },
-    { role: 'user', content: userContentOverride ?? changesUserContent(task, repoContext) },
+    userMessage,
   ]);
   return parseLlmJson(llmChangesResponseSchema, content, 'an invalid change set');
 }

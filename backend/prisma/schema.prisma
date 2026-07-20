@@ -122,6 +122,11 @@ model Task {
   branchName   String?
   prUrl        String?
   llmConfigId  String?
+  // Per-task thinking-level override ('low'|'medium'|'high'|'max'); null =
+  // use the LLM config's level. Stored as TEXT, validated by zod at the API.
+  thinkingLevel String?
+  // Image attachments sent with the prompt: [{name, dataUrl}] (max 3).
+  attachments  Json?
   // Cumulative LLM token usage across run/review/fix jobs; seeds the
   // maxTokensPerRun budget so it spans the whole task, not a single job.
   llmTokensUsed Int        @default(0)

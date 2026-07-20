@@ -4,6 +4,7 @@ import {
   billedTokens,
   minCallIntervalMs,
   parseCustomHeaders,
+  sumMessageChars,
   throttleDelayMs,
   TokenBudgetExceededError,
 } from '../src/lib/agent-runtime.js';
@@ -58,6 +59,31 @@ describe('assertWithinBudget', () => {
     expect(() => assertWithinBudget(101, 100)).toThrow(
       'LLM token budget exceeded (101 > 100 tokens); aborting run',
     );
+  });
+});
+
+describe('sumMessageChars', () => {
+  it('sums plain string contents', () => {
+    expect(
+      sumMessageChars([
+        { role: 'system', content: 'abcd' },
+        { role: 'user', content: 'ef' },
+      ]),
+    ).toBe(6);
+  });
+
+  it('sums text parts and image url lengths for multimodal content', () => {
+    expect(
+      sumMessageChars([
+        {
+          role: 'user',
+          content: [
+            { type: 'text', text: 'hello' },
+            { type: 'image_url', image_url: { url: 'data:image/png;base64,AAA' } },
+          ],
+        },
+      ]),
+    ).toBe(5 + 'data:image/png;base64,AAA'.length);
   });
 });
 

@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { config } from '../config.js';
 import { getAgentTasksQueue } from '../lib/proposal-scheduler.js';
 import { prisma } from '../lib/prisma.js';
+import { taskImagesSchema, taskThinkingLevelSchema } from '../lib/task-attachments.js';
 import { publishTaskEvent, serializeTaskEvent } from '../lib/task-events.js';
 import { authenticatedUserId, requireAuth } from '../plugins/auth.js';
 import { parseOrReply } from './helpers.js';
@@ -31,6 +32,10 @@ const createBodySchema = z
   .object({
     repositoryId: z.string().min(1),
     prompt: z.string().min(1).max(8000),
+    // Per-task override of the LLM config's thinkingLevel; omit to inherit.
+    thinkingLevel: taskThinkingLevelSchema.optional(),
+    // Image attachments sent to the agent as multimodal content (max 3).
+    images: taskImagesSchema.optional(),
   })
   .strict();
 
@@ -104,6 +109,8 @@ async function createTask(request: FastifyRequest, reply: FastifyReply) {
       prompt: data.prompt,
       status: 'queued',
       llmConfigId,
+      thinkingLevel: data.thinkingLevel ?? null,
+      ...(data.images ? { attachments: data.images } : {}),
     },
   });
 

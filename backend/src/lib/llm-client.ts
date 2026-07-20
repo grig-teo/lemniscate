@@ -7,11 +7,23 @@
 
 import { errorMessage, redactSecrets, sleep } from './utils.js';
 
-export type ThinkingLevel = 'low' | 'medium' | 'high';
+export type ThinkingLevel = 'low' | 'medium' | 'high' | 'max';
+
+/** Values sent as `reasoning_effort`; 'max' maps to 'xhigh'. */
+export type ReasoningEffort = 'low' | 'medium' | 'high' | 'xhigh';
+
+export function toReasoningEffort(level: ThinkingLevel): ReasoningEffort {
+  return level === 'max' ? 'xhigh' : level;
+}
+
+// OpenAI multimodal message content: plain text, or text + image parts.
+export type ContentPart =
+  | { type: 'text'; text: string }
+  | { type: 'image_url'; image_url: { url: string } };
 
 export interface ChatMessage {
   role: 'system' | 'user' | 'assistant';
-  content: string;
+  content: string | ContentPart[];
 }
 
 export interface ChatCompletionsParams {
@@ -129,7 +141,7 @@ function buildRequestBody(state: RequestState): Record<string, unknown> {
   if (state.temperature !== undefined) body.temperature = state.temperature;
   if (state.maxTokens !== undefined) body.max_tokens = state.maxTokens;
   if (state.includeReasoningEffort && state.thinkingLevel !== undefined) {
-    body.reasoning_effort = state.thinkingLevel;
+    body.reasoning_effort = toReasoningEffort(state.thinkingLevel);
   }
   return body;
 }

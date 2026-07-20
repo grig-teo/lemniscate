@@ -4,6 +4,7 @@ import {
   agentSystemPrompt,
   buildPrBody,
   changesUserContent,
+  changesUserMessage,
   commitMessageFromResponse,
   fallbackBranchSlug,
   maxBranchSlugLength,
@@ -104,5 +105,33 @@ describe('changesUserContent', () => {
 
   it('omits the prompt line when absent', () => {
     expect(changesUserContent(task({}), 'CTX')).toBe('# Task\nFix the bug\n\n\n# Repository context\nCTX');
+  });
+});
+
+describe('changesUserMessage', () => {
+  const png = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUg==';
+
+  it('returns plain string content when the task has no attachments', () => {
+    const message = changesUserMessage(task({ prompt: 'details' }), 'CTX');
+    expect(message.role).toBe('user');
+    expect(message.content).toBe(changesUserContent(task({ prompt: 'details' }), 'CTX'));
+  });
+
+  it('builds multimodal content parts when attachments are stored', () => {
+    const t = task({
+      prompt: 'details',
+      attachments: [{ name: 'shot.png', dataUrl: png }],
+    });
+    const message = changesUserMessage(t, 'CTX');
+    expect(message.content).toEqual([
+      { type: 'text', text: changesUserContent(t, 'CTX') },
+      { type: 'image_url', image_url: { url: png } },
+    ]);
+  });
+
+  it('ignores malformed stored attachments', () => {
+    const t = task({ attachments: [{ name: 'broken' }] });
+    const message = changesUserMessage(t, 'CTX');
+    expect(typeof message.content).toBe('string');
   });
 });

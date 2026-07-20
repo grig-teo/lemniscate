@@ -117,6 +117,15 @@ export type TaskStatus =
   | 'failed'
   | (string & {});
 
+/** Per-task thinking-level override accepted by POST /api/tasks. */
+export type TaskThinkingLevel = 'low' | 'medium' | 'high' | 'max';
+
+/** Image attachment sent with a prompt task (data URL, max 3 per task). */
+export type TaskImage = {
+  name: string;
+  dataUrl: string;
+};
+
 export type Task = {
   id: string;
   repositoryId: string;
@@ -125,8 +134,18 @@ export type Task = {
   status: TaskStatus;
   branchName?: string | null;
   prUrl?: string | null;
+  thinkingLevel?: TaskThinkingLevel | null;
+  attachments?: TaskImage[] | null;
   createdAt: string;
   updatedAt: string;
+};
+
+/** POST /api/tasks body; optional fields are omitted when unset. */
+export type CreateTaskBody = {
+  repositoryId: string;
+  prompt: string;
+  thinkingLevel?: TaskThinkingLevel;
+  images?: TaskImage[];
 };
 
 export type TaskEventKind = 'log' | 'diff' | 'status' | (string & {});
@@ -268,7 +287,7 @@ export function useUpdateRepositoryFlags() {
 export function useCreateTask() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (body: { repositoryId: string; prompt: string }) =>
+    mutationFn: (body: CreateTaskBody) =>
       api.post<{ task: Task }>('/api/tasks', body).then((res) => res.task),
     onSuccess: (_task, { repositoryId }) => {
       void queryClient.invalidateQueries({ queryKey: ['tasks'] });

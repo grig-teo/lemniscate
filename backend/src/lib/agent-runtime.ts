@@ -2,7 +2,8 @@ import type { GitConnection, LlmConfig, Repository, Task } from '@prisma/client'
 import { z } from 'zod';
 import { decrypt } from './crypto.js';
 import { cloneUrlWithToken } from './git-providers.js';
-import { chatCompletions, type ChatMessage } from './llm-client.js';
+import { chatCompletions, type ChatMessage, type ThinkingLevel } from './llm-client.js';
+import { parseTaskThinkingLevel } from './task-attachments.js';
 import { prisma } from './prisma.js';
 import { sleep } from './utils.js';
 
@@ -16,6 +17,8 @@ export interface LlmRuntime {
   apiKey: string;
   usedTokens: number;
   lastCallStartedAt: number;
+  /** Per-task override of the config's thinkingLevel (null column = unset). */
+  thinkingLevelOverride?: ThinkingLevel;
 }
 
 export class TokenBudgetExceededError extends Error {
@@ -77,8 +80,16 @@ export function assertWithinBudget(usedTokens: number, maxTokensPerRun: number |
   }
 }
 
-function sumMessageChars(messages: ChatMessage[]): number {
-  return messages.reduce((sum, m) => sum + m.content.length, 0);
+function contentChars(content: ChatMessage['content']): number {
+  if (typeof content === 'string') return content.length;
+  return content.reduce(
+    (sum, part) => sum + (part.type === 'text' ? part.text.length : part.image_url.url.length),
+    0,
+  );
+}
+
+export function sumMessageChars(messages: ChatMessage[]): number {
+  return messages.reduce((sum, m) => sum + contentChars(m.content), 0);
 }
 
 // ---------------------------------------------------------------------------
@@ -94,6 +105,7 @@ export function parseCustomHeaders(raw: unknown): Record<string, string> {
 }
 
 function chatParams(rt: LlmRuntime, messages: ChatMessage[]) {
+  const thinkingLevel = rt.thinkingLevelOverride ?? rt.cfg.thinkingLevel;
   return {
     baseUrl: rt.cfg.baseUrl,
     apiKey: rt.apiKey,
@@ -101,7 +113,7 @@ function chatParams(rt: LlmRuntime, messages: ChatMessage[]) {
     messages,
     temperature: rt.cfg.temperature,
     maxTokens: rt.cfg.maxTokens,
-    ...(rt.cfg.thinkingLevel !== 'off' ? { thinkingLevel: rt.cfg.thinkingLevel } : {}),
+    ...(thinkingLevel !== 'off' ? { thinkingLevel } : {}),
     timeoutSeconds: rt.cfg.timeoutSeconds,
     maxRetries: rt.cfg.maxRetries,
     customHeaders: parseCustomHeaders(rt.cfg.customHeaders),
@@ -194,5 +206,7 @@ export async function prepareAgentRuntime(
   secrets.push(apiKey);
   const rt = makeLlmRuntime(llmConfig, apiKey);
   rt.usedTokens = usedTokens;
+  const thinkingLevelOverride = parseTaskThinkingLevel(task?.thinkingLevel);
+  if (thinkingLevelOverride) rt.thinkingLevelOverride = thinkingLevelOverride;
   return { cloneUrl, rt };
 }
