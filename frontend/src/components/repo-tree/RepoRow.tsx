@@ -87,7 +87,7 @@ export function RepoRow({
   expanded: boolean;
   onToggle: () => void;
 }) {
-  const [settingsOpen, setSettingsOpen] = useState(true);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   return (
     <div className="px-2 pb-2">
       <div className="flex items-center gap-1.5 rounded-md px-1.5 py-1 hover:bg-accent">
