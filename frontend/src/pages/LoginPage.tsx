@@ -31,7 +31,7 @@ function LoginCard({ onGitverse }: { onGitverse: () => void }) {
 /**
  * /login — GitHub/GitLab sign in via a full-page OAuth redirect;
  * GitVerse connects with a personal access token instead.
- * Already-authenticated visitors bounce straight back to '/'.
+ * Already-authenticated visitors bounce straight to '/dashboard'.
  */
 export function LoginPage() {
   const me = useMe();
@@ -47,7 +47,7 @@ export function LoginPage() {
   }
 
   if (me.data) {
-    return <Navigate to="/" replace />;
+    return <Navigate to="/dashboard" replace />;
   }
 
   return (
@@ -57,7 +57,7 @@ export function LoginPage() {
       <GitVerseConnectDialog
         open={gitverseOpen}
         onOpenChange={setGitverseOpen}
-        onConnected={() => navigate('/')}
+        onConnected={() => navigate('/dashboard')}
       />
     </div>
   );

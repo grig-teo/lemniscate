@@ -176,14 +176,16 @@ export function useRepositories() {
   });
 }
 
-export function useTasks(repositoryId: string | null | undefined) {
+function tasksPath(repositoryId: string | null | undefined): string {
+  if (!repositoryId) return '/api/tasks';
+  return `/api/tasks?repositoryId=${encodeURIComponent(repositoryId)}`;
+}
+
+/** Tasks for one repository, or all of the user's tasks (cap 100) when no id is given. */
+export function useTasks(repositoryId?: string | null) {
   return useQuery({
-    queryKey: ['tasks', repositoryId],
-    queryFn: () =>
-      api
-        .get<{ tasks: Task[] }>(`/api/tasks?repositoryId=${encodeURIComponent(repositoryId!)}`)
-        .then((res) => res.tasks),
-    enabled: Boolean(repositoryId),
+    queryKey: ['tasks', repositoryId ?? null],
+    queryFn: () => api.get<{ tasks: Task[] }>(tasksPath(repositoryId)).then((res) => res.tasks),
   });
 }
 

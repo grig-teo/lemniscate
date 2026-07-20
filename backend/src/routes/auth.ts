@@ -210,7 +210,8 @@ async function handleOAuthCallback(
     const profile = await fetchProviderProfile(provider, accessToken, null, 'oauth');
     const userId = await upsertOAuthConnection(provider, profile.username, accessToken);
     setAuthCookie(reply, userId);
-    return reply.redirect(config.FRONTEND_URL, 302);
+    // Land on the dashboard after a successful OAuth round-trip.
+    return reply.redirect(`${config.FRONTEND_URL.replace(/\/+$/, '')}/dashboard`, 302);
   } catch (err) {
     request.log.error(err, 'oauth callback failed');
     return reply.code(502).send({
