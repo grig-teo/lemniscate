@@ -1,7 +1,7 @@
 // The agent loop: executes 'run-task' jobs end to end (clone → LLM-proposed
 // code changes → branch → commit → push → pull request), 'review-pr' jobs
 // (LLM review → fix iterations → optional auto-merge with conflict
-// resolution), and 'generate-proposals' jobs (LLM suggests up to 3
+// resolution), and 'generate-proposals' jobs (LLM suggests up to 5
 // improvement tasks).
 //
 // The implementation is split into focused modules (AGENTS.md §2):

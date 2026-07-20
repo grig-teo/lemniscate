@@ -33,8 +33,7 @@ function EmptyConsole() {
  * Shows the selected task header plus a live log: history is loaded via
  * GET /api/tasks/:id/events, then streamed over SSE (same endpoint, which
  * replays history first — replayed events are deduped by id). `status`
- * events update the header badge; `diff` events are forwarded to the
- * workspace selection for the DiffPanel. See console/useTaskConsole.ts.
+ * events update the header badge. See console/useTaskConsole.ts.
  * The floating + button opens the TaskComposerDialog to start a new prompt
  * task on a chosen repository.
  */

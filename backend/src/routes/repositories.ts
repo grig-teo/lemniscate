@@ -12,6 +12,7 @@ const patchBodySchema = z
     autoCreatePr: z.boolean().optional(),
     autoReviewPr: z.boolean().optional(),
     autoMergePr: z.boolean().optional(),
+    hidden: z.boolean().optional(),
     // null explicitly detaches the LLM config.
     llmConfigId: z.string().min(1).nullable().optional(),
   })
@@ -20,12 +21,13 @@ const patchBodySchema = z
 type PatchBody = z.infer<typeof patchBodySchema>;
 
 // Only the fields that were actually sent are written.
-function buildPatchData(data: PatchBody) {
+export function buildPatchData(data: PatchBody) {
   return {
     ...(data.autoPropose !== undefined ? { autoPropose: data.autoPropose } : {}),
     ...(data.autoCreatePr !== undefined ? { autoCreatePr: data.autoCreatePr } : {}),
     ...(data.autoReviewPr !== undefined ? { autoReviewPr: data.autoReviewPr } : {}),
     ...(data.autoMergePr !== undefined ? { autoMergePr: data.autoMergePr } : {}),
+    ...(data.hidden !== undefined ? { hidden: data.hidden } : {}),
     ...(data.llmConfigId !== undefined ? { llmConfigId: data.llmConfigId } : {}),
   };
 }
@@ -49,7 +51,8 @@ async function ownedLlmConfigExists(userId: string, llmConfigId: string): Promis
 }
 
 // Keeps the worker's repeatable 'generate-proposals' job in sync with the
-// autoPropose flag. Scheduling failure must not fail the PATCH — log it.
+// autoPropose flag; turning it on also triggers one generation run right
+// away. Scheduling/enqueue failure must not fail the PATCH — log it.
 async function syncProposalSchedule(
   request: FastifyRequest,
   repositoryId: string,
@@ -61,6 +64,7 @@ async function syncProposalSchedule(
     const scheduler = await import('../lib/proposal-scheduler.js');
     if (autoPropose) {
       await scheduler.scheduleProposals(repositoryId);
+      await scheduler.enqueueGenerateProposalsNow(repositoryId);
     } else {
       await scheduler.unscheduleProposals(repositoryId);
     }

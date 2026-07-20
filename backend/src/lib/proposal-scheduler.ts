@@ -59,6 +59,16 @@ export async function enqueueRunTask(taskId: string): Promise<void> {
   );
 }
 
+// Enqueues a one-shot 'generate-proposals' job (e.g. when autoPropose is
+// toggled on). jobId dedupes concurrent enqueues for the same repo.
+export async function enqueueGenerateProposalsNow(repositoryId: string): Promise<void> {
+  await getAgentTasksQueue().add(
+    'generate-proposals',
+    { repositoryId },
+    { jobId: `generate-proposals:${repositoryId}`, removeOnComplete: 100, removeOnFail: 100 },
+  );
+}
+
 // Enqueues a 'review-pr' job (LLM review → fix iterations → optional merge).
 // jobId includes the attempt so re-reviews after a fix are not deduped away.
 export async function enqueueReviewTask(taskId: string, attempt = 0): Promise<void> {

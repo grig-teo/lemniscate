@@ -90,9 +90,9 @@ describe('system prompts', () => {
     expect(agentSystemPrompt(null)).not.toContain('Additional instructions');
   });
 
-  it('proposalsSystemPrompt asks for up to 3 tasks as a JSON array', () => {
+  it('proposalsSystemPrompt asks for up to 5 tasks as a JSON array', () => {
     const prompt = proposalsSystemPrompt(null);
-    expect(prompt).toContain('up to 3');
+    expect(prompt).toContain('up to 5');
     expect(prompt).toContain('[{"title": string, "prompt": string}]');
   });
 });

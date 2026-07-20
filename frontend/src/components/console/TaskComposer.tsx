@@ -79,7 +79,7 @@ function useTaskComposer(onSubmitted?: () => void) {
   const llmConfigsQuery = useLlmConfigs();
   const createTask = useCreateTask();
   const { selectedTask, selectTask } = useWorkspaceSelection();
-  const repositories = repositoriesQuery.data ?? [];
+  const repositories = (repositoriesQuery.data ?? []).filter((repo) => !repo.hidden);
   const llmConfigs = llmConfigsQuery.data ?? [];
   const [manualRepositoryId, setManualRepositoryId] = React.useState<string | null>(null);
   const [prompt, setPrompt] = React.useState('');

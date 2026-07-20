@@ -1,9 +1,13 @@
-import { ChevronDown, ChevronRight, Loader2 } from 'lucide-react';
+import { useState } from 'react';
+import { ChevronDown, ChevronRight, Eye, EyeOff, Loader2, Settings } from 'lucide-react';
 
 import { useTasks, useUpdateRepositoryFlags, type Repository, type Task } from '@/lib/hooks';
+import { repoDisplayName } from '@/lib/repo-display';
 import { useWorkspaceSelection } from '@/lib/selection';
 import { cn } from '@/lib/utils';
 import { StatusBadge } from '@/components/StatusBadge';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import { Switch } from '@/components/ui/switch';
 
 const SWITCH_CLASS =
@@ -93,23 +97,68 @@ export function RepoRow({
   expanded: boolean;
   onToggle: () => void;
 }) {
-  const Chevron = expanded ? ChevronDown : ChevronRight;
+  const [settingsOpen, setSettingsOpen] = useState(false);
   return (
     <div className="px-2 pb-2">
-      <button
-        type="button"
-        onClick={onToggle}
-        className="flex w-full items-center gap-1.5 rounded-md px-1.5 py-1 text-left text-sm hover:bg-accent"
-        aria-expanded={expanded}
-      >
-        <Chevron className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-        <span className="truncate font-medium">{repo.name}</span>
-      </button>
+      <div className="flex items-center gap-1.5 rounded-md px-1.5 py-1 hover:bg-accent">
+        <RepoToggle repo={repo} expanded={expanded} onToggle={onToggle} />
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-6 w-6 shrink-0"
+          aria-label={`Settings for ${repo.fullName}`}
+          aria-expanded={settingsOpen}
+          onClick={() => setSettingsOpen((prev) => !prev)}
+        >
+          <Settings className="h-3.5 w-3.5" />
+        </Button>
+        <HideRepoButton repo={repo} />
+      </div>
 
-      <RepoFlags repo={repo} />
+      {settingsOpen && <RepoFlags repo={repo} />}
 
       {expanded && <RepoTasks repositoryId={repo.id} />}
     </div>
+  );
+}
+
+function RepoToggle({
+  repo,
+  expanded,
+  onToggle,
+}: {
+  repo: Repository;
+  expanded: boolean;
+  onToggle: () => void;
+}) {
+  const Chevron = expanded ? ChevronDown : ChevronRight;
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      className="flex min-w-0 flex-1 items-center gap-1.5 text-left text-sm"
+      aria-expanded={expanded}
+    >
+      <Chevron className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+      <span className="truncate font-medium">{repoDisplayName(repo)}</span>
+    </button>
+  );
+}
+
+/** Hide/unhide the repo in the tree — eye hides, eye-off restores a revealed hidden repo. */
+function HideRepoButton({ repo }: { repo: Repository }) {
+  const updateFlags = useUpdateRepositoryFlags();
+  const Icon = repo.hidden ? EyeOff : Eye;
+  return (
+    <Button
+      variant="ghost"
+      size="icon"
+      className="h-6 w-6 shrink-0"
+      aria-label={repo.hidden ? `Unhide ${repo.fullName}` : `Hide ${repo.fullName}`}
+      onClick={() => updateFlags.mutate({ id: repo.id, patch: { hidden: !repo.hidden } })}
+    >
+      <Icon className="h-3.5 w-3.5" />
+    </Button>
   );
 }
 
@@ -133,6 +182,11 @@ function TaskRow({
         )}
       >
         <span className="min-w-0 flex-1 truncate">{task.title}</span>
+        {task.kind === 'proposal' && (
+          <Badge variant="outline" className="shrink-0 px-1.5 py-0 text-[10px]">
+            proposal
+          </Badge>
+        )}
         <StatusBadge status={task.status} className="px-1.5 py-0 text-[10px]" />
       </button>
     </li>

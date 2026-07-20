@@ -1,8 +1,7 @@
 /**
- * Workspace selection state shared by the three panes (RepoTree, ConsolePane,
- * DiffPanel). Zustand-free: a small React context holding the selected task,
- * the live status override pushed by the SSE stream, and the diff events
- * forwarded to the right panel.
+ * Workspace selection state shared by the panes (RepoTree, ConsolePane).
+ * Zustand-free: a small React context holding the selected task and the
+ * live status override pushed by the SSE stream.
  */
 import * as React from 'react';
 
@@ -16,46 +15,29 @@ export interface SelectedTask {
   prUrl?: string | null;
 }
 
-export interface DiffEvent {
-  key: string;
-  payload: unknown;
-  createdAt?: string;
-}
-
 interface WorkspaceSelectionValue {
   selectedTask: SelectedTask | null;
-  /** Select a task (or clear with null); resets live status and diff events. */
+  /** Select a task (or clear with null); resets live status. */
   selectTask: (task: SelectedTask | null) => void;
   /** Live status from SSE `status` events; overrides selectedTask.status. */
   liveStatus: string | null;
   setLiveStatus: (status: string | null) => void;
-  diffEvents: DiffEvent[];
-  pushDiffEvent: (payload: unknown, createdAt?: string) => void;
 }
 
 const WorkspaceSelectionContext = React.createContext<WorkspaceSelectionValue | null>(null);
 
-let diffEventCounter = 0;
-
 export function WorkspaceSelectionProvider({ children }: { children: React.ReactNode }) {
   const [selectedTask, setSelectedTask] = React.useState<SelectedTask | null>(null);
   const [liveStatus, setLiveStatus] = React.useState<string | null>(null);
-  const [diffEvents, setDiffEvents] = React.useState<DiffEvent[]>([]);
 
   const selectTask = React.useCallback((task: SelectedTask | null) => {
     setSelectedTask(task);
     setLiveStatus(null);
-    setDiffEvents([]);
-  }, []);
-
-  const pushDiffEvent = React.useCallback((payload: unknown, createdAt?: string) => {
-    diffEventCounter += 1;
-    setDiffEvents((prev) => [...prev, { key: `diff-${diffEventCounter}`, payload, createdAt }]);
   }, []);
 
   const value = React.useMemo<WorkspaceSelectionValue>(
-    () => ({ selectedTask, selectTask, liveStatus, setLiveStatus, diffEvents, pushDiffEvent }),
-    [selectedTask, selectTask, liveStatus, diffEvents, pushDiffEvent],
+    () => ({ selectedTask, selectTask, liveStatus, setLiveStatus }),
+    [selectedTask, selectTask, liveStatus],
   );
 
   return (

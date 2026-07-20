@@ -8,7 +8,7 @@ import { prisma } from './prisma.js';
 import { enqueueRunTask } from './proposal-scheduler.js';
 import { buildRepoContext } from './repo-context.js';
 
-// Job: generate-proposals — the LLM suggests up to 3 improvement tasks for a
+// Job: generate-proposals — the LLM suggests up to 5 improvement tasks for a
 // repository, each enqueued as its own run-task job. Extracted from
 // agent-loop.ts.
 
@@ -34,7 +34,7 @@ async function createProposalTasks(
 ): Promise<number> {
   const seenTitles = await loadPendingProposalTitles(repository.id);
   let created = 0;
-  for (const proposal of proposals.slice(0, 3)) {
+  for (const proposal of proposals.slice(0, 5)) {
     const key = proposal.title.trim().toLowerCase();
     if (seenTitles.has(key)) continue;
     seenTitles.add(key);

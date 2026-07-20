@@ -32,26 +32,11 @@ function useTaskEventsQuery(taskId: string | null) {
   });
 }
 
-// History ids seed the dedupe set so SSE-replayed history is skipped;
-// historical diff events go straight to the DiffPanel (SSE replays of them
-// are deduped, so without this they would never render).
-function useHistoryIngest(
-  events: TaskEventItem[] | undefined,
-  seenEventIds: SeenEventIds,
-  pushedDiffs: React.MutableRefObject<Set<string>>,
-  pushDiffEvent: (payload: unknown, createdAt?: string) => void,
-) {
+// History ids seed the dedupe set so SSE-replayed history is skipped.
+function useHistoryIngest(events: TaskEventItem[] | undefined, seenEventIds: SeenEventIds) {
   React.useEffect(() => {
     seenEventIds.current = new Set((events ?? []).map((event) => event.id));
   }, [events, seenEventIds]);
-
-  React.useEffect(() => {
-    for (const event of events ?? []) {
-      if (event.kind !== 'diff' || pushedDiffs.current.has(event.id)) continue;
-      pushedDiffs.current.add(event.id);
-      pushDiffEvent(event.payload, event.createdAt);
-    }
-  }, [events, pushedDiffs, pushDiffEvent]);
 }
 
 function parseStreamEvent(data: string): StreamEvent | null {
@@ -62,21 +47,16 @@ function parseStreamEvent(data: string): StreamEvent | null {
   }
 }
 
-/** Route one stream event to the log list, the status badge, or the diff panel. */
+/** Route one stream event to the log list or the status badge. */
 function createEventDispatcher(
   logCounter: React.MutableRefObject<number>,
   setLiveLogs: React.Dispatch<React.SetStateAction<LogLine[]>>,
   setLiveStatus: (status: string | null) => void,
-  pushDiffEvent: (payload: unknown, createdAt?: string) => void,
 ) {
   return (event: StreamEvent) => {
     if (event.kind === 'status') {
       const status = statusFromPayload(event.payload);
       if (status) setLiveStatus(status);
-      return;
-    }
-    if (event.kind === 'diff') {
-      pushDiffEvent(event.payload, event.createdAt);
       return;
     }
     if (event.kind !== 'log') return;
@@ -116,7 +96,6 @@ function useTaskEventStream(
   taskId: string | null,
   seenEventIds: SeenEventIds,
   setLiveStatus: (status: string | null) => void,
-  pushDiffEvent: (payload: unknown, createdAt?: string) => void,
 ) {
   const [liveLogs, setLiveLogs] = React.useState<LogLine[]>([]);
   const [streamError, setStreamError] = React.useState(false);
@@ -124,10 +103,10 @@ function useTaskEventStream(
 
   React.useEffect(() => {
     if (!taskId) return;
-    const dispatch = createEventDispatcher(logCounter, setLiveLogs, setLiveStatus, pushDiffEvent);
+    const dispatch = createEventDispatcher(logCounter, setLiveLogs, setLiveStatus);
     const source = openEventStream(taskId, seenEventIds, dispatch, setStreamError);
     return () => source.close();
-  }, [taskId, seenEventIds, setLiveStatus, pushDiffEvent]);
+  }, [taskId, seenEventIds, setLiveStatus]);
 
   return { liveLogs, streamError, setLiveLogs, setStreamError };
 }
@@ -148,19 +127,17 @@ function lastHistoryStatus(events: TaskEventItem[] | undefined): string | null {
  * derived log lines/status, plus the live stream state.
  */
 export function useTaskConsole(taskId: string | null) {
-  const { setLiveStatus, pushDiffEvent } = useWorkspaceSelection();
+  const { setLiveStatus } = useWorkspaceSelection();
   const historyQuery = useTaskEventsQuery(taskId);
   const seenEventIds = React.useRef<Set<string>>(new Set());
-  const pushedDiffs = React.useRef<Set<string>>(new Set());
 
-  useHistoryIngest(historyQuery.data, seenEventIds, pushedDiffs, pushDiffEvent);
-  const stream = useTaskEventStream(taskId, seenEventIds, setLiveStatus, pushDiffEvent);
+  useHistoryIngest(historyQuery.data, seenEventIds);
+  const stream = useTaskEventStream(taskId, seenEventIds, setLiveStatus);
 
   // Reset per-task stream state.
   React.useEffect(() => {
     stream.setLiveLogs([]);
     stream.setStreamError(false);
-    pushedDiffs.current = new Set();
   }, [taskId]);
 
   const historyLogs = React.useMemo<LogLine[]>(

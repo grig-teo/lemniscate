@@ -103,6 +103,7 @@ model Repository {
   // review approves it (enforced in the PATCH route).
   autoReviewPr  Boolean      @default(false)
   autoMergePr   Boolean      @default(false)
+  hidden        Boolean      @default(false)
   llmConfigId   String?
   connection    GitConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
   llmConfig     LlmConfig?    @relation(fields: [llmConfigId], references: [id], onDelete: SetNull)

@@ -1,4 +1,5 @@
-import { RefreshCw } from 'lucide-react';
+import { useState } from 'react';
+import { Eye, EyeOff, RefreshCw } from 'lucide-react';
 
 import type { ConnectionGroup as ConnectionGroupData } from '@/lib/group-repos';
 import { providerLabel, ProviderIcon } from '@/lib/providers';
@@ -25,16 +26,31 @@ export function ConnectionGroup({
   onToggleRepo: (repoId: string) => void;
 }) {
   const label = providerLabel(group.provider, 'capitalized');
+  const [showHidden, setShowHidden] = useState(false);
+  const hiddenCount = group.repos.filter((repo) => repo.hidden).length;
+  const visibleRepos = showHidden ? group.repos : group.repos.filter((repo) => !repo.hidden);
+  const HiddenIcon = showHidden ? EyeOff : Eye;
   return (
     <div className="border-b last:border-b-0">
       <div className="flex items-center gap-2 px-3 py-2">
         <ProviderIcon provider={group.provider} className="h-4 w-4 shrink-0 text-muted-foreground" />
         <span className="truncate text-xs font-semibold">{label}</span>
         <span className="truncate text-xs text-muted-foreground">@{group.username}</span>
+        {hiddenCount > 0 && (
+          <Button
+            variant="ghost"
+            size="icon"
+            className="ml-auto h-6 w-6 shrink-0"
+            aria-label={showHidden ? 'Hide hidden repositories' : `Show ${hiddenCount} hidden repositories`}
+            onClick={() => setShowHidden((prev) => !prev)}
+          >
+            <HiddenIcon className="h-3.5 w-3.5" />
+          </Button>
+        )}
         <Button
           variant="ghost"
           size="icon"
-          className="ml-auto h-6 w-6 shrink-0"
+          className={cn('h-6 w-6 shrink-0', hiddenCount === 0 && 'ml-auto')}
           aria-label={`Sync ${label} repositories`}
           disabled={syncing}
           onClick={() => onSync(group.connectionId)}
@@ -43,7 +59,7 @@ export function ConnectionGroup({
         </Button>
       </div>
 
-      {group.repos.map((repo) => (
+      {visibleRepos.map((repo) => (
         <RepoRow
           key={repo.id}
           repo={repo}

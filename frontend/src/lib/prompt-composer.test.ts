@@ -53,6 +53,7 @@ function makeRepo(id: string, llmConfigId?: string | null): Repository {
     autoCreatePr: true,
     autoReviewPr: false,
     autoMergePr: false,
+    hidden: false,
     llmConfigId: llmConfigId ?? null,
     connection: { provider: 'github', username: 'ann' },
   };

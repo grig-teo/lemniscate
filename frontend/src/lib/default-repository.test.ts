@@ -17,6 +17,7 @@ function makeRepo(id: string): Repository {
     autoCreatePr: false,
     autoReviewPr: false,
     autoMergePr: false,
+    hidden: false,
     connection: { provider: 'github', username: 'ann' },
   };
 }

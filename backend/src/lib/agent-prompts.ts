@@ -201,7 +201,7 @@ export function proposalsSystemPrompt(systemPromptExtra: string | null): string 
   return [
     'You are Lemniscate, an autonomous code-review agent.',
     'You are given a repository file tree and its key files.',
-    'Propose up to 3 concrete, high-value improvement or bug-fix tasks for this repository.',
+    'Propose up to 5 concrete, high-value improvement or bug-fix tasks for this repository.',
     'Respond with STRICT JSON only — no markdown fences, no commentary — a JSON array matching:',
     '[{"title": string, "prompt": string}]',
     '"title" is a short imperative summary; "prompt" is a detailed instruction another coding agent can execute directly.',

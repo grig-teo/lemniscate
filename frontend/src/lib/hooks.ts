@@ -1,7 +1,7 @@
 /**
  * TanStack Query hooks for the Lemniscate backend API — the single data
  * layer shared by the settings dialog, the login page, and the shell panes
- * (RepoTree / ConsolePane / DiffPanel). All shapes mirror the backend API
+ * (RepoTree / ConsolePane). All shapes mirror the backend API
  * contract — payloads are camelCase and LLM configs never include `apiKey`
  * in responses (`hasApiKey` flags whether one is stored).
  */
@@ -101,6 +101,7 @@ export type Repository = {
   autoCreatePr: boolean;
   autoReviewPr: boolean;
   autoMergePr: boolean;
+  hidden: boolean;
   llmConfigId?: string | null;
   connection: {
     provider: GitProvider;
@@ -256,6 +257,7 @@ interface RepoFlagsPatch {
   autoCreatePr?: boolean;
   autoReviewPr?: boolean;
   autoMergePr?: boolean;
+  hidden?: boolean;
 }
 
 /** PATCH /api/repositories/:id with an optimistic cache update. */

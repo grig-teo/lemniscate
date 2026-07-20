@@ -6,6 +6,7 @@ import { Badge } from '@/components/ui/badge';
 import { groupByConnection, type ConnectionGroup } from '@/lib/group-repos';
 import { useRepositories, useTasks, type Repository, type Task } from '@/lib/hooks';
 import { ProviderIcon, providerLabel } from '@/lib/providers';
+import { repoDisplayName } from '@/lib/repo-display';
 import { groupTasksByRepository, selectRunningTasks } from '@/lib/running-tasks';
 
 function ConnectionCard({ group }: { group: ConnectionGroup }) {
@@ -20,7 +21,7 @@ function ConnectionCard({ group }: { group: ConnectionGroup }) {
         {group.repos.map((repo) => (
           <li key={repo.id}>
             <Link to="/dashboard" className="text-sm text-muted-foreground hover:text-foreground">
-              {repo.name}
+              {repoDisplayName(repo)}
             </Link>
           </li>
         ))}
