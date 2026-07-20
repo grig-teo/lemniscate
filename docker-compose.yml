@@ -7,7 +7,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-lemniscate}
       POSTGRES_DB: ${POSTGRES_DB:-lemniscate}
     ports:
-      - "5432:5432"
+      - "${POSTGRES_BIND:-5432}:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -20,7 +20,7 @@ services:
     image: redis:7-alpine
     restart: unless-stopped
     ports:
-      - "6379:6379"
+      - "${REDIS_BIND:-6379}:6379"
     volumes:
       - redisdata:/data
     healthcheck:
@@ -40,7 +40,7 @@ services:
       DATABASE_URL: postgresql://${POSTGRES_USER:-lemniscate}:${POSTGRES_PASSWORD:-lemniscate}@postgres:5432/${POSTGRES_DB:-lemniscate}
       REDIS_URL: redis://redis:6379
     ports:
-      - "3000:3000"
+      - "${BACKEND_BIND:-3000}:3000"
     depends_on:
       postgres:
         condition: service_healthy
@@ -74,7 +74,7 @@ services:
         VITE_API_URL: ${VITE_API_URL:-}
     restart: unless-stopped
     ports:
-      - "8080:80"
+      - "${FRONTEND_BIND:-8080}:80"
     depends_on:
       - backend
 
