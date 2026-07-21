@@ -9,8 +9,9 @@ import { redactSecrets } from './utils.js';
 // Runs the Hermes Agent CLI non-interactively (`hermes chat -q <prompt>`)
 // inside a freshly cloned repository. Hermes gets an isolated HERMES_HOME
 // (written per run from the task's LLM config) and auto-approves its tools
-// via HERMES_YOLO_MODE=1. Output streams line by line to the task console,
-// ANSI-stripped and secret-redacted.
+// via HERMES_YOLO_MODE=1. With a taskId, output streams line by line to the
+// task console (ANSI-stripped, secret-redacted) and cancellation is polled;
+// without one, output only feeds the tail used in error messages.
 
 export interface HermesLlmConfig {
   baseUrl: string;
@@ -23,7 +24,12 @@ export interface HermesTaskOptions {
   workdir: string;
   prompt: string;
   llm: HermesLlmConfig;
-  taskId: string;
+  /**
+   * Owning task for console streaming + cancellation. Omit for runs with no
+   * task console (e.g. generate-proposals): output still feeds the error
+   * tail, but nothing is logged and no cancel poll runs.
+   */
+  taskId?: string;
   secrets: string[];
   timeoutMs: number;
   /** Cancel-poll interval; defaults to CANCEL_POLL_MS. */
@@ -110,7 +116,7 @@ function streamLines(
   rl.on('line', (raw) => {
     const line = redactSecrets(stripAnsi(raw), opts.secrets);
     tail.push(line);
-    void logEvent(opts.taskId, line).catch(() => {});
+    if (opts.taskId) void logEvent(opts.taskId, line).catch(() => {});
   });
 }
 
@@ -126,16 +132,19 @@ function timeoutError(timeoutMs: number): Error {
 function waitForHermes(child: ChildProcess, opts: HermesTaskOptions): Promise<void> {
   return new Promise((resolve, reject) => {
     const tail = makeOutputTail(OUTPUT_TAIL_CHARS);
-    const cancelPoll = setInterval(() => {
-      void taskIsCancelled(opts.taskId).then((cancelled) => {
-        if (!cancelled) return;
-        child.kill('SIGKILL');
-        reject(new Error('cancelled by user'));
-      });
-    }, opts.pollMs ?? CANCEL_POLL_MS);
+    const taskId = opts.taskId;
+    const cancelPoll = taskId
+      ? setInterval(() => {
+          void taskIsCancelled(taskId).then((cancelled) => {
+            if (!cancelled) return;
+            child.kill('SIGKILL');
+            reject(new Error('cancelled by user'));
+          });
+        }, opts.pollMs ?? CANCEL_POLL_MS)
+      : undefined;
     const settle = (fn: () => void) => {
       clearTimeout(timer);
-      clearInterval(cancelPoll);
+      if (cancelPoll) clearInterval(cancelPoll);
       fn();
     };
     const timer = setTimeout(() => {

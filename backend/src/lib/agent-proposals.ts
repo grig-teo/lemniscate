@@ -1,9 +1,17 @@
+import { promises as fs } from 'node:fs';
 import path from 'node:path';
-import type { GitConnection, Repository } from '@prisma/client';
+import type { GitConnection, Repository, Skill } from '@prisma/client';
 import { config } from '../config.js';
 import { cleanupWorkdir, cloneRepository } from './agent-git.js';
-import { requestProposals, type LlmProposals } from './agent-prompts.js';
-import { prepareAgentRuntime } from './agent-runtime.js';
+import {
+  buildSkillsSection,
+  llmProposalsSchema,
+  requestProposals,
+  type LlmProposals,
+} from './agent-prompts.js';
+import { prepareAgentRuntime, type LlmRuntime } from './agent-runtime.js';
+import { runHermesTask, type HermesLlmConfig } from './hermes-runner.js';
+import { extractJsonArray } from './llm-json.js';
 import { prisma } from './prisma.js';
 import { buildRepoContext } from './repo-context.js';
 import { loadAgentsMdTemplate, parseSkillSlugs } from './task-skills.js';
@@ -17,6 +25,50 @@ import { loadAgentsMdTemplate, parseSkillSlugs } from './task-skills.js';
 type RepositoryWithConnection = Repository & { connection: GitConnection };
 
 export const MAX_PENDING_PROPOSALS = 5;
+
+// Hermes executor: the agent explores the clone itself and writes its
+// proposals to this file instead of answering a single LLM request.
+const PROPOSALS_FILENAME = '.lemniscate-proposals.json';
+
+// ---------------------------------------------------------------------------
+// Hermes executor (pure helpers, unit-tested in tests/agent-proposals.test.ts)
+// ---------------------------------------------------------------------------
+
+export interface HermesProposalPromptOptions {
+  maxProposals: number;
+  skillsSection: string;
+  systemPromptExtra: string | null;
+}
+
+// Prompt for the hermes proposals run: explore the freshly cloned repo and
+// write the proposals file — no implementing, no git mutations.
+export function buildHermesProposalPrompt(opts: HermesProposalPromptOptions): string {
+  return [
+    'You are Lemniscate, an autonomous code-review agent.',
+    `Explore the current directory (a freshly cloned repository) and propose up to ${opts.maxProposals} concrete, high-value improvement or bug-fix tasks.`,
+    `Write them to ${PROPOSALS_FILENAME} in the repository root as STRICT JSON:`,
+    '[{"title": string, "prompt": string}]',
+    '"title" is a short imperative summary; "prompt" is a detailed instruction another coding agent can execute directly.',
+    `Do NOT implement the proposals. Do NOT git commit, push, or create branches — your only output is ${PROPOSALS_FILENAME}.`,
+    "The repository's AGENTS.md context (its conventions and instructions) applies to what you propose.",
+    ...(opts.systemPromptExtra
+      ? ['', 'Additional instructions from the repository owner:', opts.systemPromptExtra]
+      : []),
+    ...(opts.skillsSection ? ['', opts.skillsSection] : []),
+  ].join('\n');
+}
+
+// Validates the hermes-written proposals file against the same schema as the
+// direct LLM path. Tolerates markdown fences / surrounding prose; anything
+// unusable yields null so the caller can fall back to requestProposals.
+export function parseProposalsFile(raw: string): LlmProposals | null {
+  try {
+    const parsed = llmProposalsSchema.safeParse(extractJsonArray(raw));
+    return parsed.success ? parsed.data : null;
+  } catch {
+    return null;
+  }
+}
 
 type PendingProposalState = { titles: Set<string>; pendingCount: number };
 
@@ -70,6 +122,73 @@ async function createProposalTasks(
   return created;
 }
 
+// Same order-preserving slug resolution as loadTaskSkills, minus the task
+// console (the proposals job has none).
+async function loadRepositorySkills(repository: RepositoryWithConnection): Promise<Skill[]> {
+  const slugs = parseSkillSlugs(repository.skillSlugs);
+  if (slugs.length === 0) return [];
+  const rows = await prisma.skill.findMany({ where: { slug: { in: slugs } } });
+  const bySlug = new Map(rows.map((row) => [row.slug, row]));
+  return slugs.flatMap((slug) => bySlug.get(slug) ?? []);
+}
+
+function hermesLlmConfig(rt: LlmRuntime): HermesLlmConfig {
+  return {
+    baseUrl: rt.cfg.baseUrl,
+    apiKey: rt.apiKey,
+    model: rt.cfg.model,
+    contextWindow: rt.cfg.contextWindow,
+  };
+}
+
+async function readHermesProposalsFile(workdir: string): Promise<LlmProposals | null> {
+  const raw = await fs.readFile(path.join(workdir, PROPOSALS_FILENAME), 'utf8').catch(() => null);
+  if (raw === null) return null;
+  return parseProposalsFile(raw);
+}
+
+// Hermes run without a taskId: no task console, no cancel poll — the job's
+// only feedback is the returned proposals (or the fallback below).
+async function requestProposalsViaHermes(
+  repository: RepositoryWithConnection,
+  rt: LlmRuntime,
+  workdir: string,
+  secrets: string[],
+): Promise<LlmProposals | null> {
+  const skills = await loadRepositorySkills(repository);
+  await runHermesTask({
+    workdir,
+    prompt: buildHermesProposalPrompt({
+      maxProposals: MAX_PENDING_PROPOSALS,
+      skillsSection: buildSkillsSection(skills),
+      systemPromptExtra: rt.cfg.systemPromptExtra,
+    }),
+    llm: hermesLlmConfig(rt),
+    secrets,
+    timeoutMs: config.AGENT_HERMES_TIMEOUT_MINUTES * 60_000,
+  });
+  return readHermesProposalsFile(workdir);
+}
+
+// Executor branch: 'hermes' lets the agent explore the clone and write the
+// proposals file, falling back to the direct LLM request when the file is
+// missing/invalid so the top-up still works; 'internal' is unchanged.
+async function generateProposalList(
+  repository: RepositoryWithConnection,
+  rt: LlmRuntime,
+  workdir: string,
+  secrets: string[],
+  repoContext: string,
+): Promise<LlmProposals> {
+  if (config.AGENT_EXECUTOR !== 'hermes') return requestProposals(rt, repository, repoContext);
+  const proposals = await requestProposalsViaHermes(repository, rt, workdir, secrets);
+  if (proposals) return proposals;
+  console.warn(
+    `generate-proposals: ${repository.fullName}: no valid ${PROPOSALS_FILENAME} from hermes, falling back to direct LLM request`,
+  );
+  return requestProposals(rt, repository, repoContext);
+}
+
 async function executeGenerateProposals(
   repository: RepositoryWithConnection,
   workdir: string,
@@ -85,7 +204,7 @@ async function executeGenerateProposals(
     rt.cfg.contextWindow,
     agentsMdTemplate,
   );
-  const proposals = await requestProposals(rt, repository, repoContext);
+  const proposals = await generateProposalList(repository, rt, workdir, secrets, repoContext);
   const created = await createProposalTasks(repository, proposals);
   console.log(
     `generate-proposals: ${repository.fullName}: ${proposals.length} proposed, ${created} created`,

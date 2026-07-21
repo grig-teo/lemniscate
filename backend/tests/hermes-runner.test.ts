@@ -211,6 +211,31 @@ describe('runHermesTask', () => {
   });
 });
 
+describe('runHermesTask without a taskId', () => {
+  it('streams nothing to the console and skips the cancel poll', async () => {
+    const child = fakeChild();
+    mocks.spawn.mockReturnValue(child);
+    const promise = runHermesTask(makeOpts({ taskId: undefined, pollMs: 20 }));
+    child.stdout.write('orphan line\n');
+    await closeWith(child, 0);
+    await promise;
+
+    expect(mocks.logEvent).not.toHaveBeenCalled();
+    expect(mocks.taskFindUnique).not.toHaveBeenCalled();
+  });
+
+  it('still fails with the output tail on a nonzero exit', async () => {
+    const child = fakeChild();
+    mocks.spawn.mockReturnValue(child);
+    const promise = runHermesTask(makeOpts({ taskId: undefined }));
+    child.stdout.write('boom failure\n');
+    await closeWith(child, 1);
+
+    await expect(promise).rejects.toThrow('boom failure');
+    expect(mocks.logEvent).not.toHaveBeenCalled();
+  });
+});
+
 describe('runHermesTask cancellation', () => {
   it('kills the process and rejects when the task is cancelled mid-run', async () => {
     const child = fakeChild();

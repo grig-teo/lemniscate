@@ -250,7 +250,10 @@ const llmProposalSchema = z.object({
   title: z.string().min(1).max(200),
   prompt: z.string().min(1).max(8_000),
 });
-const llmProposalsSchema = z.array(llmProposalSchema).max(5);
+// Single home for the proposals contract: requestProposals (direct LLM) and
+// the hermes proposals-file parsing in agent-proposals.ts both validate
+// against this schema.
+export const llmProposalsSchema = z.array(llmProposalSchema).max(5);
 export type LlmProposals = z.infer<typeof llmProposalsSchema>;
 
 export function proposalsSystemPrompt(systemPromptExtra: string | null): string {
