@@ -36,6 +36,23 @@ export async function loadTaskSkills(task: { id: string; skills: unknown }): Pro
   return skills;
 }
 
+// Slugs from a request body that have no Skill row — used to 400 with the
+// offending names instead of silently storing dead references. Shared by the
+// repository PATCH and the repo-creation route.
+export async function findUnknownSkillSlugs(slugs: string[]): Promise<string[]> {
+  const rows = await prisma.skill.findMany({
+    where: { slug: { in: slugs } },
+    select: { slug: true },
+  });
+  const known = new Set(rows.map((row) => row.slug));
+  return slugs.filter((slug) => !known.has(slug));
+}
+
+export async function isAgentsMdSkill(id: string): Promise<boolean> {
+  const skill = await prisma.skill.findUnique({ where: { id }, select: { kind: true } });
+  return skill?.kind === 'agents_md';
+}
+
 // Content of the repository's AGENTS.md template skill, or null when unset
 // or when the reference dangles / points at the wrong kind (treated as "no
 // template" so a stale id never fails a run).

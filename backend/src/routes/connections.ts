@@ -6,14 +6,20 @@ import {
   fetchProviderProfile,
   getProviderClient,
   ProviderError,
-  type CreateRepoInput,
+  type NormalizedRepo,
   type ProviderName,
 } from '../lib/git-providers.js';
 import { prisma } from '../lib/prisma.js';
+import { buildRepoInitFiles, initializeRepoFiles } from '../lib/repo-init.js';
 import {
   syncConnectionByIdBestEffort,
   syncConnectionRepositories,
 } from '../lib/repo-sync.js';
+import {
+  findUnknownSkillSlugs,
+  isAgentsMdSkill,
+  loadAgentsMdTemplate,
+} from '../lib/task-skills.js';
 import {
   AUTH_COOKIE,
   authenticatedUserId,
@@ -41,6 +47,16 @@ const connectBodySchema = z.object({
 export const createRepoBodySchema = z.object({
   name: z.string().min(1).max(100),
   private: z.boolean().optional(),
+  // Slugs of skills injected into the agent's system prompt for tasks on
+  // this repository; existence validated against the Skill table below.
+  skillSlugs: z.array(z.string().min(1)).max(20).optional(),
+  // AGENTS.md template skill (kind 'agents_md') committed as AGENTS.md on
+  // creation; null means "no template".
+  agentsMdSkillId: z.string().min(1).nullable().optional(),
+  // Uploaded custom AGENTS.md text; wins over agentsMdSkillId.
+  agentsMdContent: z.string().max(100_000).optional(),
+  // Seed the repo with a README.md (default: yes).
+  readme: z.boolean().default(true),
 });
 
 const idParamsSchema = z.object({ id: z.string().min(1) });
@@ -241,23 +257,71 @@ async function syncConnectionRepos(request: FastifyRequest, reply: FastifyReply)
   }
 }
 
-// Creates the repo on the provider, then re-syncs so the Repository row
-// exists before the response returns.
+type CreateRepoBody = z.infer<typeof createRepoBodySchema>;
+
+// Creates the repo on the provider, re-syncs so the Repository row exists,
+// then seeds it with the planned files (best-effort) and stores the skill
+// selections on the row.
 async function createAndSyncRepo(
   connection: GitConnection,
-  input: CreateRepoInput,
+  input: CreateRepoBody,
   reply: FastifyReply,
 ): Promise<FastifyReply> {
   try {
-    const repository = await getProviderClient(connection).createRepo(input);
+    const client = getProviderClient(connection);
+    const repository = await client.createRepo({ name: input.name, private: input.private });
     const sync = await syncConnectionRepositories(connection);
-    return reply.code(201).send({ repository, sync });
+    const initialized = await initializeNewRepo(client, repository, input);
+    await applyRepoSelections(connection.id, repository.fullName, input);
+    return reply.code(201).send({ repository, sync, initialized });
   } catch (err) {
     if (err instanceof ProviderError) {
       return reply.code(502).send({ error: `Failed to create repository: ${err.message}` });
     }
     throw err;
   }
+}
+
+// Uploaded AGENTS.md text wins; otherwise the selected template skill's
+// content is used. Null when neither is given.
+async function resolveAgentsMdContent(input: CreateRepoBody): Promise<string | null> {
+  if (input.agentsMdContent) return input.agentsMdContent;
+  if (!input.agentsMdSkillId) return null;
+  return loadAgentsMdTemplate({ agentsMdSkillId: input.agentsMdSkillId });
+}
+
+// Seeds the default branch with README.md / AGENTS.md; failures surface as
+// warnings, never as a failed request.
+async function initializeNewRepo(
+  client: ReturnType<typeof getProviderClient>,
+  repository: NormalizedRepo,
+  input: CreateRepoBody,
+) {
+  const files = buildRepoInitFiles({
+    repoName: repository.name,
+    readme: input.readme,
+    agentsMdContent: await resolveAgentsMdContent(input),
+  });
+  return initializeRepoFiles(client, repository.fullName, repository.defaultBranch, files);
+}
+
+// Stores the skill selections on the synced Repository row. With a custom
+// upload the agentsMdSkillId stays null — the file itself is in the repo, so
+// the root-AGENTS.md check passes.
+async function applyRepoSelections(
+  connectionId: string,
+  fullName: string,
+  input: CreateRepoBody,
+): Promise<void> {
+  await prisma.repository.updateMany({
+    where: { connectionId, fullName },
+    data: {
+      ...(input.skillSlugs !== undefined ? { skillSlugs: input.skillSlugs } : {}),
+      ...(input.agentsMdSkillId && !input.agentsMdContent
+        ? { agentsMdSkillId: input.agentsMdSkillId }
+        : {}),
+    },
+  });
 }
 
 // POST /connections/:id/repositories — creates a repository on the provider
@@ -270,6 +334,18 @@ async function createConnectionRepo(request: FastifyRequest, reply: FastifyReply
     includeIssues: true,
   });
   if (data === null) return;
+
+  if (data.skillSlugs) {
+    const unknown = await findUnknownSkillSlugs(data.skillSlugs);
+    if (unknown.length > 0) {
+      return reply.code(400).send({ error: `Unknown skill slug(s): ${unknown.join(', ')}` });
+    }
+  }
+  if (data.agentsMdSkillId && !(await isAgentsMdSkill(data.agentsMdSkillId))) {
+    return reply
+      .code(400)
+      .send({ error: 'agentsMdSkillId does not reference an AGENTS.md skill' });
+  }
 
   const connection = await prisma.gitConnection.findFirst({
     where: { id: params.id, userId },

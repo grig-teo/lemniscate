@@ -34,6 +34,17 @@ export interface CreateRepoInput {
   private?: boolean;
 }
 
+// One file committed to a repository (used to initialize freshly created
+// repos with README.md / AGENTS.md). `content` is the plain UTF-8 text;
+// providers that want base64 get it encoded by their implementation.
+export interface CreateFileInput {
+  repoFullName: string;
+  path: string;
+  content: string;
+  message: string;
+  branch: string;
+}
+
 export interface ProviderProfile {
   username: string;
 }
@@ -41,6 +52,7 @@ export interface ProviderProfile {
 export interface GitProviderClient {
   listRepos(): Promise<NormalizedRepo[]>;
   createRepo(input: CreateRepoInput): Promise<NormalizedRepo>;
+  createFile(input: CreateFileInput): Promise<void>;
   createPullRequest(input: CreatePullRequestInput): Promise<PullRequestResult>;
   isBare(repoFullName: string): Promise<boolean>;
 }
@@ -100,9 +112,10 @@ async function requestJson(
   return (await requestJsonMeta(url, headers, provider)).data;
 }
 
-// POST variant of requestJson for the create-repository endpoints. Same
+// POST/PUT variant of requestJson for the write endpoints. Same
 // ProviderError contract: never leaks the token, carries the HTTP status.
-async function postJson(
+async function sendJson(
+  method: 'POST' | 'PUT',
   url: string,
   headers: Record<string, string>,
   provider: string,
@@ -111,7 +124,7 @@ async function postJson(
   let response: Response;
   try {
     response = await fetch(url, {
-      method: 'POST',
+      method,
       headers: { 'Content-Type': 'application/json', ...headers },
       body: JSON.stringify(body),
     });
@@ -123,11 +136,25 @@ async function postJson(
   if (!response.ok) {
     const text = await response.text().catch(() => '');
     throw new ProviderError(
-      `${provider}: ${response.status} ${response.statusText} from POST ${url}: ${text.slice(0, 300)}`,
+      `${provider}: ${response.status} ${response.statusText} from ${method} ${url}: ${text.slice(0, 300)}`,
       response.status,
     );
   }
   return response.json();
+}
+
+async function postJson(
+  url: string,
+  headers: Record<string, string>,
+  provider: string,
+  body: unknown,
+): Promise<unknown> {
+  return sendJson('POST', url, headers, provider, body);
+}
+
+// GitHub-shaped contents APIs take file content as base64.
+function base64Content(content: string): string {
+  return Buffer.from(content, 'utf8').toString('base64');
 }
 
 // Parses an OAuth scope list ("repo, read:user" or "repo read:user") and
@@ -292,6 +319,18 @@ async function githubCreateRepo(token: string, input: CreateRepoInput): Promise<
   return normalizeGithubRepo(data);
 }
 
+// PUT /repos/{full}/contents/{path} — creates the file on the given branch
+// (also the first commit of an empty repository).
+async function githubCreateFile(token: string, input: CreateFileInput): Promise<void> {
+  await sendJson(
+    'PUT',
+    `${GITHUB_API}/repos/${input.repoFullName}/contents/${input.path}`,
+    githubHeaders(token),
+    'github',
+    { message: input.message, content: base64Content(input.content), branch: input.branch },
+  );
+}
+
 // ---------------------------------------------------------------------------
 // GitLab
 // ---------------------------------------------------------------------------
@@ -401,6 +440,25 @@ async function gitlabCreateRepo(
     { name: input.name, visibility: input.private ? 'private' : 'public' },
   )) as GitlabProject;
   return normalizeGitlabProject(data);
+}
+
+// POST /projects/{full}/repository/files/{path} — unlike the GitHub-shaped
+// providers, GitLab takes plain (non-base64) content and a commit_message.
+// Project and path are URL-encoded (slashes become %2F).
+async function gitlabCreateFile(
+  token: string,
+  tokenType: ProviderTokenType,
+  baseUrl: string | null | undefined,
+  input: CreateFileInput,
+): Promise<void> {
+  const project = encodeURIComponent(input.repoFullName);
+  const path = encodeURIComponent(input.path);
+  await postJson(
+    `${gitlabApiBase(baseUrl)}/projects/${project}/repository/files/${path}`,
+    gitlabHeaders(token, tokenType),
+    'gitlab',
+    { branch: input.branch, content: input.content, commit_message: input.message },
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -514,6 +572,24 @@ export function cloneUrlWithToken(cloneUrl: string, token: string): string {
   return url.toString();
 }
 
+// PUT {apiBase}/repos/{full}/contents/{path}. The GitVerse API docs list a
+// Gitea-style contents endpoint; the exact body shape ({message, content:
+// base64, branch}) is unverified against a live instance — a failure here is
+// best-effort (reported as an init warning, never fatal).
+async function gitverseCreateFile(
+  baseUrl: string | null | undefined,
+  token: string,
+  input: CreateFileInput,
+): Promise<void> {
+  await sendJson(
+    'PUT',
+    `${gitverseApiBase(baseUrl)}/repos/${input.repoFullName}/contents/${input.path}`,
+    gitverseHeaders(token),
+    'gitverse',
+    { message: input.message, content: base64Content(input.content), branch: input.branch },
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Gitee (gitee.com, API v5 — GitHub-shaped)
 // ---------------------------------------------------------------------------
@@ -595,6 +671,16 @@ async function giteeCreateRepo(token: string, input: CreateRepoInput): Promise<N
   return normalizeGiteeRepo(data);
 }
 
+// POST /repos/{full}/contents/{path} with base64 content (API v5).
+async function giteeCreateFile(token: string, input: CreateFileInput): Promise<void> {
+  await postJson(
+    `${GITEE_API}/repos/${input.repoFullName}/contents/${input.path}`,
+    giteeHeaders(token),
+    'gitee',
+    { message: input.message, content: base64Content(input.content), branch: input.branch },
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Public entry points
 // ---------------------------------------------------------------------------
@@ -624,6 +710,12 @@ interface ProviderApi {
     tokenType: ProviderTokenType,
     input: CreateRepoInput,
   ): Promise<NormalizedRepo>;
+  createFile(
+    token: string,
+    baseUrl: string | null | undefined,
+    tokenType: ProviderTokenType,
+    input: CreateFileInput,
+  ): Promise<void>;
   isBare(
     token: string,
     baseUrl: string | null | undefined,
@@ -644,6 +736,7 @@ const providerApis: Record<ProviderName, ProviderApi> = {
     assertPushAccess: (token, _baseUrl, _tokenType, repoFullName) =>
       githubAssertPushAccess(token, repoFullName),
     createRepo: (token, _baseUrl, _tokenType, input) => githubCreateRepo(token, input),
+    createFile: (token, _baseUrl, _tokenType, input) => githubCreateFile(token, input),
     isBare: (token, _baseUrl, _tokenType, repoFullName) =>
       rootListingIsBare(contentsUrl(GITHUB_API, repoFullName), githubHeaders(token), 'github'),
   },
@@ -653,6 +746,8 @@ const providerApis: Record<ProviderName, ProviderApi> = {
     assertPushAccess: (token, _baseUrl, tokenType, repoFullName) =>
       gitlabAssertPushAccess(token, tokenType, repoFullName),
     createRepo: (token, _baseUrl, tokenType, input) => gitlabCreateRepo(token, tokenType, input),
+    createFile: (token, baseUrl, tokenType, input) =>
+      gitlabCreateFile(token, tokenType, baseUrl, input),
     isBare: (token, baseUrl, tokenType, repoFullName) =>
       rootListingIsBare(
         gitlabTreeUrl(baseUrl, repoFullName),
@@ -668,6 +763,8 @@ const providerApis: Record<ProviderName, ProviderApi> = {
     createRepo: async () => {
       throw new ProviderError(GITVERSE_CREATE_REPO_UNSUPPORTED);
     },
+    createFile: (token, baseUrl, _tokenType, input) =>
+      gitverseCreateFile(baseUrl, token, input),
     isBare: (token, baseUrl, _tokenType, repoFullName) =>
       rootListingIsBare(
         contentsUrl(gitverseApiBase(baseUrl), repoFullName),
@@ -681,6 +778,7 @@ const providerApis: Record<ProviderName, ProviderApi> = {
     assertPushAccess: (token, _baseUrl, _tokenType, repoFullName) =>
       giteeAssertPushAccess(token, repoFullName),
     createRepo: (token, _baseUrl, _tokenType, input) => giteeCreateRepo(token, input),
+    createFile: (token, _baseUrl, _tokenType, input) => giteeCreateFile(token, input),
     isBare: (token, _baseUrl, _tokenType, repoFullName) =>
       rootListingIsBare(contentsUrl(GITEE_API, repoFullName), giteeHeaders(token), 'gitee'),
   },
@@ -738,6 +836,10 @@ export function getProviderClient(connection: {
     createRepo: (input) =>
       withGitlabRefreshRetry(connection, (token) =>
         api.createRepo(token, connection.baseUrl, tokenType, input),
+      ),
+    createFile: (input) =>
+      withGitlabRefreshRetry(connection, (token) =>
+        api.createFile(token, connection.baseUrl, tokenType, input),
       ),
     createPullRequest: notImplementedPr(connection.provider),
     isBare: (repoFullName) =>

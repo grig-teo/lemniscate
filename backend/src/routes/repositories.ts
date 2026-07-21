@@ -1,6 +1,7 @@
 import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 import { prisma } from '../lib/prisma.js';
+import { findUnknownSkillSlugs, isAgentsMdSkill } from '../lib/task-skills.js';
 import { authenticatedUserId, requireAuth } from '../plugins/auth.js';
 import { parseOrReply } from './helpers.js';
 
@@ -76,20 +77,8 @@ async function ownedLlmConfigExists(userId: string, llmConfigId: string): Promis
 }
 
 // Slugs from the patch body that have no Skill row — used to 400 with the
-// offending names instead of silently storing dead references.
-async function findUnknownSkillSlugs(slugs: string[]): Promise<string[]> {
-  const rows = await prisma.skill.findMany({
-    where: { slug: { in: slugs } },
-    select: { slug: true },
-  });
-  const known = new Set(rows.map((row) => row.slug));
-  return slugs.filter((slug) => !known.has(slug));
-}
-
-async function isAgentsMdSkill(id: string): Promise<boolean> {
-  const skill = await prisma.skill.findUnique({ where: { id }, select: { kind: true } });
-  return skill?.kind === 'agents_md';
-}
+// offending names instead of silently storing dead references. Lives in
+// lib/task-skills.ts (single home, shared with the repo-creation route).
 
 const repositoriesRoutes: FastifyPluginAsync = async (app) => {
   app.addHook('preHandler', requireAuth);

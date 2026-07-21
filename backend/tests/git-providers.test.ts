@@ -595,3 +595,81 @@ describe('isBare', () => {
     await expect(getProviderClient(connection('gitlab')).isBare('ivan/gone')).resolves.toBe(false);
   });
 });
+
+describe('createFile', () => {
+  function connection(provider: 'github' | 'gitlab' | 'gitverse' | 'gitee') {
+    return { provider, baseUrl: null, accessTokenEnc: encrypt('tok') };
+  }
+
+  const input = {
+    repoFullName: 'ivan/demo',
+    path: 'README.md',
+    content: '# demo\n',
+    message: 'Add README.md',
+    branch: 'main',
+  };
+  const base64 = Buffer.from('# demo\n', 'utf8').toString('base64');
+
+  function stubFileWrite(expectedUrl: string, expectedMethod: string) {
+    return vi.fn((rawUrl: unknown, init?: RequestInit) => {
+      expect(String(rawUrl)).toBe(expectedUrl);
+      expect(init?.method).toBe(expectedMethod);
+      return Promise.resolve(jsonResponse({}));
+    });
+  }
+
+  function lastBody(): unknown {
+    const init = (fetch as unknown as ReturnType<typeof vi.fn>).mock.calls[0]?.[1];
+    return JSON.parse(String(init?.body));
+  }
+
+  it('github: PUT /repos/{full}/contents/{path} with base64 content', async () => {
+    vi.stubGlobal(
+      'fetch',
+      stubFileWrite('https://api.github.com/repos/ivan/demo/contents/README.md', 'PUT'),
+    );
+    await getProviderClient(connection('github')).createFile(input);
+    expect(lastBody()).toEqual({ message: 'Add README.md', content: base64, branch: 'main' });
+  });
+
+  it('gitlab: POST /projects/{full}/repository/files/{path} with plain content', async () => {
+    vi.stubGlobal(
+      'fetch',
+      stubFileWrite(
+        'https://gitlab.com/api/v4/projects/ivan%2Fdemo/repository/files/README.md',
+        'POST',
+      ),
+    );
+    await getProviderClient(connection('gitlab')).createFile(input);
+    expect(lastBody()).toEqual({
+      branch: 'main',
+      content: '# demo\n',
+      commit_message: 'Add README.md',
+    });
+  });
+
+  it('gitverse: PUT /repos/{full}/contents/{path} Gitea-style with base64 content', async () => {
+    vi.stubGlobal(
+      'fetch',
+      stubFileWrite('https://api.gitverse.ru/repos/ivan/demo/contents/README.md', 'PUT'),
+    );
+    await getProviderClient(connection('gitverse')).createFile(input);
+    expect(lastBody()).toEqual({ message: 'Add README.md', content: base64, branch: 'main' });
+  });
+
+  it('gitee: POST /repos/{full}/contents/{path} with base64 content', async () => {
+    vi.stubGlobal(
+      'fetch',
+      stubFileWrite('https://gitee.com/api/v5/repos/ivan/demo/contents/README.md', 'POST'),
+    );
+    await getProviderClient(connection('gitee')).createFile(input);
+    expect(lastBody()).toEqual({ message: 'Add README.md', content: base64, branch: 'main' });
+  });
+
+  it('wraps provider failures in ProviderError with the status', async () => {
+    vi.stubGlobal('fetch', vi.fn(() => Promise.resolve(jsonResponse({}, 422))));
+    await expect(getProviderClient(connection('github')).createFile(input)).rejects.toThrow(
+      ProviderError,
+    );
+  });
+});
