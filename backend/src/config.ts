@@ -49,6 +49,10 @@ const envSchema = z.object({
   GITLAB_CLIENT_ID: optionalString,
   GITLAB_CLIENT_SECRET: optionalString,
 
+  // --- Gitee OAuth ---
+  GITEE_CLIENT_ID: optionalString,
+  GITEE_CLIENT_SECRET: optionalString,
+
   // --- Agent loop ---
   AGENT_WORKDIR: z.string().min(1).default('/tmp/lemniscate-repos'),
   AGENT_BRANCH_PREFIX: z.string().min(1).default('lemniscate/'),

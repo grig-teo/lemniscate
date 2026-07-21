@@ -1,17 +1,22 @@
 import { describe, expect, it } from 'vitest';
-import { buildRerunUpdate, buildStartUpdate, rerunBlocker, startBlocker, startBodySchema, wantsSse } from '../src/routes/tasks.js';
+import { buildRerunUpdate, buildStartUpdate, initialTaskStatus, rerunBlocker, startBlocker, startBodySchema, wantsSse } from '../src/routes/tasks.js';
 
-// Locking tests for POST /tasks/:id/start eligibility: only pending proposal
-// tasks can be started (queued → enqueued) by the user.
+// Locking tests for POST /tasks/:id/start eligibility: pending proposal
+// tasks and saved-for-later prompt tasks can be started (queued → enqueued)
+// by the user.
 
 describe('startBlocker', () => {
   it('allows a pending proposal task', () => {
     expect(startBlocker({ kind: 'proposal', status: 'pending' })).toBeNull();
   });
 
-  it('rejects prompt tasks even when pending', () => {
-    expect(startBlocker({ kind: 'prompt', status: 'pending' })).toBe(
-      'only proposal tasks can be started',
+  it('allows a pending prompt task (saved for later)', () => {
+    expect(startBlocker({ kind: 'prompt', status: 'pending' })).toBeNull();
+  });
+
+  it('rejects other kinds even when pending', () => {
+    expect(startBlocker({ kind: 'review', status: 'pending' })).toBe(
+      'only proposal and prompt tasks can be started',
     );
   });
 
@@ -21,6 +26,26 @@ describe('startBlocker', () => {
       expect(startBlocker({ kind: 'proposal', status })).toBe(`task is ${status}, not pending`);
     },
   );
+
+  it.each(['queued', 'running', 'awaiting_review', 'done', 'failed'])(
+    'rejects prompt tasks that are %s',
+    (status) => {
+      expect(startBlocker({ kind: 'prompt', status })).toBe(`task is ${status}, not pending`);
+    },
+  );
+});
+
+// POST /tasks with `later: true` parks the prompt task as pending instead of
+// queueing it; the default (absent/false) keeps the enqueue-now behavior.
+describe('initialTaskStatus', () => {
+  it('queues the task by default', () => {
+    expect(initialTaskStatus(undefined)).toBe('queued');
+    expect(initialTaskStatus(false)).toBe('queued');
+  });
+
+  it('parks the task as pending when later is true', () => {
+    expect(initialTaskStatus(true)).toBe('pending');
+  });
 });
 
 const PNG_DATA_URL = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUg==';

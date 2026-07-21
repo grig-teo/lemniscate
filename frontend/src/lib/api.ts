@@ -17,7 +17,7 @@ export const API_BASE_URL = BASE_URL;
  * Full-page redirect target that starts an OAuth flow on the backend.
  * The flow ends back on `/` with the `lemniscate_token` cookie set.
  */
-export function oauthStartUrl(provider: 'github' | 'gitlab'): string {
+export function oauthStartUrl(provider: 'github' | 'gitlab' | 'gitee'): string {
   return `${BASE_URL}/api/auth/${provider}`;
 }
 

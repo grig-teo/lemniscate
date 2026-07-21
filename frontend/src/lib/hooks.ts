@@ -21,7 +21,7 @@ export type Me = {
   createdAt: string;
 };
 
-export type GitProvider = 'github' | 'gitlab' | 'gitverse';
+export type GitProvider = 'github' | 'gitlab' | 'gitverse' | 'gitee';
 
 export type Connection = {
   id: string;
@@ -150,6 +150,8 @@ export type CreateTaskBody = {
   thinkingLevel?: TaskThinkingLevel;
   llmConfigId?: string;
   images?: TaskImage[];
+  /** Save for later: create the task as pending without enqueueing it. */
+  later?: boolean;
 };
 
 /** POST /api/tasks/:id/start body — proposal edits applied before queueing. */

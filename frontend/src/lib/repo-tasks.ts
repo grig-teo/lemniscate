@@ -6,21 +6,37 @@ export const PROPOSAL_TARGET_COUNT = 5;
 /** Tasks-query poll cadence while a repo is short of fresh proposals. */
 export const PROPOSAL_POLL_INTERVAL_MS = 10_000;
 
-export interface SplitRepoTasks {
+export interface RepoTaskGroups {
   proposals: Task[];
+  prompts: Task[];
   processes: Task[];
 }
 
-/** A proposal task that has not been started yet (the only startable kind). */
+/** A proposal task that has not been started yet. */
 export function isPendingProposal(task: { kind?: string; status: string }): boolean {
   return task.kind === 'proposal' && task.status === 'pending';
 }
 
-/** Split a repo's tasks into fresh proposals and everything else, order preserved. */
-export function splitRepoTasks(tasks: Task[]): SplitRepoTasks {
+/** A prompt task saved for later — startable like a pending proposal. */
+export function isPendingPrompt(task: { kind?: string; status: string }): boolean {
+  return task.kind === 'prompt' && task.status === 'pending';
+}
+
+/** Tasks the user can click-to-start from the repo tree. */
+export function isStartableTask(task: { kind?: string; status: string }): boolean {
+  return isPendingProposal(task) || isPendingPrompt(task);
+}
+
+function isProcessTask(task: Task): boolean {
+  return !isPendingProposal(task) && !isPendingPrompt(task);
+}
+
+/** Split a repo's tasks into proposals, saved-for-later prompts, and processes. */
+export function groupRepoTasks(tasks: Task[]): RepoTaskGroups {
   return {
     proposals: tasks.filter(isPendingProposal),
-    processes: tasks.filter((task) => !isPendingProposal(task)),
+    prompts: tasks.filter(isPendingPrompt),
+    processes: tasks.filter(isProcessTask),
   };
 }
 

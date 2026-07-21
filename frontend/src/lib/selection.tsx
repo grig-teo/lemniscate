@@ -5,6 +5,10 @@
  */
 import * as React from 'react';
 
+import { readPersisted, writePersisted } from '@/lib/persist';
+
+const SELECTED_TASK_STORAGE_KEY = 'lemniscate.selected-task';
+
 export interface SelectedTask {
   id: string;
   title: string;
@@ -27,11 +31,15 @@ interface WorkspaceSelectionValue {
 const WorkspaceSelectionContext = React.createContext<WorkspaceSelectionValue | null>(null);
 
 export function WorkspaceSelectionProvider({ children }: { children: React.ReactNode }) {
-  const [selectedTask, setSelectedTask] = React.useState<SelectedTask | null>(null);
+  // Hydrate from localStorage; a stale id 404s gracefully in task queries.
+  const [selectedTask, setSelectedTask] = React.useState<SelectedTask | null>(() =>
+    readPersisted<SelectedTask | null>(SELECTED_TASK_STORAGE_KEY, null),
+  );
   const [liveStatus, setLiveStatus] = React.useState<string | null>(null);
 
   const selectTask = React.useCallback((task: SelectedTask | null) => {
     setSelectedTask(task);
+    writePersisted(SELECTED_TASK_STORAGE_KEY, task);
     setLiveStatus(null);
   }, []);
 

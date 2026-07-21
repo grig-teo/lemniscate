@@ -10,6 +10,17 @@ import { initialFlags, setAutoReview, type RepoFlags } from '@/lib/repo-flags';
 
 import { FlagSwitch } from '@/components/repo-tree/RepoRow';
 
+type FlagSwitchProps = Parameters<typeof FlagSwitch>[0];
+
+function FlagSetting({ description, ...switchProps }: { description: string } & FlagSwitchProps) {
+  return (
+    <div className="flex flex-col gap-1">
+      <p className="text-xs text-muted-foreground">{description}</p>
+      <FlagSwitch {...switchProps} />
+    </div>
+  );
+}
+
 function FlagSwitches({
   flags,
   onChange,
@@ -18,20 +29,23 @@ function FlagSwitches({
   onChange: (flags: RepoFlags) => void;
 }) {
   return (
-    <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
-      <FlagSwitch
+    <div className="flex flex-col gap-4">
+      <FlagSetting
+        description="Push the finished branch and open a pull request on the git host (off: push the branch only)."
         label="PR"
         ariaLabel="Auto-create PR on all repositories"
         checked={flags.autoCreatePr}
         onChange={(autoCreatePr) => onChange({ ...flags, autoCreatePr })}
       />
-      <FlagSwitch
+      <FlagSetting
+        description="After the PR opens, an LLM reviews the diff and can request fixes (up to 3 rounds)."
         label="review"
         ariaLabel="Auto-review PRs on all repositories"
         checked={flags.autoReviewPr}
         onChange={(checked) => onChange({ ...flags, ...setAutoReview(flags, checked) })}
       />
-      <FlagSwitch
+      <FlagSetting
+        description="After review passes, merge automatically; conflicts are resolved by the LLM. Requires review."
         label="merge"
         ariaLabel="Auto-merge PRs on all repositories"
         checked={flags.autoMergePr}

@@ -124,31 +124,52 @@ function useTaskComposer(onSubmitted?: () => void) {
     setImages((prev) => prev.filter((_, i) => i !== index));
   };
 
+  const resetDraft = () => {
+    setPrompt('');
+    setImages([]);
+  };
+
+  const buildBody = (later?: boolean) => ({
+    repositoryId,
+    prompt: prompt.trim(),
+    ...(thinkingLevel ? { thinkingLevel } : {}),
+    ...(llmConfigId ? { llmConfigId } : {}),
+    ...(images.length > 0 ? { images } : {}),
+    ...(later ? { later: true } : {}),
+  });
+
+  const selectCreatedTask = (task: {
+    id: string;
+    title: string;
+    status: string;
+    kind: string;
+    repositoryId: string;
+  }) => {
+    selectTask({
+      id: task.id,
+      title: task.title,
+      status: task.status,
+      kind: task.kind,
+      repositoryId: task.repositoryId,
+    });
+  };
+
   const submit = () => {
     if (!canSend) return;
-    createTask.mutate(
-      {
-        repositoryId,
-        prompt: prompt.trim(),
-        ...(thinkingLevel ? { thinkingLevel } : {}),
-        ...(llmConfigId ? { llmConfigId } : {}),
-        ...(images.length > 0 ? { images } : {}),
+    createTask.mutate(buildBody(), {
+      onSuccess: (task) => {
+        selectCreatedTask(task);
+        resetDraft();
+        onSubmitted?.();
       },
-      {
-        onSuccess: (task) => {
-          selectTask({
-            id: task.id,
-            title: task.title,
-            status: task.status,
-            kind: task.kind,
-            repositoryId: task.repositoryId,
-          });
-          setPrompt('');
-          setImages([]);
-          onSubmitted?.();
-        },
-      },
-    );
+    });
+  };
+
+  // Save for later: park the prompt as a pending task (no enqueue, no
+  // selection, no close) so it can be started from the repo tree.
+  const saveLater = () => {
+    if (!canSend) return;
+    createTask.mutate(buildBody(true), { onSuccess: resetDraft });
   };
 
   return {
@@ -170,6 +191,7 @@ function useTaskComposer(onSubmitted?: () => void) {
     canSend,
     createTask,
     submit,
+    saveLater,
   };
 }
 
@@ -386,6 +408,30 @@ function SendButton({ canSend, pending, onClick }: { canSend: boolean; pending: 
   );
 }
 
+/** Secondary action: park the prompt as a pending task to start later. */
+function SaveLaterButton({
+  canSave,
+  pending,
+  onClick,
+}: {
+  canSave: boolean;
+  pending: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <Button
+      type="button"
+      variant="secondary"
+      size="sm"
+      onClick={onClick}
+      disabled={!canSave || pending}
+      aria-label="Save prompt for later"
+    >
+      Save for later
+    </Button>
+  );
+}
+
 function submitOnCmdEnter(event: React.KeyboardEvent<HTMLTextAreaElement>, submit: () => void) {
   if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
     event.preventDefault();
@@ -413,6 +459,11 @@ function ComposerToolbar({ composer }: { composer: ReturnType<typeof useTaskComp
         disabled={composer.images.length >= MAX_IMAGES}
         onFiles={composer.addImageFiles}
       />
+      <SaveLaterButton
+        canSave={composer.canSend}
+        pending={composer.createTask.isPending}
+        onClick={composer.saveLater}
+      />
       <SendButton
         canSend={composer.canSend}
         pending={composer.createTask.isPending}
@@ -423,11 +474,41 @@ function ComposerToolbar({ composer }: { composer: ReturnType<typeof useTaskComp
 }
 
 /**
+ * Shared composer card (auto-growing textarea + toolbar) used by both the
+ * modal TaskComposerDialog and the inline empty-console composer — one
+ * implementation, no duplication. Submits on Cmd/Ctrl+Enter or the send
+ * button; `onSubmitted` runs after a task is sent (the dialog closes on it).
+ */
+export function ComposerCard({ onSubmitted }: { onSubmitted?: () => void }) {
+  const composer = useTaskComposer(onSubmitted);
+  const textareaRef = useAutoResizeTextarea(composer.prompt);
+
+  return (
+    <div className="flex flex-col gap-2">
+      {composer.createTask.isError && (
+        <p className="text-xs text-destructive">{composer.createTask.error.message}</p>
+      )}
+      <div className="rounded-lg border bg-background shadow-sm focus-within:ring-1 focus-within:ring-ring">
+        <ImageThumbnails images={composer.images} onRemove={composer.removeImage} />
+        <Textarea
+          ref={textareaRef}
+          value={composer.prompt}
+          onChange={(event) => composer.setPrompt(event.target.value)}
+          onKeyDown={(event) => submitOnCmdEnter(event, composer.submit)}
+          placeholder="Describe a task for the agent… (⌘/Ctrl+Enter to send)"
+          rows={TEXTAREA_MIN_ROWS}
+          aria-label="Prompt"
+          className="resize-none overflow-y-auto border-0 shadow-none focus-visible:ring-0"
+        />
+        <ComposerToolbar composer={composer} />
+      </div>
+    </div>
+  );
+}
+
+/**
  * Modal composer that starts a new prompt task on a chosen repository and
- * selects it. The auto-growing textarea sits on top and submits on
- * Cmd/Ctrl+Enter or the send button; the toolbar under it carries the repo
- * picker, per-prompt thinking level, a context-usage ring, and image
- * attachments. Closes on successful submit.
+ * selects it. Closes on successful submit; the card itself is ComposerCard.
  */
 export function TaskComposerDialog({
   open,
@@ -436,9 +517,6 @@ export function TaskComposerDialog({
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
-  const composer = useTaskComposer(() => onOpenChange(false));
-  const textareaRef = useAutoResizeTextarea(composer.prompt);
-
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-3xl">
@@ -449,23 +527,7 @@ export function TaskComposerDialog({
             request.
           </DialogDescription>
         </DialogHeader>
-        {composer.createTask.isError && (
-          <p className="text-xs text-destructive">{composer.createTask.error.message}</p>
-        )}
-        <div className="rounded-lg border bg-background shadow-sm focus-within:ring-1 focus-within:ring-ring">
-          <ImageThumbnails images={composer.images} onRemove={composer.removeImage} />
-          <Textarea
-            ref={textareaRef}
-            value={composer.prompt}
-            onChange={(event) => composer.setPrompt(event.target.value)}
-            onKeyDown={(event) => submitOnCmdEnter(event, composer.submit)}
-            placeholder="Describe a task for the agent… (⌘/Ctrl+Enter to send)"
-            rows={TEXTAREA_MIN_ROWS}
-            aria-label="Prompt"
-            className="resize-none overflow-y-auto border-0 shadow-none focus-visible:ring-0"
-          />
-          <ComposerToolbar composer={composer} />
-        </div>
+        <ComposerCard onSubmitted={() => onOpenChange(false)} />
       </DialogContent>
     </Dialog>
   );

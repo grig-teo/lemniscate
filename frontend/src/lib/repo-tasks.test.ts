@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 
 import type { Task } from '@/lib/hooks';
 import {
+  groupRepoTasks,
+  isStartableTask,
   proposalPollInterval,
   PROPOSAL_POLL_INTERVAL_MS,
   PROPOSAL_TARGET_COUNT,
@@ -48,5 +50,32 @@ describe('proposalPollInterval', () => {
       makeTask({ id: 's1', status: 'running' }),
     ];
     expect(proposalPollInterval(tasks)).toBe(PROPOSAL_POLL_INTERVAL_MS);
+  });
+});
+
+describe('groupRepoTasks', () => {
+  it('splits tasks into proposals, saved-for-later prompts, and processes', () => {
+    const tasks = [
+      makeTask({ id: 'proposal' }),
+      makeTask({ id: 'later-prompt', kind: 'prompt' }),
+      makeTask({ id: 'running-prompt', kind: 'prompt', status: 'running' }),
+      makeTask({ id: 'done-proposal', status: 'done' }),
+    ];
+    const groups = groupRepoTasks(tasks);
+    expect(groups.proposals.map((t) => t.id)).toEqual(['proposal']);
+    expect(groups.prompts.map((t) => t.id)).toEqual(['later-prompt']);
+    expect(groups.processes.map((t) => t.id)).toEqual(['running-prompt', 'done-proposal']);
+  });
+});
+
+describe('isStartableTask', () => {
+  it('allows pending proposals and pending prompts', () => {
+    expect(isStartableTask(makeTask({}))).toBe(true);
+    expect(isStartableTask(makeTask({ kind: 'prompt' }))).toBe(true);
+  });
+
+  it('rejects started tasks and other kinds', () => {
+    expect(isStartableTask(makeTask({ status: 'queued' }))).toBe(false);
+    expect(isStartableTask(makeTask({ kind: 'review' }))).toBe(false);
   });
 });

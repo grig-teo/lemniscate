@@ -6,7 +6,7 @@ import { useWorkspaceSelection } from '@/lib/selection';
 import { ConsoleHeader } from '@/components/console/ConsoleHeader';
 import { ConsoleLog } from '@/components/console/ConsoleLog';
 import { ProposalDetail } from '@/components/console/ProposalDetail';
-import { TaskComposerFab } from '@/components/console/TaskComposer';
+import { ComposerCard, TaskComposerFab } from '@/components/console/TaskComposer';
 import { useTaskConsole } from '@/components/console/useTaskConsole';
 
 function EmptyConsole() {
@@ -17,14 +17,13 @@ function EmptyConsole() {
           Agent console
         </span>
       </div>
-      <div className="flex flex-1 flex-col items-center justify-center gap-2 px-6 py-16 text-center">
+      <div className="flex flex-1 flex-col items-center justify-center gap-4 px-6 py-16 text-center">
         <Terminal className="h-8 w-8 text-muted-foreground/50" aria-hidden />
         <p className="text-sm text-muted-foreground">Agent output will stream here.</p>
-        <p className="text-xs text-muted-foreground/70">
-          Click the + button to start a new task and watch the agent think, edit, and commit.
-        </p>
+        <div className="w-full max-w-2xl text-left">
+          <ComposerCard />
+        </div>
       </div>
-      <TaskComposerFab />
     </section>
   );
 }
@@ -38,8 +37,9 @@ function EmptyConsole() {
  * events update the header badge. See console/useTaskConsole.ts.
  * A pending proposal shows the editable ProposalDetail instead of the log;
  * once started it flips to queued and the log view takes over.
- * The floating + button opens the TaskComposerDialog to start a new prompt
- * task on a chosen repository.
+ * With no task selected the composer (ComposerCard) renders inline in the
+ * empty console; once a task is selected, the floating + button opens the
+ * same composer as the TaskComposerDialog modal.
  */
 export function ConsolePane() {
   const { selectedTask, liveStatus } = useWorkspaceSelection();

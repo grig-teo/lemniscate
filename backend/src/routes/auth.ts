@@ -17,8 +17,8 @@ import {
   verifyAuthToken,
 } from '../plugins/auth.js';
 
-// OAuth login flow for GitHub and GitLab. GitVerse has no public OAuth, so
-// it connects via PAT through the connections route instead.
+// OAuth login flow for GitHub, GitLab, and Gitee. GitVerse has no public
+// OAuth, so it connects via PAT through the connections route instead.
 //
 // The OAuth `state` nonce is stored in a short-lived cookie, signed with an
 // HMAC derived from JWT_SECRET (@fastify/cookie is registered without a
@@ -27,7 +27,7 @@ import {
 const STATE_COOKIE = 'lemniscate_oauth_state';
 const STATE_COOKIE_MAX_AGE_SECONDS = 10 * 60;
 
-type OAuthProviderName = Extract<ProviderName, 'github' | 'gitlab'>;
+type OAuthProviderName = Extract<ProviderName, 'github' | 'gitlab' | 'gitee'>;
 
 interface OAuthProviderConfig {
   clientId?: string;
@@ -37,7 +37,7 @@ interface OAuthProviderConfig {
   scope: string;
 }
 
-function oauthProviders(): Record<OAuthProviderName, OAuthProviderConfig> {
+export function oauthProviders(): Record<OAuthProviderName, OAuthProviderConfig> {
   return {
     github: {
       clientId: config.GITHUB_CLIENT_ID,
@@ -53,6 +53,14 @@ function oauthProviders(): Record<OAuthProviderName, OAuthProviderConfig> {
       authorizeUrl: 'https://gitlab.com/oauth/authorize',
       tokenUrl: 'https://gitlab.com/oauth/token',
       scope: 'api read_user',
+    },
+    gitee: {
+      clientId: config.GITEE_CLIENT_ID,
+      clientSecret: config.GITEE_CLIENT_SECRET,
+      authorizeUrl: 'https://gitee.com/oauth/authorize',
+      tokenUrl: 'https://gitee.com/oauth/token',
+      // projects = repo read/write, user_info = profile lookup.
+      scope: 'projects user_info',
     },
   };
 }
@@ -111,7 +119,7 @@ function buildAuthorizeUrl(
   url.searchParams.set('redirect_uri', callbackUrl(provider));
   url.searchParams.set('scope', providerConfig.scope);
   url.searchParams.set('state', state);
-  if (provider === 'gitlab') {
+  if (provider !== 'github') {
     url.searchParams.set('response_type', 'code');
   }
   return url.toString();
@@ -137,7 +145,9 @@ function tokenRequestBody(
     client_secret: providerConfig.clientSecret as string,
     code,
     redirect_uri: callbackUrl(provider),
-    ...(provider === 'gitlab' ? { grant_type: 'authorization_code' } : {}),
+    // GitLab and Gitee require the authorization_code grant type; GitHub
+    // rejects unknown parameters on the token endpoint.
+    ...(provider !== 'github' ? { grant_type: 'authorization_code' } : {}),
   };
 }
 
@@ -384,7 +394,7 @@ const authRoutes: FastifyPluginAsync = async (app) => {
     return reply.code(204).send();
   });
 
-  for (const provider of ['github', 'gitlab'] as const) {
+  for (const provider of ['github', 'gitlab', 'gitee'] as const) {
     app.get(`/auth/${provider}`, async (_request, reply) => {
       const providerConfig = oauthProviders()[provider];
       if (!isOAuthConfigured(providerConfig)) {

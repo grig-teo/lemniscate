@@ -5,6 +5,7 @@ import {
   cloneUrlWithToken,
   fetchProviderProfile,
   getProviderClient,
+  giteeHeaders,
   githubHeaders,
   gitlabApiBase,
   gitlabHeaders,
@@ -12,6 +13,7 @@ import {
   gitverseBase,
   gitverseHeaders,
   hasAnyScope,
+  normalizeGiteeRepo,
   normalizeGitverseRepo,
   ProviderError,
 } from '../src/lib/git-providers.js';
@@ -333,5 +335,176 @@ describe('assertRepoPushAccess github OAuth scopes', () => {
       jsonResponse({ full_name: 'acme/repo', private: true, permissions: { push: true } }),
     );
     await expect(assertRepoPushAccess('github', 'tok', 'acme/repo')).resolves.toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Gitee (gitee.com, API v5 — GitHub-shaped) + per-provider repo creation
+// ---------------------------------------------------------------------------
+
+describe('gitee API client', () => {
+  it('giteeHeaders authenticates with a Bearer token', () => {
+    expect(giteeHeaders('tok')).toEqual({
+      Authorization: 'Bearer tok',
+      Accept: 'application/json',
+    });
+  });
+
+  it('maps the API payload to the normalized shape', () => {
+    expect(
+      normalizeGiteeRepo({
+        id: 42,
+        name: 'repo',
+        full_name: 'ivan/repo',
+        clone_url: 'https://gitee.com/ivan/repo.git',
+        default_branch: 'master',
+      }),
+    ).toEqual({
+      externalId: '42',
+      name: 'repo',
+      fullName: 'ivan/repo',
+      cloneUrl: 'https://gitee.com/ivan/repo.git',
+      defaultBranch: 'master',
+    });
+  });
+
+  it('falls back to a constructed clone URL and the master branch', () => {
+    expect(normalizeGiteeRepo({ id: 'abc', name: 'r', full_name: 'ivan/r' })).toEqual({
+      externalId: 'abc',
+      name: 'r',
+      fullName: 'ivan/r',
+      cloneUrl: 'https://gitee.com/ivan/r.git',
+      defaultBranch: 'master',
+    });
+  });
+
+  it('validates the token via GET /user on gitee.com', async () => {
+    const fetchMock = stubFetch((url) => {
+      expect(url).toBe('https://gitee.com/api/v5/user');
+      return jsonResponse({ id: 1, login: 'ivan' });
+    });
+    const profile = await fetchProviderProfile('gitee', 'tok');
+    expect(profile).toEqual({ username: 'ivan' });
+    const headers = (fetchMock.mock.calls[0]?.[1] as { headers: Record<string, string> })
+      .headers;
+    expect(headers.Authorization).toBe('Bearer tok');
+  });
+
+  it('lists repos across per_page/page pagination', async () => {
+    const pageOne = Array.from({ length: 100 }, (_, i) => ({
+      id: i,
+      name: `repo-${i}`,
+      full_name: `ivan/repo-${i}`,
+    }));
+    stubFetch((url) => {
+      const page = new URL(url).searchParams.get('page');
+      if (page === '1') return jsonResponse(pageOne);
+      if (page === '2') {
+        return jsonResponse([
+          { id: 100, name: 'last', full_name: 'ivan/last', default_branch: 'dev' },
+        ]);
+      }
+      throw new Error(`unexpected url ${url}`);
+    });
+    const client = getProviderClient({
+      provider: 'gitee',
+      baseUrl: null,
+      accessTokenEnc: encrypt('tok'),
+    });
+    const repos = await client.listRepos();
+    expect(repos).toHaveLength(101);
+    expect(repos[0]).toMatchObject({
+      externalId: '0',
+      fullName: 'ivan/repo-0',
+      cloneUrl: 'https://gitee.com/ivan/repo-0.git',
+      defaultBranch: 'master',
+    });
+    expect(repos[100]).toMatchObject({ externalId: '100', defaultBranch: 'dev' });
+  });
+
+  it('passes the push pre-flight on permissions.push, throws otherwise', async () => {
+    stubFetch((url) => {
+      expect(url).toBe('https://gitee.com/api/v5/repos/acme/repo');
+      return jsonResponse({ full_name: 'acme/repo', permissions: { push: true } });
+    });
+    await expect(assertRepoPushAccess('gitee', 'tok', 'acme/repo')).resolves.toBeUndefined();
+
+    stubFetch(() => jsonResponse({ full_name: 'acme/repo', permissions: { push: false } }));
+    await expect(assertRepoPushAccess('gitee', 'tok', 'acme/repo')).rejects.toBeInstanceOf(
+      ProviderError,
+    );
+
+    stubFetch(() => jsonResponse({ full_name: 'acme/repo' }));
+    await expect(assertRepoPushAccess('gitee', 'tok', 'acme/repo')).rejects.toBeInstanceOf(
+      ProviderError,
+    );
+  });
+});
+
+describe('createRepo', () => {
+  function stubPost(expectedUrl: string): ReturnType<typeof vi.fn> {
+    return vi.fn((input: unknown, init?: RequestInit) => {
+      expect(String(input)).toBe(expectedUrl);
+      expect(init?.method).toBe('POST');
+      const body = JSON.parse(String(init?.body)) as { name: string };
+      return Promise.resolve(
+        jsonResponse({
+          id: 7,
+          name: body.name,
+          full_name: `ivan/${body.name}`,
+          path: body.name,
+          path_with_namespace: `ivan/${body.name}`,
+          clone_url: `https://example.com/ivan/${body.name}.git`,
+          http_url_to_repo: `https://example.com/ivan/${body.name}.git`,
+          default_branch: 'main',
+        }),
+      );
+    });
+  }
+
+  it('creates a GitHub repo via POST /user/repos', async () => {
+    vi.stubGlobal('fetch', stubPost('https://api.github.com/user/repos'));
+    const repo = await getProviderClient({
+      provider: 'github',
+      baseUrl: null,
+      accessTokenEnc: encrypt('tok'),
+    }).createRepo({ name: 'new', private: true });
+    expect(repo).toMatchObject({ name: 'new', fullName: 'ivan/new' });
+    const init = (fetch as unknown as ReturnType<typeof vi.fn>).mock.calls[0]?.[1];
+    expect(JSON.parse(String(init?.body))).toEqual({ name: 'new', private: true });
+  });
+
+  it('creates a GitLab project via POST /projects with a visibility', async () => {
+    vi.stubGlobal('fetch', stubPost('https://gitlab.com/api/v4/projects'));
+    const repo = await getProviderClient({
+      provider: 'gitlab',
+      baseUrl: null,
+      accessTokenEnc: encrypt('tok'),
+    }).createRepo({ name: 'new', private: true });
+    expect(repo).toMatchObject({ name: 'new', fullName: 'ivan/new' });
+    const init = (fetch as unknown as ReturnType<typeof vi.fn>).mock.calls[0]?.[1];
+    expect(JSON.parse(String(init?.body))).toEqual({ name: 'new', visibility: 'private' });
+  });
+
+  it('creates a Gitee repo via POST /user/repos', async () => {
+    vi.stubGlobal('fetch', stubPost('https://gitee.com/api/v5/user/repos'));
+    const repo = await getProviderClient({
+      provider: 'gitee',
+      baseUrl: null,
+      accessTokenEnc: encrypt('tok'),
+    }).createRepo({ name: 'new' });
+    expect(repo).toMatchObject({ name: 'new', fullName: 'ivan/new' });
+    const init = (fetch as unknown as ReturnType<typeof vi.fn>).mock.calls[0]?.[1];
+    expect(JSON.parse(String(init?.body))).toEqual({ name: 'new', private: false });
+  });
+
+  it('rejects GitVerse with a best-effort unsupported error', async () => {
+    await expect(
+      getProviderClient({
+        provider: 'gitverse',
+        baseUrl: null,
+        accessTokenEnc: encrypt('tok'),
+      }).createRepo({ name: 'new' }),
+    ).rejects.toThrow(/not supported/);
   });
 });

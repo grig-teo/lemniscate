@@ -7,6 +7,7 @@ describe('providerLabel', () => {
     expect(providerLabel('github')).toBe('GitHub');
     expect(providerLabel('gitlab')).toBe('GitLab');
     expect(providerLabel('gitverse')).toBe('GitVerse');
+    expect(providerLabel('gitee')).toBe('Gitee');
   });
 
   it('supports plain capitalized casing', () => {

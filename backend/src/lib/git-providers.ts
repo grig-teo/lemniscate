@@ -29,16 +29,22 @@ export interface PullRequestResult {
   number: number;
 }
 
+export interface CreateRepoInput {
+  name: string;
+  private?: boolean;
+}
+
 export interface ProviderProfile {
   username: string;
 }
 
 export interface GitProviderClient {
   listRepos(): Promise<NormalizedRepo[]>;
+  createRepo(input: CreateRepoInput): Promise<NormalizedRepo>;
   createPullRequest(input: CreatePullRequestInput): Promise<PullRequestResult>;
 }
 
-export type ProviderName = 'github' | 'gitverse' | 'gitlab';
+export type ProviderName = 'github' | 'gitverse' | 'gitlab' | 'gitee';
 
 // How a stored token authenticates with the provider. Only GitLab differs:
 // OAuth access tokens need `Authorization: Bearer`, personal access tokens
@@ -93,6 +99,36 @@ async function requestJson(
   return (await requestJsonMeta(url, headers, provider)).data;
 }
 
+// POST variant of requestJson for the create-repository endpoints. Same
+// ProviderError contract: never leaks the token, carries the HTTP status.
+async function postJson(
+  url: string,
+  headers: Record<string, string>,
+  provider: string,
+  body: unknown,
+): Promise<unknown> {
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...headers },
+      body: JSON.stringify(body),
+    });
+  } catch (err) {
+    throw new ProviderError(
+      `${provider}: request to ${url} failed: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+  if (!response.ok) {
+    const text = await response.text().catch(() => '');
+    throw new ProviderError(
+      `${provider}: ${response.status} ${response.statusText} from POST ${url}: ${text.slice(0, 300)}`,
+      response.status,
+    );
+  }
+  return response.json();
+}
+
 // Parses an OAuth scope list ("repo, read:user" or "repo read:user") and
 // reports whether any of the wanted scopes is granted. Single home for scope
 // parsing — used by the push pre-flight and the OAuth exchange validation.
@@ -127,6 +163,16 @@ interface GithubRepo {
   default_branch: string | null;
 }
 
+function normalizeGithubRepo(repo: GithubRepo): NormalizedRepo {
+  return {
+    externalId: String(repo.id),
+    name: repo.name,
+    fullName: repo.full_name,
+    cloneUrl: repo.clone_url,
+    defaultBranch: repo.default_branch ?? 'main',
+  };
+}
+
 async function githubListRepos(token: string): Promise<NormalizedRepo[]> {
   const repos: NormalizedRepo[] = [];
   // Paginate: /user/repos returns up to 100 per page.
@@ -137,13 +183,7 @@ async function githubListRepos(token: string): Promise<NormalizedRepo[]> {
       'github',
     )) as GithubRepo[];
     for (const repo of data) {
-      repos.push({
-        externalId: String(repo.id),
-        name: repo.name,
-        fullName: repo.full_name,
-        cloneUrl: repo.clone_url,
-        defaultBranch: repo.default_branch ?? 'main',
-      });
+      repos.push(normalizeGithubRepo(repo));
     }
     if (data.length < 100) return repos;
   }
@@ -163,6 +203,7 @@ const PUSH_ACCESS_HINTS: Record<ProviderName, string> = {
   github: `'repo' scope or a fine-grained PAT with Contents: write`,
   gitlab: `the 'api' scope and a Developer (or higher) role on the project or its group`,
   gitverse: `a token with write permission on the repository`,
+  gitee: `a token with the 'projects' scope and write access to the repository`,
 };
 
 function noPushAccessError(provider: ProviderName, repoFullName: string, detail?: string): ProviderError {
@@ -200,6 +241,14 @@ async function githubAssertPushAccess(token: string, repoFullName: string): Prom
   );
 }
 
+async function githubCreateRepo(token: string, input: CreateRepoInput): Promise<NormalizedRepo> {
+  const data = (await postJson(`${GITHUB_API}/user/repos`, githubHeaders(token), 'github', {
+    name: input.name,
+    private: input.private ?? false,
+  })) as GithubRepo;
+  return normalizeGithubRepo(data);
+}
+
 // ---------------------------------------------------------------------------
 // GitLab
 // ---------------------------------------------------------------------------
@@ -229,6 +278,16 @@ interface GitlabProject {
   default_branch: string | null;
 }
 
+function normalizeGitlabProject(project: GitlabProject): NormalizedRepo {
+  return {
+    externalId: String(project.id),
+    name: project.path,
+    fullName: project.path_with_namespace,
+    cloneUrl: project.http_url_to_repo,
+    defaultBranch: project.default_branch ?? 'main',
+  };
+}
+
 async function gitlabListRepos(
   token: string,
   tokenType: ProviderTokenType = 'pat',
@@ -241,13 +300,7 @@ async function gitlabListRepos(
       'gitlab',
     )) as GitlabProject[];
     for (const project of data) {
-      repos.push({
-        externalId: String(project.id),
-        name: project.path,
-        fullName: project.path_with_namespace,
-        cloneUrl: project.http_url_to_repo,
-        defaultBranch: project.default_branch ?? 'main',
-      });
+      repos.push(normalizeGitlabProject(project));
     }
     if (data.length < 100) return repos;
   }
@@ -291,6 +344,20 @@ async function gitlabAssertPushAccess(
   );
   if (level >= GITLAB_DEVELOPER_ACCESS) return;
   throw noPushAccessError('gitlab', repoFullName);
+}
+
+async function gitlabCreateRepo(
+  token: string,
+  tokenType: ProviderTokenType,
+  input: CreateRepoInput,
+): Promise<NormalizedRepo> {
+  const data = (await postJson(
+    `${gitlabApiBase()}/projects`,
+    gitlabHeaders(token, tokenType),
+    'gitlab',
+    { name: input.name, visibility: input.private ? 'private' : 'public' },
+  )) as GitlabProject;
+  return normalizeGitlabProject(data);
 }
 
 // ---------------------------------------------------------------------------
@@ -405,6 +472,86 @@ export function cloneUrlWithToken(cloneUrl: string, token: string): string {
 }
 
 // ---------------------------------------------------------------------------
+// Gitee (gitee.com, API v5 — GitHub-shaped)
+// ---------------------------------------------------------------------------
+
+// Gitee's REST API mirrors the GitHub shapes (full_name, clone_url, pulls)
+// under https://gitee.com/api/v5; tokens authenticate as Bearer.
+
+export const GITEE_API = 'https://gitee.com/api/v5';
+export const GITEE_WEB = 'https://gitee.com';
+
+export function giteeHeaders(token: string): Record<string, string> {
+  return { Authorization: `Bearer ${token}`, Accept: 'application/json' };
+}
+
+export interface GiteeRepo {
+  id: number | string;
+  name: string;
+  full_name: string;
+  clone_url?: string | null;
+  default_branch?: string | null;
+}
+
+// Maps the GitHub-shaped API repo to the normalized shape; pure for tests.
+// Gitee's default branch is 'master', not 'main'.
+export function normalizeGiteeRepo(repo: GiteeRepo): NormalizedRepo {
+  return {
+    externalId: String(repo.id),
+    name: repo.name,
+    fullName: repo.full_name,
+    cloneUrl: repo.clone_url ?? `${GITEE_WEB}/${repo.full_name}.git`,
+    defaultBranch: repo.default_branch ?? 'master',
+  };
+}
+
+async function giteeListRepos(token: string): Promise<NormalizedRepo[]> {
+  const repos: NormalizedRepo[] = [];
+  for (let page = 1; ; page += 1) {
+    const data = (await requestJson(
+      `${GITEE_API}/user/repos?per_page=100&page=${page}`,
+      giteeHeaders(token),
+      'gitee',
+    )) as GiteeRepo[];
+    for (const repo of data) {
+      repos.push(normalizeGiteeRepo(repo));
+    }
+    if (data.length < 100) return repos;
+  }
+}
+
+async function giteeProfile(token: string): Promise<ProviderProfile> {
+  const data = (await requestJson(`${GITEE_API}/user`, giteeHeaders(token), 'gitee')) as {
+    login?: string;
+  };
+  if (!data.login) {
+    throw new ProviderError('gitee: GET /user did not return a login');
+  }
+  return { username: data.login };
+}
+
+// Gitee reports the authenticated user's permissions on the repo payload;
+// unlike GitHub OAuth tokens there is no scope-header footgun to check.
+async function giteeAssertPushAccess(token: string, repoFullName: string): Promise<void> {
+  const data = (await requestJson(
+    `${GITEE_API}/repos/${repoFullName}`,
+    giteeHeaders(token),
+    'gitee',
+  )) as { permissions?: { push?: boolean } };
+  if (data.permissions?.push !== true) {
+    throw noPushAccessError('gitee', repoFullName);
+  }
+}
+
+async function giteeCreateRepo(token: string, input: CreateRepoInput): Promise<NormalizedRepo> {
+  const data = (await postJson(`${GITEE_API}/user/repos`, giteeHeaders(token), 'gitee', {
+    name: input.name,
+    private: input.private ?? false,
+  })) as GiteeRepo;
+  return normalizeGiteeRepo(data);
+}
+
+// ---------------------------------------------------------------------------
 // Public entry points
 // ---------------------------------------------------------------------------
 
@@ -427,7 +574,18 @@ interface ProviderApi {
     tokenType: ProviderTokenType,
     repoFullName: string,
   ): Promise<void>;
+  createRepo(
+    token: string,
+    baseUrl: string | null | undefined,
+    tokenType: ProviderTokenType,
+    input: CreateRepoInput,
+  ): Promise<NormalizedRepo>;
 }
+
+// GitVerse's public API documents no repository-creation endpoint — the
+// best-effort error tells the user to create the repo in the UI instead.
+const GITVERSE_CREATE_REPO_UNSUPPORTED =
+  'gitverse: repository creation via API is not supported by the public API — create the repository in the GitVerse UI';
 
 const providerApis: Record<ProviderName, ProviderApi> = {
   github: {
@@ -435,18 +593,30 @@ const providerApis: Record<ProviderName, ProviderApi> = {
     listRepos: (token) => githubListRepos(token),
     assertPushAccess: (token, _baseUrl, _tokenType, repoFullName) =>
       githubAssertPushAccess(token, repoFullName),
+    createRepo: (token, _baseUrl, _tokenType, input) => githubCreateRepo(token, input),
   },
   gitlab: {
     profile: (token, _baseUrl, tokenType) => gitlabProfile(token, tokenType),
     listRepos: (token, _baseUrl, tokenType) => gitlabListRepos(token, tokenType),
     assertPushAccess: (token, _baseUrl, tokenType, repoFullName) =>
       gitlabAssertPushAccess(token, tokenType, repoFullName),
+    createRepo: (token, _baseUrl, tokenType, input) => gitlabCreateRepo(token, tokenType, input),
   },
   gitverse: {
     profile: (token, baseUrl) => gitverseProfile(baseUrl, token),
     listRepos: (token, baseUrl) => gitverseListRepos(baseUrl, token),
     assertPushAccess: (token, baseUrl, _tokenType, repoFullName) =>
       gitverseAssertPushAccess(baseUrl, token, repoFullName),
+    createRepo: async () => {
+      throw new ProviderError(GITVERSE_CREATE_REPO_UNSUPPORTED);
+    },
+  },
+  gitee: {
+    profile: (token) => giteeProfile(token),
+    listRepos: (token) => giteeListRepos(token),
+    assertPushAccess: (token, _baseUrl, _tokenType, repoFullName) =>
+      giteeAssertPushAccess(token, repoFullName),
+    createRepo: (token, _baseUrl, _tokenType, input) => giteeCreateRepo(token, input),
   },
 };
 
@@ -498,6 +668,10 @@ export function getProviderClient(connection: {
     listRepos: () =>
       withGitlabRefreshRetry(connection, (token) =>
         api.listRepos(token, connection.baseUrl, tokenType),
+      ),
+    createRepo: (input) =>
+      withGitlabRefreshRetry(connection, (token) =>
+        api.createRepo(token, connection.baseUrl, tokenType, input),
       ),
     createPullRequest: notImplementedPr(connection.provider),
   };

@@ -42,7 +42,7 @@ function ConnectionRow({
 
 /**
  * Git connections tab: connected accounts, OAuth connect buttons for
- * GitHub/GitLab, and a token dialog for GitVerse.
+ * GitHub/GitLab/Gitee, and a token dialog for GitVerse.
  */
 export function ConnectionsSection() {
   const connections = useConnections();

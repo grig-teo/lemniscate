@@ -40,6 +40,8 @@ const createBodySchema = z
     llmConfigId: z.string().min(1).optional(),
     // Image attachments sent to the agent as multimodal content (max 3).
     images: taskImagesSchema.optional(),
+    // Save-for-later: create the task as pending without enqueueing it.
+    later: z.boolean().optional(),
   })
   .strict();
 
@@ -106,7 +108,14 @@ async function listTasks(request: FastifyRequest, reply: FastifyReply) {
   return { tasks };
 }
 
-// Create a prompt task and enqueue it for the agent worker.
+// Initial status of a freshly created prompt task: queued (enqueued right
+// away) by default; `later: true` parks it as pending for click-to-start.
+export function initialTaskStatus(later: boolean | undefined): 'queued' | 'pending' {
+  return later ? 'pending' : 'queued';
+}
+
+// Create a prompt task and enqueue it for the agent worker (unless saved
+// for later, in which case it stays pending until started).
 async function createTask(request: FastifyRequest, reply: FastifyReply) {
   const userId = authenticatedUserId(request);
   const data = parseOrReply(createBodySchema, request.body, reply, 'Invalid request body', {
@@ -136,7 +145,7 @@ async function createTask(request: FastifyRequest, reply: FastifyReply) {
       kind: 'prompt',
       title: data.prompt.slice(0, 80),
       prompt: data.prompt,
-      status: 'queued',
+      status: initialTaskStatus(data.later),
       llmConfigId,
       thinkingLevel: data.thinkingLevel ?? null,
       ...attachmentsData(data.images),
@@ -144,8 +153,11 @@ async function createTask(request: FastifyRequest, reply: FastifyReply) {
   });
 
   // Same queue/job name as the worker; route-local options (no jobId
-  // dedupe, immediate removal on completion) preserved as before.
-  await getAgentTasksQueue().add(RUN_TASK_JOB, { taskId: task.id }, { removeOnComplete: true });
+  // dedupe, immediate removal on completion) preserved as before. A
+  // save-for-later task gets no job until POST /tasks/:id/start.
+  if (!data.later) {
+    await getAgentTasksQueue().add(RUN_TASK_JOB, { taskId: task.id }, { removeOnComplete: true });
+  }
 
   return reply.code(201).send({ task });
 }
@@ -166,9 +178,14 @@ async function getTask(request: FastifyRequest, reply: FastifyReply) {
 }
 
 // Start eligibility for POST /tasks/:id/start: returns why a task cannot be
-// started, or null when it can. Only pending proposals are click-to-run.
+// started, or null when it can. Pending proposals and saved-for-later
+// prompts are click-to-run.
+const STARTABLE_KINDS = ['proposal', 'prompt'];
+
 export function startBlocker(task: { kind: string; status: string }): string | null {
-  if (task.kind !== 'proposal') return 'only proposal tasks can be started';
+  if (!STARTABLE_KINDS.includes(task.kind)) {
+    return 'only proposal and prompt tasks can be started';
+  }
   if (task.status !== 'pending') return `task is ${task.status}, not pending`;
   return null;
 }

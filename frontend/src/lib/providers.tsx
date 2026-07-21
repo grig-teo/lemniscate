@@ -3,12 +3,13 @@
  * represents a provider and how its name is cased. Used by the repo
  * sidebar, the settings connections tab, and the login page.
  */
-import { GitBranch, Github, Gitlab } from 'lucide-react';
+import { GitBranch, Github, Gitlab, Globe } from 'lucide-react';
 
 const PROVIDER_BRAND_LABELS: Record<string, string> = {
   github: 'GitHub',
   gitlab: 'GitLab',
   gitverse: 'GitVerse',
+  gitee: 'Gitee',
 };
 
 export type ProviderLabelCasing = 'brand' | 'capitalized';
@@ -32,5 +33,6 @@ export function ProviderIcon({ provider, className }: { provider: string; classN
   const name = provider.toLowerCase();
   if (name === 'github') return <Github className={className} aria-hidden />;
   if (name === 'gitlab') return <Gitlab className={className} aria-hidden />;
+  if (name === 'gitee') return <Globe className={className} aria-hidden />;
   return <GitBranch className={className} aria-hidden />; // gitverse + unknown
 }

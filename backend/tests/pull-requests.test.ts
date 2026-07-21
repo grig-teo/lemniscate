@@ -267,3 +267,88 @@ describe('gitverse mergePullRequest', () => {
     expect((error as ProviderError).status).toBe(409);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Gitee provider (mocked fetch, no network)
+// ---------------------------------------------------------------------------
+
+const giteeConnection = {
+  provider: 'gitee' as const,
+  baseUrl: null,
+  accessTokenEnc: encrypt('tok'),
+};
+const giteePull = {
+  number: 3,
+  html_url: 'https://gitee.com/ivan/repo/pulls/3',
+  head: { ref: gvInput.headBranch },
+  base: { ref: gvInput.baseBranch },
+};
+const giteePullsUrl = 'https://gitee.com/api/v5/repos/ivan/repo/pulls';
+
+describe('gitee openPullRequest', () => {
+  it('creates the PR via POST /repos/{full}/pulls', async () => {
+    const fetchMock = stubFetch((url, init) => {
+      expect(url).toBe(giteePullsUrl);
+      expect(init?.method).toBe('POST');
+      expect(JSON.parse(String(init?.body))).toEqual({
+        title: 'Title',
+        head: gvInput.headBranch,
+        base: gvInput.baseBranch,
+        body: 'Body',
+      });
+      return mockResponse(201, giteePull);
+    });
+    const result = await openPullRequest(giteeConnection, gvInput);
+    expect(result).toEqual({ prUrl: giteePull.html_url });
+    const headers = (fetchMock.mock.calls[0]?.[1] as RequestInit).headers as Record<
+      string,
+      string
+    >;
+    expect(headers.Authorization).toBe('Bearer tok');
+  });
+
+  it('recovers the existing PR on a 409 conflict', async () => {
+    stubFetch((url, init) => {
+      if (init?.method === 'POST') return mockResponse(409, { message: 'pull request already exists' });
+      expect(url).toContain('state=open');
+      return mockResponse(200, [giteePull]);
+    });
+    const result = await openPullRequest(giteeConnection, gvInput);
+    expect(result).toEqual({ prUrl: giteePull.html_url });
+  });
+});
+
+describe('gitee mergePullRequest', () => {
+  it('merges via PUT /pulls/{n}/merge', async () => {
+    stubFetch((url, init) => {
+      if (url.includes('state=open')) return mockResponse(200, [giteePull]);
+      expect(url).toBe(`${giteePullsUrl}/3/merge`);
+      expect(init?.method).toBe('PUT');
+      return mockResponse(200, { merged: true });
+    });
+    const result = await mergePullRequest(giteeConnection, gvRef);
+    expect(result).toEqual({ merged: true, prUrl: giteePull.html_url });
+  });
+
+  it('reports a conflict on a merge refusal status', async () => {
+    stubFetch((url, init) => {
+      if (url.includes('state=open')) return mockResponse(200, [giteePull]);
+      expect(init?.method).toBe('PUT');
+      return mockResponse(405, { message: 'not mergeable' });
+    });
+    const result = await mergePullRequest(giteeConnection, gvRef);
+    expect(result).toEqual({ merged: false, conflict: true, prUrl: giteePull.html_url });
+  });
+});
+
+describe('gitee getPullRequestDiff', () => {
+  it('assembles the diff from the PR files endpoint', async () => {
+    stubFetch((url) => {
+      if (url.includes('state=open')) return mockResponse(200, [giteePull]);
+      expect(url).toBe(`${giteePullsUrl}/3/files`);
+      return mockResponse(200, [{ filename: 'a.ts', patch: '@@ -1 +1 @@\n-a\n+b' }]);
+    });
+    const diff = await getPullRequestDiff(giteeConnection, gvRef);
+    expect(diff).toBe('diff --git a/a.ts b/a.ts\n--- a/a.ts\n+++ b/a.ts\n@@ -1 +1 @@\n-a\n+b');
+  });
+});

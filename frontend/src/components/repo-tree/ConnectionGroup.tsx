@@ -2,11 +2,34 @@ import { useState } from 'react';
 import { ChevronDown, ChevronRight, RefreshCw } from 'lucide-react';
 
 import type { ConnectionGroup as ConnectionGroupData } from '@/lib/group-repos';
+import { readPersisted, writePersisted } from '@/lib/persist';
 import { providerLabel, ProviderIcon } from '@/lib/providers';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 
 import { RepoRow } from '@/components/repo-tree/RepoRow';
+
+const COLLAPSED_STORAGE_KEY = 'lemniscate.collapsed-connections';
+
+function readCollapsed(connectionId: string): boolean {
+  return !!readPersisted<Record<string, boolean>>(COLLAPSED_STORAGE_KEY, {})[connectionId];
+}
+
+function writeCollapsed(connectionId: string, collapsed: boolean): void {
+  const map = readPersisted<Record<string, boolean>>(COLLAPSED_STORAGE_KEY, {});
+  writePersisted(COLLAPSED_STORAGE_KEY, { ...map, [connectionId]: collapsed });
+}
+
+/** Collapsed state of one connection group, persisted per connectionId. */
+function usePersistedCollapsed(connectionId: string): [boolean, () => void] {
+  const [collapsed, setCollapsed] = useState(() => readCollapsed(connectionId));
+  const toggle = () =>
+    setCollapsed((prev) => {
+      writeCollapsed(connectionId, !prev);
+      return !prev;
+    });
+  return [collapsed, toggle];
+}
 
 /**
  * One git-host connection in the sidebar: provider icon + username header
@@ -26,14 +49,14 @@ export function ConnectionGroup({
   onToggleRepo: (repoId: string) => void;
 }) {
   const label = providerLabel(group.provider, 'capitalized');
-  const [collapsed, setCollapsed] = useState(false);
+  const [collapsed, toggleCollapsed] = usePersistedCollapsed(group.connectionId);
   const Chevron = collapsed ? ChevronRight : ChevronDown;
   return (
     <div className="border-b last:border-b-0">
       <div className="flex items-center gap-2 px-3 py-2">
         <button
           type="button"
-          onClick={() => setCollapsed((prev) => !prev)}
+          onClick={toggleCollapsed}
           className="flex min-w-0 flex-1 items-center gap-2 text-left"
           aria-expanded={!collapsed}
           aria-label={`${label} @${group.username}`}

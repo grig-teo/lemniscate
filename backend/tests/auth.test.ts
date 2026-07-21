@@ -1,9 +1,18 @@
 import { describe, expect, it } from 'vitest';
-import { githubAppClientIdError } from '../src/routes/auth.js';
+import { githubAppClientIdError, oauthProviders } from '../src/routes/auth.js';
 
 // Locking test for the GitHub-App-vs-OAuth-App guard: a GitHub App client id
 // (Iv…/Iv1…) mints scope-less user tokens that cannot push and see no org
 // repos — the login flow requires a classic OAuth App.
+
+describe('oauthProviders', () => {
+  it('registers gitee with the documented endpoints and scope', () => {
+    const gitee = oauthProviders().gitee;
+    expect(gitee.authorizeUrl).toBe('https://gitee.com/oauth/authorize');
+    expect(gitee.tokenUrl).toBe('https://gitee.com/oauth/token');
+    expect(gitee.scope).toBe('projects user_info');
+  });
+});
 
 describe('githubAppClientIdError', () => {
   it('flags GitHub App client ids with an actionable message', () => {

@@ -2,7 +2,7 @@ import type { ReactNode } from 'react';
 import { Loader2, Play, RotateCcw } from 'lucide-react';
 
 import { useRerunTask, useStartTask, useTasks, type Task } from '@/lib/hooks';
-import { isPendingProposal, splitRepoTasks } from '@/lib/repo-tasks';
+import { groupRepoTasks, isStartableTask } from '@/lib/repo-tasks';
 import { useWorkspaceSelection } from '@/lib/selection';
 import { cn } from '@/lib/utils';
 import { GenerateProposalsButton } from '@/components/repo-tree/GenerateProposalsButton';
@@ -10,7 +10,7 @@ import { StatusBadge } from '@/components/StatusBadge';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 
-/** Tasks of one expanded repo, split into fresh proposals and running processes. */
+/** Tasks of one expanded repo, split into proposals, saved prompts, and running processes. */
 export function RepoTasks({ repositoryId }: { repositoryId: string }) {
   const tasksQuery = useTasks(repositoryId);
   if (tasksQuery.isLoading) {
@@ -28,17 +28,24 @@ export function RepoTasks({ repositoryId }: { repositoryId: string }) {
 }
 
 function TaskGroups({ repositoryId, tasks }: { repositoryId: string; tasks: Task[] }) {
-  const { proposals, processes } = splitRepoTasks(tasks);
+  const { proposals, prompts, processes } = groupRepoTasks(tasks);
   return (
     <div className="flex flex-col gap-1 py-1 pl-5">
       <TaskGroup label="Proposals" action={<GenerateProposalsButton repositoryId={repositoryId} />}>
         {proposals.map((task) => (
           <TaskRow key={task.id} task={task} />
         ))}
-        {proposals.length === 0 && processes.length === 0 && (
+        {proposals.length === 0 && prompts.length === 0 && processes.length === 0 && (
           <li className="px-2 py-0.5 text-[11px] text-muted-foreground/70">No tasks yet.</li>
         )}
       </TaskGroup>
+      {prompts.length > 0 && (
+        <TaskGroup label="Prompts">
+          {prompts.map((task) => (
+            <TaskRow key={task.id} task={task} />
+          ))}
+        </TaskGroup>
+      )}
       {processes.length > 0 && (
         <TaskGroup label="Running processes">
           {processes.map((task) => (
@@ -92,7 +99,7 @@ function TaskRow({ task }: { task: Task }) {
           </Badge>
         )}
         <StatusBadge status={task.status} className="px-1.5 py-0 text-[10px]" />
-        {isPendingProposal(task) && <StartTaskButton task={task} />}
+        {isStartableTask(task) && <StartTaskButton task={task} />}
         {task.status === 'failed' && <RerunTaskButton task={task} />}
       </button>
     </li>
@@ -111,7 +118,7 @@ function toSelectedTask(task: Task) {
   };
 }
 
-/** Play button that queues a pending proposal for implementation. */
+/** Play button that queues a pending proposal or saved-for-later prompt. */
 function StartTaskButton({ task }: { task: Task }) {
   const startTask = useStartTask();
   return (

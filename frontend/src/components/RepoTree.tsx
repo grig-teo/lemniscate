@@ -1,11 +1,13 @@
 import * as React from 'react';
-import { GitBranch, Loader2 } from 'lucide-react';
+import { GitBranch, Loader2, Plus } from 'lucide-react';
 
 import { useRepositories, useSyncConnection } from '@/lib/hooks';
 import { groupByConnection, type ConnectionGroup as ConnectionGroupData } from '@/lib/group-repos';
+import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 
 import { ConnectionGroup } from '@/components/repo-tree/ConnectionGroup';
+import { CreateRepoDialog } from '@/components/repo-tree/CreateRepoDialog';
 import { useExpandedMap } from '@/components/repo-tree/useExpandedMap';
 
 type ReposQuery = ReturnType<typeof useRepositories>;
@@ -76,14 +78,15 @@ function RepoTreeBody({
  *
  * Repositories grouped by git-host connection (provider icon + username),
  * each repo expandable to show its tasks; per-repo toggles (autoCreatePr,
- * autoReviewPr, autoMergePr); per-group Sync. New prompt
- * tasks are started from the + button in the console pane (opens the
- * composer dialog).
+ * autoReviewPr, autoMergePr); per-group Sync. The header + button opens the
+ * create-repository dialog. New prompt tasks are started from the + button
+ * in the console pane (opens the composer dialog).
  */
 export function RepoTree({ width }: { width: number }) {
   const reposQuery = useRepositories();
   const syncConnection = useSyncConnection();
   const { expanded, toggle } = useExpandedMap();
+  const [createOpen, setCreateOpen] = React.useState(false);
 
   const groups = React.useMemo(() => groupByConnection(reposQuery.data ?? []), [reposQuery.data]);
 
@@ -93,6 +96,15 @@ export function RepoTree({ width }: { width: number }) {
         <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
           Repositories
         </span>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-6 w-6"
+          aria-label="Create repository"
+          onClick={() => setCreateOpen(true)}
+        >
+          <Plus className="h-3.5 w-3.5" />
+        </Button>
       </div>
 
       <ScrollArea className="flex-1" horizontal>
@@ -109,6 +121,8 @@ export function RepoTree({ width }: { width: number }) {
           />
         </div>
       </ScrollArea>
+
+      <CreateRepoDialog open={createOpen} onOpenChange={setCreateOpen} />
     </aside>
   );
 }
