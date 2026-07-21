@@ -31,7 +31,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { FormField } from '@/components/ui/form-field';
 import {
   Select,
   SelectContent,
@@ -396,22 +395,20 @@ function submitOnCmdEnter(event: React.KeyboardEvent<HTMLTextAreaElement>, submi
 
 function ComposerToolbar({ composer }: { composer: ReturnType<typeof useTaskComposer> }) {
   return (
-    <div className="flex flex-wrap items-end gap-2 px-2 pb-2">
-      <FormField label="Repository (the agent clones this repo and implements the task there)">
-        <ComposerRepoSelect
-          repositories={composer.repositories}
-          repositoryId={composer.repositoryId}
-          onChange={composer.setManualRepositoryId}
-        />
-      </FormField>
+    <div className="flex flex-nowrap items-center gap-2 px-2 pb-2">
+      <ComposerRepoSelect
+        repositories={composer.repositories}
+        repositoryId={composer.repositoryId}
+        onChange={composer.setManualRepositoryId}
+      />
       <LlmConfigSelect
         configs={composer.enabledConfigs}
         value={composer.llmConfigId}
         onChange={composer.setLlmConfigId}
       />
       <ThinkingLevelSelect value={composer.thinkingLevel} onChange={composer.setThinkingLevel} />
-      <ContextRing tokens={composer.estimatedTokens} contextWindow={composer.contextWindow} />
       <div className="flex-1" />
+      <ContextRing tokens={composer.estimatedTokens} contextWindow={composer.contextWindow} />
       <AttachImagesButton
         disabled={composer.images.length >= MAX_IMAGES}
         onFiles={composer.addImageFiles}
