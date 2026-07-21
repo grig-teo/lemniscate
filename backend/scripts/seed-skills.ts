@@ -11,8 +11,8 @@ import { mkdtempSync, readFileSync, readdirSync, rmSync, existsSync } from 'node
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { prisma } from '../src/lib/prisma.js';
-import { parseSkillFrontmatter } from '../src/lib/skill-frontmatter.js';
+import { prisma } from '../dist/lib/prisma.js';
+import { parseSkillFrontmatter } from '../dist/lib/skill-frontmatter.js';
 
 const REPO_URL = 'https://github.com/NousResearch/hermes-agent';
 const SKILL_ROOTS = ['skills', 'optional-skills'] as const;
