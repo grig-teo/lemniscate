@@ -27,6 +27,7 @@ vi.mock('../src/lib/prisma.js', () => ({
 }));
 
 import {
+  enqueueRunTask,
   enqueueGenerateProposalsNow,
   enqueueProposalTopUps,
   recoverQueuedTasks,
@@ -106,5 +107,20 @@ describe('recoverQueuedTasks', () => {
     mocks.taskFindMany.mockResolvedValue([]);
     await recoverQueuedTasks();
     expect(mocks.add).not.toHaveBeenCalled();
+  });
+});
+
+// Regression: run-task/review-pr enqueues must drop finished job records
+// immediately — with removeOnComplete/Fail as counts, re-running a task
+// that already ran once was silently deduped away (status flipped to
+// 'queued', no job, task stranded forever).
+describe('enqueueRunTask', () => {
+  it('removes finished jobs so reruns are not swallowed', async () => {
+    await enqueueRunTask('task-1');
+    expect(mocks.add).toHaveBeenCalledWith(
+      'run-task',
+      { taskId: 'task-1' },
+      expect.objectContaining({ removeOnComplete: true, removeOnFail: true }),
+    );
   });
 });

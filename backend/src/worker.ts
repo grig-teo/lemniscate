@@ -51,7 +51,7 @@ const worker = new Worker(
         throw new Error(`unknown job name: ${job.name}`);
     }
   },
-  { connection, concurrency: 2 },
+  { connection, concurrency: config.AGENT_WORKER_CONCURRENCY },
 );
 
 worker.on('failed', (job, err) => {

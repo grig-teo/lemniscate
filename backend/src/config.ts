@@ -52,6 +52,9 @@ const envSchema = z.object({
   // --- Agent loop ---
   AGENT_WORKDIR: z.string().min(1).default('/tmp/lemniscate-repos'),
   AGENT_BRANCH_PREFIX: z.string().min(1).default('lemniscate/'),
+  // How many jobs the worker runs in parallel (tasks are I/O-bound: clones
+  // and LLM calls), so several repos can be processed at once.
+  AGENT_WORKER_CONCURRENCY: z.coerce.number().int().positive().default(4),
 });
 
 const parsed = envSchema.safeParse(process.env);
