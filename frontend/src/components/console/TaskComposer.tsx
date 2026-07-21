@@ -479,7 +479,7 @@ function submitOnCmdEnter(event: React.KeyboardEvent<HTMLTextAreaElement>, submi
 
 function ComposerToolbar({ composer }: { composer: ReturnType<typeof useTaskComposer> }) {
   return (
-    <div className="flex flex-nowrap items-center gap-2 px-2 pb-2">
+    <div className="flex flex-wrap items-center gap-2 px-2 pb-2">
       <ComposerRepoSelect
         repositories={composer.repositories}
         repositoryId={composer.repositoryId}
