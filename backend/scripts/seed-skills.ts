@@ -72,28 +72,33 @@ function collectSkills(repoDir: string): SkillRow[] {
 }
 
 function collectAgentsMdTemplates(repoDir: string): SkillRow[] {
-  return [
-    {
+  const templates: SkillRow[] = [];
+  // The monorepo AGENTS.md only exists when the script runs from a checkout —
+  // inside the runtime image it is absent; skip rather than crash.
+  const lemniscateAgentsMd = join(lemniscateRoot, 'AGENTS.md');
+  if (existsSync(lemniscateAgentsMd)) {
+    templates.push({
       slug: 'default-lemniscate-agents-md',
       name: 'Lemniscate default AGENTS.md',
       category: 'agents-md',
       description: "Lemniscate's own coding standards, used as AGENTS.md when a repository root lacks one.",
-      content: readFileSync(join(lemniscateRoot, 'AGENTS.md'), 'utf8').trim(),
+      content: readFileSync(lemniscateAgentsMd, 'utf8').trim(),
       tags: [],
       source: 'lemniscate',
       kind: 'agents_md',
-    },
-    {
-      slug: 'hermes-agent-agents-md',
-      name: 'Hermes Agent AGENTS.md',
-      category: 'agents-md',
-      description: 'AGENTS.md from NousResearch/hermes-agent, used as AGENTS.md when a repository root lacks one.',
-      content: readFileSync(join(repoDir, 'AGENTS.md'), 'utf8').trim(),
-      tags: [],
-      source: 'hermes',
-      kind: 'agents_md',
-    },
-  ];
+    });
+  }
+  templates.push({
+    slug: 'hermes-agent-agents-md',
+    name: 'Hermes Agent AGENTS.md',
+    category: 'agents-md',
+    description: 'AGENTS.md from NousResearch/hermes-agent, used as AGENTS.md when a repository root lacks one.',
+    content: readFileSync(join(repoDir, 'AGENTS.md'), 'utf8').trim(),
+    tags: [],
+    source: 'hermes',
+    kind: 'agents_md',
+  });
+  return templates;
 }
 
 async function upsertAll(rows: SkillRow[]): Promise<void> {
