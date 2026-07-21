@@ -23,6 +23,7 @@ import {
   type LlmRuntime,
   type TaskWithRepo,
 } from './agent-runtime.js';
+import { runHermesTask } from './hermes-runner.js';
 import { prisma } from './prisma.js';
 import { enqueueReviewTask } from './proposal-scheduler.js';
 import { openPullRequest } from './pull-requests.js';
@@ -135,6 +136,62 @@ async function finalizeRunTask(
   await openTaskPullRequest(task, rt, branchName, summary);
 }
 
+const HERMES_INSTRUCTIONS =
+  'Work in the current directory (a freshly cloned repository). Implement the task completely, including tests if the project has a test setup. Do NOT git commit, push, or create branches — git is handled externally.';
+
+function hermesPrompt(task: TaskWithRepo, rt: LlmRuntime): string {
+  return [
+    `# Task\n${task.title}`,
+    task.prompt ? `\n${task.prompt}` : '',
+    ...(rt.cfg.systemPromptExtra
+      ? ['', 'Additional instructions from the repository owner:', rt.cfg.systemPromptExtra]
+      : []),
+    '',
+    HERMES_INSTRUCTIONS,
+  ].join('\n');
+}
+
+async function runHermesForTask(
+  task: TaskWithRepo,
+  rt: LlmRuntime,
+  workdir: string,
+  secrets: string[],
+): Promise<void> {
+  await logEvent(task.id, 'running hermes agent');
+  await runHermesTask({
+    workdir,
+    prompt: hermesPrompt(task, rt),
+    llm: {
+      baseUrl: rt.cfg.baseUrl,
+      apiKey: rt.apiKey,
+      model: rt.cfg.model,
+      contextWindow: rt.cfg.contextWindow,
+    },
+    taskId: task.id,
+    secrets,
+    timeoutMs: config.AGENT_HERMES_TIMEOUT_MINUTES * 60_000,
+  });
+}
+
+// Runs the configured task executor. Returns the change summary for the
+// commit/PR, or null when the workdir has nothing to commit.
+async function implementTask(
+  task: TaskWithRepo,
+  rt: LlmRuntime,
+  workdir: string,
+  secrets: string[],
+): Promise<string | null> {
+  if (config.AGENT_EXECUTOR === 'hermes') {
+    await runHermesForTask(task, rt, workdir, secrets);
+    return (await hasDirtyWorkdir(workdir)) ? task.title : null;
+  }
+  const { summary, changes } = await proposeTaskChanges(task, rt, workdir);
+  const applied = await applyChanges(task.id, workdir, changes, secrets);
+  await logEvent(task.id, `applied ${applied} of ${changes.length} proposed change(s)`);
+  if (applied === 0 || !(await hasDirtyWorkdir(workdir))) return null;
+  return summary;
+}
+
 // Returns the runtime so the caller can persist cumulative token usage.
 async function executeRunTask(
   task: TaskWithRepo,
@@ -152,10 +209,8 @@ async function executeRunTask(
   await logEvent(task.id, `starting task "${task.title}" on ${task.repository.fullName}`);
   await cloneForTask(task, workdir, cloneUrl, secrets);
   const branchName = await createTaskBranch(task, rt, workdir);
-  const { summary, changes } = await proposeTaskChanges(task, rt, workdir);
-  const applied = await applyChanges(task.id, workdir, changes, secrets);
-  await logEvent(task.id, `applied ${applied} of ${changes.length} proposed change(s)`);
-  if (applied === 0 || !(await hasDirtyWorkdir(workdir))) {
+  const summary = await implementTask(task, rt, workdir, secrets);
+  if (summary === null) {
     await logEvent(task.id, 'no changes produced; nothing to commit');
     await setTaskStatus(task.id, 'done');
     return rt;

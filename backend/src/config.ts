@@ -55,6 +55,11 @@ const envSchema = z.object({
   // How many jobs the worker runs in parallel (tasks are I/O-bound: clones
   // and LLM calls), so several repos can be processed at once.
   AGENT_WORKER_CONCURRENCY: z.coerce.number().int().positive().default(4),
+  // Task executor: 'hermes' runs the Hermes Agent CLI inside the cloned repo;
+  // 'internal' uses the built-in single-shot LLM propose/apply loop.
+  AGENT_EXECUTOR: z.enum(['hermes', 'internal']).default('hermes'),
+  // Hard kill for one `hermes chat` run; the job then fails the task.
+  AGENT_HERMES_TIMEOUT_MINUTES: z.coerce.number().int().positive().default(45),
 });
 
 const parsed = envSchema.safeParse(process.env);
