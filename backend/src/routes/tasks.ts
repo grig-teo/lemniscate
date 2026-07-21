@@ -191,11 +191,13 @@ async function startTask(request: FastifyRequest, reply: FastifyReply) {
     return reply.code(400).send({ error: blocker });
   }
 
+  // Enqueue before the status update: a failed enqueue must not strand the
+  // task in 'queued' without a job (the worker also sweeps these at boot).
+  await enqueueRunTask(task.id);
   const updated = await prisma.task.update({
     where: { id: task.id },
     data: buildStartUpdate(body),
   });
-  await enqueueRunTask(task.id);
   return { task: updated };
 }
 
@@ -229,11 +231,12 @@ async function rerunTask(request: FastifyRequest, reply: FastifyReply) {
     return reply.code(400).send({ error: blocker });
   }
 
+  // Enqueue before the status update (same anti-stranding rule as startTask).
+  await enqueueRunTask(task.id);
   const updated = await prisma.task.update({
     where: { id: task.id },
     data: buildRerunUpdate(),
   });
-  await enqueueRunTask(task.id);
   return { task: updated };
 }
 

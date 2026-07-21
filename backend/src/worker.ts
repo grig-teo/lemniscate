@@ -6,6 +6,7 @@ import { generateProposals, reviewTask, runTask } from './lib/agent-loop.js';
 import {
   AGENT_QUEUE_NAME,
   enqueueProposalTopUps,
+  recoverQueuedTasks,
   registerProposalTopUpSchedule,
 } from './lib/proposal-scheduler.js';
 
@@ -62,6 +63,10 @@ console.log(`worker ready, consuming queue '${AGENT_QUEUE_NAME}' via ${config.RE
 
 // Register the single global repeatable 'proposals-topup' job (every 6h).
 await registerProposalTopUpSchedule();
+
+// Re-enqueue any tasks left in 'queued' without a job (crashed/failed
+// enqueues from before the worker came up).
+await recoverQueuedTasks();
 
 for (const signal of ['SIGINT', 'SIGTERM'] as const) {
   process.once(signal, () => {

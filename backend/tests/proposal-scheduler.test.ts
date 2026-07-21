@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   add: vi.fn().mockResolvedValue(undefined),
   upsertJobScheduler: vi.fn().mockResolvedValue(undefined),
   taskGroupBy: vi.fn(),
+  taskFindMany: vi.fn(),
   repositoryFindMany: vi.fn(),
 }));
 
@@ -20,7 +21,7 @@ vi.mock('bullmq', () => ({
 vi.mock('ioredis', () => ({ Redis: vi.fn() }));
 vi.mock('../src/lib/prisma.js', () => ({
   prisma: {
-    task: { groupBy: mocks.taskGroupBy },
+    task: { groupBy: mocks.taskGroupBy, findMany: mocks.taskFindMany },
     repository: { findMany: mocks.repositoryFindMany },
   },
 }));
@@ -28,6 +29,7 @@ vi.mock('../src/lib/prisma.js', () => ({
 import {
   enqueueGenerateProposalsNow,
   enqueueProposalTopUps,
+  recoverQueuedTasks,
   registerProposalTopUpSchedule,
 } from '../src/lib/proposal-scheduler.js';
 
@@ -79,5 +81,30 @@ describe('enqueueProposalTopUps', () => {
     await enqueueProposalTopUps();
     const repoIds = mocks.add.mock.calls.map((call) => call[1].repositoryId);
     expect(repoIds).toEqual(['r1', 'r3']);
+  });
+});
+
+// Worker-startup recovery: tasks left in 'queued' without a BullMQ job
+// (e.g. an enqueue that failed after the status update) are re-enqueued.
+describe('recoverQueuedTasks', () => {
+  it('re-enqueues run-task for every queued task', async () => {
+    mocks.taskFindMany.mockResolvedValue([{ id: 't1' }, { id: 't2' }]);
+    await recoverQueuedTasks();
+    expect(mocks.taskFindMany).toHaveBeenCalledWith({
+      where: { status: 'queued' },
+      select: { id: true },
+    });
+    expect(mocks.add).toHaveBeenCalledTimes(2);
+    expect(mocks.add).toHaveBeenCalledWith(
+      'run-task',
+      { taskId: 't1' },
+      expect.objectContaining({ jobId: 'run-task-t1' }),
+    );
+  });
+
+  it('is a no-op when nothing is queued', async () => {
+    mocks.taskFindMany.mockResolvedValue([]);
+    await recoverQueuedTasks();
+    expect(mocks.add).not.toHaveBeenCalled();
   });
 });

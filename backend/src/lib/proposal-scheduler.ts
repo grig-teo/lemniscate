@@ -71,6 +71,19 @@ export async function enqueueRunTask(taskId: string): Promise<void> {
   );
 }
 
+// Worker-startup recovery: re-enqueue tasks stuck in 'queued' without a job
+// (e.g. an enqueue that failed after the status was already updated).
+// jobId dedupe makes this safe for tasks that do have a waiting job.
+export async function recoverQueuedTasks(): Promise<void> {
+  const stuck = await prisma.task.findMany({ where: { status: 'queued' }, select: { id: true } });
+  for (const task of stuck) {
+    await enqueueRunTask(task.id);
+  }
+  if (stuck.length > 0) {
+    console.log(`recovery: re-enqueued ${stuck.length} queued task(s)`);
+  }
+}
+
 // Enqueues a one-shot 'generate-proposals' job (round button / top-up).
 // jobId dedupes enqueues only while a job is waiting/active: finished jobs
 // are removed immediately, otherwise BullMQ would keep them and silently
