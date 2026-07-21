@@ -13,6 +13,7 @@ import {
 } from './agent-git.js';
 import {
   buildPrBody,
+  buildSkillsSection,
   generateBranchName,
   requestChanges,
   type LlmChangesResponse,
@@ -28,6 +29,7 @@ import { prisma } from './prisma.js';
 import { enqueueReviewTask } from './proposal-scheduler.js';
 import { openPullRequest } from './pull-requests.js';
 import { buildRepoContext } from './repo-context.js';
+import { loadAgentsMdTemplate, loadTaskSkills } from './task-skills.js';
 import { setTaskStatus } from './task-events.js';
 
 // Job: run-task — clone → LLM-proposed changes → branch → commit → push →
@@ -82,15 +84,30 @@ async function logContextManifest(
   );
 }
 
+// Resolves the task's skills to a system-prompt section; logs which skills
+// are active so the run console shows what was injected.
+async function taskSkillsSection(task: TaskWithRepo): Promise<string> {
+  const skills = await loadTaskSkills(task);
+  if (skills.length === 0) return '';
+  await logEvent(task.id, `active skills: ${skills.map((s) => s.slug).join(', ')}`);
+  return buildSkillsSection(skills);
+}
+
 async function proposeTaskChanges(
   task: TaskWithRepo,
   rt: LlmRuntime,
   workdir: string,
 ): Promise<LlmChangesResponse> {
   await logEvent(task.id, 'building repository context');
-  const { text: repoContext, files } = await buildRepoContext(workdir, rt.cfg.contextWindow);
+  const agentsMdTemplate = await loadAgentsMdTemplate(task.repository);
+  const { text: repoContext, files } = await buildRepoContext(
+    workdir,
+    rt.cfg.contextWindow,
+    agentsMdTemplate,
+  );
   await logContextManifest(task.id, files, repoContext.length);
-  const result = await requestChanges(rt, task, repoContext);
+  const skillsSection = await taskSkillsSection(task);
+  const result = await requestChanges(rt, task, repoContext, undefined, skillsSection);
   await logEvent(task.id, `LLM proposed ${result.changes.length} change(s): ${result.summary}`);
   await logEvent(task.id, `LLM usage so far: ~${rt.usedTokens} tokens`);
   return result;

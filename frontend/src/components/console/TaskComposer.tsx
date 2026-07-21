@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Loader2, Paperclip, Plus, Send, X } from 'lucide-react';
+import { Loader2, Paperclip, Plus, Send, Sparkles, X } from 'lucide-react';
 
 import { defaultRepositoryId } from '@/lib/default-repository';
 import {
@@ -23,6 +23,8 @@ import {
 } from '@/lib/prompt-composer';
 import { ProviderIcon } from '@/lib/providers';
 import { useWorkspaceSelection } from '@/lib/selection';
+import { SkillsDialog } from '@/components/skills/SkillsDialog';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -404,6 +406,34 @@ export function ImageThumbnails({
   );
 }
 
+/** Opens the repository-level skills picker; badge shows the selected skill count. */
+function SkillsButton({ repository }: { repository: Repository | null }) {
+  const [open, setOpen] = React.useState(false);
+  const count = repository?.skillSlugs?.length ?? 0;
+  return (
+    <>
+      <Button
+        type="button"
+        variant="ghost"
+        size="sm"
+        onClick={() => setOpen(true)}
+        disabled={!repository}
+        aria-label="Skills"
+        className="shrink-0 gap-1.5 px-2"
+      >
+        <Sparkles className="h-4 w-4" aria-hidden />
+        Skills
+        {count > 0 && (
+          <Badge variant="secondary" className="px-1.5">
+            {count}
+          </Badge>
+        )}
+      </Button>
+      <SkillsDialog open={open} onOpenChange={setOpen} repository={repository} />
+    </>
+  );
+}
+
 function SendButton({ canSend, pending, onClick }: { canSend: boolean; pending: boolean; onClick: () => void }) {
   return (
     <Button size="icon" onClick={onClick} disabled={!canSend} aria-label="Send prompt">
@@ -455,6 +485,7 @@ function ComposerToolbar({ composer }: { composer: ReturnType<typeof useTaskComp
         repositoryId={composer.repositoryId}
         onChange={composer.setManualRepositoryId}
       />
+      <SkillsButton repository={composer.repository} />
       <LlmConfigSelect
         configs={composer.enabledConfigs}
         value={composer.llmConfigId}

@@ -8,6 +8,7 @@ import {
 } from './agent-runtime.js';
 import { extractJsonArray, parseLlmJson } from './llm-json.js';
 import type { ChatMessage } from './llm-client.js';
+import { truncateKeyFile } from './repo-context.js';
 import { imageContentPart, parseTaskAttachments } from './task-attachments.js';
 import { errorMessage } from './utils.js';
 
@@ -31,7 +32,40 @@ const llmChangesResponseSchema = z.object({
 export type LlmChangesResponse = z.infer<typeof llmChangesResponseSchema>;
 export type LlmChange = LlmChangesResponse['changes'][number];
 
-export function agentSystemPrompt(systemPromptExtra: string | null): string {
+// ---------------------------------------------------------------------------
+// Active skills (Repository.skillSlugs → Task.skills → system prompt)
+// ---------------------------------------------------------------------------
+
+// Hard cap on injected skill content so context budgets hold regardless of
+// how many/large the selected skills are.
+export const MAX_SKILLS_SECTION_CHARS = 20_000;
+
+export interface PromptSkill {
+  name: string;
+  slug: string;
+  content: string;
+}
+
+// System-prompt section for the task's skills: one `### name (slug)` block
+// per skill, capped at MAX_SKILLS_SECTION_CHARS of content overall — an
+// oversized skill is truncated with a marker and later skills are dropped.
+export function buildSkillsSection(skills: PromptSkill[]): string {
+  if (skills.length === 0) return '';
+  const parts: string[] = [];
+  let remaining = MAX_SKILLS_SECTION_CHARS;
+  for (const skill of skills) {
+    if (remaining <= 0) break;
+    const content = truncateKeyFile(skill.content, remaining);
+    parts.push(`### ${skill.name} (${skill.slug})\n${content}`);
+    remaining -= content.length;
+  }
+  return ['## Active skills', ...parts].join('\n\n');
+}
+
+export function agentSystemPrompt(
+  systemPromptExtra: string | null,
+  skillsSection = '',
+): string {
   return [
     'You are Lemniscate, an autonomous coding agent working inside a git repository.',
     'You are given the repository file tree, the contents of its key files, and a task.',
@@ -46,6 +80,7 @@ export function agentSystemPrompt(systemPromptExtra: string | null): string {
     ...(systemPromptExtra
       ? ['', 'Additional instructions from the repository owner:', systemPromptExtra]
       : []),
+    ...(skillsSection ? ['', skillsSection] : []),
   ].join('\n');
 }
 
@@ -83,13 +118,14 @@ export async function requestChanges(
   task: Task,
   repoContext: string,
   userContentOverride?: string,
+  skillsSection = '',
 ): Promise<LlmChangesResponse> {
   const userMessage: ChatMessage =
     userContentOverride !== undefined
       ? { role: 'user', content: userContentOverride }
       : changesUserMessage(task, repoContext);
   const messages: ChatMessage[] = [
-    { role: 'system', content: agentSystemPrompt(rt.cfg.systemPromptExtra) },
+    { role: 'system', content: agentSystemPrompt(rt.cfg.systemPromptExtra, skillsSection) },
     userMessage,
   ];
   const content = await llmCall(rt, messages);

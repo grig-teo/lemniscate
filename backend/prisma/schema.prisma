@@ -110,6 +110,12 @@ model Repository {
   autoReviewPr  Boolean      @default(false)
   autoMergePr   Boolean      @default(false)
   hidden        Boolean      @default(false)
+  // Slugs of skills (Skill model) injected into the agent's system prompt
+  // for tasks on this repository; string[] stored as JSON.
+  skillSlugs    Json?
+  // Skill row (kind 'agents_md') whose content is written as AGENTS.md when
+  // the cloned repo root lacks one.
+  agentsMdSkillId String?
   // bare = near-empty repository (README-only, no implementation), refreshed
   // on every repo sync; a failed check keeps the previous value.
   bare          Boolean      @default(false)
@@ -137,6 +143,9 @@ model Task {
   thinkingLevel String?
   // Image attachments sent with the prompt: [{name, dataUrl}] (max 3).
   attachments  Json?
+  // Slugs of skills (Skill model) injected into the agent's system prompt
+  // for this run; string[] stored as JSON. Null = repository default.
+  skills       Json?
   // Cumulative LLM token usage across run/review/fix jobs; seeds the
   // maxTokensPerRun budget so it spans the whole task, not a single job.
   llmTokensUsed Int        @default(0)
@@ -150,6 +159,19 @@ model Task {
   @@index([repositoryId])
   @@index([status])
   @@index([llmConfigId])
+}
+
+model Skill {
+  id          String   @id @default(cuid())
+  slug        String   @unique
+  name        String
+  category    String
+  description String
+  content     String
+  tags        String[]
+  source      String   @default("hermes")
+  // 'skill' = injectable instruction pack; 'agents_md' = AGENTS.md template.
+  kind        String   @default("skill")
 }
 
 model TaskEvent {

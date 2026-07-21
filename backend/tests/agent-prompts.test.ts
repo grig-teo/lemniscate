@@ -3,11 +3,13 @@ import type { Task } from '@prisma/client';
 import {
   agentSystemPrompt,
   buildPrBody,
+  buildSkillsSection,
   changesUserContent,
   changesUserMessage,
   commitMessageFromResponse,
   fallbackBranchSlug,
   maxBranchSlugLength,
+  MAX_SKILLS_SECTION_CHARS,
   proposalsSystemPrompt,
   requestChanges,
   slugify,
@@ -207,5 +209,42 @@ describe('requestChanges', () => {
       /did not contain a JSON object/,
     );
     expect(bodies).toHaveLength(2);
+  });
+});
+
+describe('buildSkillsSection', () => {
+  it('returns an empty string for no skills', () => {
+    expect(buildSkillsSection([])).toBe('');
+  });
+
+  it('renders one block per skill under the Active skills header', () => {
+    const section = buildSkillsSection([
+      { name: 'TDD', slug: 'test-driven-development', content: 'Write the test first.' },
+      { name: 'Plan', slug: 'plan', content: 'Plan before code.' },
+    ]);
+    expect(section).toBe(
+      '## Active skills\n\n### TDD (test-driven-development)\nWrite the test first.\n\n### Plan (plan)\nPlan before code.',
+    );
+  });
+
+  it('truncates an oversized skill and drops later skills', () => {
+    const big = 'x'.repeat(MAX_SKILLS_SECTION_CHARS + 500);
+    const section = buildSkillsSection([
+      { name: 'Big', slug: 'big', content: big },
+      { name: 'Late', slug: 'late', content: 'dropped' },
+    ]);
+    expect(section).toContain('… [truncated]');
+    expect(section).not.toContain('### Late');
+    expect(section.length).toBeLessThan(MAX_SKILLS_SECTION_CHARS + 500);
+  });
+
+  it('stops adding skills once the budget is exhausted', () => {
+    const chunk = 'y'.repeat(MAX_SKILLS_SECTION_CHARS - 100);
+    const section = buildSkillsSection([
+      { name: 'One', slug: 'one', content: chunk },
+      { name: 'Two', slug: 'two', content: chunk },
+    ]);
+    expect(section).toContain('### One');
+    expect(section).toContain('… [truncated]');
   });
 });

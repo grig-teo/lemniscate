@@ -13,6 +13,7 @@ const MAX_TREE_ENTRIES = 1500;
 const MAX_TREE_CHARS = 20_000;
 const MAX_KEY_FILE_CHARS = 8_000;
 const MAX_KEY_FILE_BYTES = 200_000;
+const MAX_AGENTS_MD_CHARS = 12_000;
 
 const SKIP_DIRS = new Set([
   '.git',
@@ -139,6 +140,50 @@ export function truncateKeyFile(content: string, budget: number): string {
   return `${content.slice(0, budget)}\n… [truncated]`;
 }
 
+// ---------------------------------------------------------------------------
+// AGENTS.md: the repo's own root file wins; otherwise an injected template
+// (a kind 'agents_md' Skill chosen for the repository) fills the gap.
+// ---------------------------------------------------------------------------
+
+// Pure decision: which AGENTS.md content goes into the context. Blank
+// content counts as missing on both sides.
+export function selectAgentsMd(
+  rootAgentsMd: string | null,
+  template: string | null,
+): string | null {
+  if (rootAgentsMd && rootAgentsMd.trim().length > 0) return rootAgentsMd;
+  if (template && template.trim().length > 0) return template;
+  return null;
+}
+
+async function readRootAgentsMd(workdir: string): Promise<string | null> {
+  try {
+    return await fs.readFile(path.join(workdir, 'AGENTS.md'), 'utf8');
+  } catch {
+    return null;
+  }
+}
+
+// Prepends the AGENTS.md section (root file or template) and records it in
+// the manifest. Returns the chars consumed so the caller can budget the
+// remaining key files.
+async function prependAgentsMdSection(
+  workdir: string,
+  template: string | null,
+  sections: string[],
+  files: RepoContextFile[],
+): Promise<number> {
+  const root = await readRootAgentsMd(workdir);
+  const selected = selectAgentsMd(root, template);
+  if (selected === null) return 0;
+  const fromRoot = root !== null && root.trim().length > 0;
+  const content = truncateKeyFile(selected, MAX_AGENTS_MD_CHARS);
+  const label = fromRoot ? 'AGENTS.md' : 'AGENTS.md (template)';
+  sections.push(`## ${label}\n\`\`\`\n${content}\n\`\`\``);
+  files.push({ path: label, chars: content.length });
+  return content.length;
+}
+
 interface KeyFileSection {
   text: string;
   consumed: number;
@@ -196,17 +241,20 @@ async function appendKeyFileSections(
 export async function buildRepoContext(
   workdir: string,
   contextWindowTokens: number,
+  agentsMdTemplate: string | null = null,
 ): Promise<RepoContext> {
   const tree = await buildFileTree(workdir);
   const treeText = tree.slice(0, MAX_TREE_ENTRIES).join('\n').slice(0, MAX_TREE_CHARS);
-  const sections: string[] = [`## File tree (${tree.length} files)\n${treeText}`];
+  const sections: string[] = [];
   const files: RepoContextFile[] = [];
+  const agentsMdChars = await prependAgentsMdSection(workdir, agentsMdTemplate, sections, files);
+  sections.push(`## File tree (${tree.length} files)\n${treeText}`);
   await appendKeyFileSections(
     workdir,
     tree,
     sections,
     files,
-    contextBudgetChars(contextWindowTokens) - treeText.length,
+    contextBudgetChars(contextWindowTokens) - treeText.length - agentsMdChars,
   );
   return { text: sections.join('\n\n'), files };
 }

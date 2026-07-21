@@ -16,7 +16,8 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
     "prisma:generate": "prisma generate",
-    "prisma:validate": "prisma validate"
+    "prisma:validate": "prisma validate",
+    "seed:skills": "tsx scripts/seed-skills.ts"
   },
   "dependencies": {
     "@fastify/cookie": "^11.0.2",

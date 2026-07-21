@@ -6,6 +6,7 @@ import { requestProposals, type LlmProposals } from './agent-prompts.js';
 import { prepareAgentRuntime } from './agent-runtime.js';
 import { prisma } from './prisma.js';
 import { buildRepoContext } from './repo-context.js';
+import { loadAgentsMdTemplate, parseSkillSlugs } from './task-skills.js';
 
 // Job: generate-proposals — the LLM suggests up to 5 improvement tasks for a
 // repository. They are created as pending proposal tasks (click-to-run: the
@@ -42,6 +43,8 @@ function proposalTaskData(repository: RepositoryWithConnection, proposal: LlmPro
     title: proposal.title,
     prompt: proposal.prompt,
     status: 'pending' as const,
+    // Proposals inherit the repository's skills, same as prompt tasks.
+    skills: parseSkillSlugs(repository.skillSlugs),
     ...(repository.llmConfigId ? { llmConfigId: repository.llmConfigId } : {}),
   };
 }
@@ -76,7 +79,12 @@ async function executeGenerateProposals(
   // Empty remotes are bootstrapped by cloneRepository's init fallback, so an
   // empty repo simply yields greenfield proposals.
   await cloneRepository(workdir, cloneUrl, repository.defaultBranch, secrets);
-  const { text: repoContext } = await buildRepoContext(workdir, rt.cfg.contextWindow);
+  const agentsMdTemplate = await loadAgentsMdTemplate(repository);
+  const { text: repoContext } = await buildRepoContext(
+    workdir,
+    rt.cfg.contextWindow,
+    agentsMdTemplate,
+  );
   const proposals = await requestProposals(rt, repository, repoContext);
   const created = await createProposalTasks(repository, proposals);
   console.log(

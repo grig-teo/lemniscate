@@ -6,6 +6,7 @@ import { enqueueRunTask, getAgentTasksQueue } from '../lib/proposal-scheduler.js
 import { prisma } from '../lib/prisma.js';
 import { attachmentsData, taskImagesSchema, taskThinkingLevelSchema } from '../lib/task-attachments.js';
 import { publishTaskEvent, serializeTaskEvent } from '../lib/task-events.js';
+import { parseSkillSlugs } from '../lib/task-skills.js';
 import { authenticatedUserId, requireAuth } from '../plugins/auth.js';
 import { parseOrReply } from './helpers.js';
 
@@ -125,7 +126,7 @@ async function createTask(request: FastifyRequest, reply: FastifyReply) {
 
   const repository = await prisma.repository.findFirst({
     where: { id: data.repositoryId, connection: { userId } },
-    select: { id: true, llmConfigId: true },
+    select: { id: true, llmConfigId: true, skillSlugs: true },
   });
   if (!repository) {
     return reply.code(404).send({ error: 'Repository not found' });
@@ -148,6 +149,9 @@ async function createTask(request: FastifyRequest, reply: FastifyReply) {
       status: initialTaskStatus(data.later),
       llmConfigId,
       thinkingLevel: data.thinkingLevel ?? null,
+      // Snapshot the repository's skills so later edits don't retroactively
+      // change this task; empty array when the repo has none selected.
+      skills: parseSkillSlugs(repository.skillSlugs),
       ...attachmentsData(data.images),
     },
   });

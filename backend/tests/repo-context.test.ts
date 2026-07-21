@@ -7,6 +7,7 @@ import {
   buildRepoContext,
   contextBudgetChars,
   isKeyFile,
+  selectAgentsMd,
   truncateKeyFile,
 } from '../src/lib/repo-context.js';
 
@@ -51,6 +52,25 @@ describe('isKeyFile', () => {
 
   it('rejects ordinary source files', () => {
     expect(isKeyFile('src/lib/util.ts')).toBe(false);
+  });
+});
+
+describe('selectAgentsMd', () => {
+  it('prefers the repository AGENTS.md over the template', () => {
+    expect(selectAgentsMd('# repo rules', '# template rules')).toBe('# repo rules');
+  });
+
+  it('falls back to the template when the repository has none', () => {
+    expect(selectAgentsMd(null, '# template rules')).toBe('# template rules');
+  });
+
+  it('treats a blank repository AGENTS.md as missing', () => {
+    expect(selectAgentsMd('   \n', '# template rules')).toBe('# template rules');
+  });
+
+  it('returns null when neither source has content', () => {
+    expect(selectAgentsMd(null, null)).toBeNull();
+    expect(selectAgentsMd('', '  ')).toBeNull();
   });
 });
 
@@ -109,5 +129,26 @@ describe('file tree + repo context (on a real temp repo)', () => {
       { path: 'README.md', chars: '# demo'.length },
       { path: 'src/index.ts', chars: 'console.log(1)'.length },
     ]);
+  });
+
+  it('includes the repository AGENTS.md when the root has one', async () => {
+    await writeFile(path.join(workdir, 'AGENTS.md'), '# repo rules');
+    const { text, files } = await buildRepoContext(workdir, 100_000, '# template rules');
+    expect(text).toContain('## AGENTS.md');
+    expect(text).toContain('# repo rules');
+    expect(text).not.toContain('# template rules');
+    expect(files[0]).toEqual({ path: 'AGENTS.md', chars: '# repo rules'.length });
+  });
+
+  it('falls back to the template skill content when the root has no AGENTS.md', async () => {
+    const { text, files } = await buildRepoContext(workdir, 100_000, '# template rules');
+    expect(text).toContain('# template rules');
+    expect(files[0]?.path).toContain('AGENTS.md');
+  });
+
+  it('adds no AGENTS.md section when neither the repo nor a template provides one', async () => {
+    const { text, files } = await buildRepoContext(workdir, 100_000);
+    expect(text).not.toContain('## AGENTS.md');
+    expect(files.some((f) => f.path.startsWith('AGENTS.md'))).toBe(false);
   });
 });

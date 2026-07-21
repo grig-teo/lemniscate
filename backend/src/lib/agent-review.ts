@@ -14,7 +14,7 @@ import {
   recordJobFailure,
   sanitizeRelativePath,
 } from './agent-git.js';
-import { requestChanges, type LlmChangesResponse } from './agent-prompts.js';
+import { buildSkillsSection, requestChanges, type LlmChangesResponse } from './agent-prompts.js';
 import {
   llmCall,
   loadTaskWithRepo,
@@ -34,6 +34,7 @@ import {
 } from './pr-review.js';
 import { buildRepoContext } from './repo-context.js';
 import { publishTaskEvent, setTaskStatus } from './task-events.js';
+import { loadAgentsMdTemplate, loadTaskSkills } from './task-skills.js';
 
 // Job: review-pr — LLM review → fix iterations → optional auto-merge with
 // conflict resolution. Extracted from agent-loop.ts.
@@ -98,12 +99,18 @@ async function proposeFixes(
   review: PrReview,
   workdir: string,
 ): Promise<LlmChangesResponse> {
-  const { text: repoContext } = await buildRepoContext(workdir, rt.cfg.contextWindow);
+  const agentsMdTemplate = await loadAgentsMdTemplate(task.repository);
+  const { text: repoContext } = await buildRepoContext(
+    workdir,
+    rt.cfg.contextWindow,
+    agentsMdTemplate,
+  );
   const fixPrompt = [
     buildFixUserPrompt({ taskTitle: task.title, taskPrompt: task.prompt, review }),
     `\n# Repository context\n${repoContext}`,
   ].join('\n');
-  const result = await requestChanges(rt, task, repoContext, fixPrompt);
+  const skillsSection = buildSkillsSection(await loadTaskSkills(task));
+  const result = await requestChanges(rt, task, repoContext, fixPrompt, skillsSection);
   await logEvent(task.id, `LLM proposed ${result.changes.length} fix change(s): ${result.summary}`);
   return result;
 }

@@ -14,6 +14,12 @@ const patchBodySchema = z
     hidden: z.boolean().optional(),
     // null explicitly detaches the LLM config.
     llmConfigId: z.string().min(1).nullable().optional(),
+    // Slugs of skills injected into the agent's system prompt for tasks on
+    // this repository; existence validated against the Skill table below.
+    skillSlugs: z.array(z.string().min(1)).max(20).optional(),
+    // AGENTS.md template skill (kind 'agents_md') used when the cloned repo
+    // root lacks one; null explicitly detaches it.
+    agentsMdSkillId: z.string().min(1).nullable().optional(),
   })
   .strict();
 
@@ -36,6 +42,8 @@ export function buildPatchData(data: PatchBody) {
     ...(data.autoMergePr !== undefined ? { autoMergePr: data.autoMergePr } : {}),
     ...(data.hidden !== undefined ? { hidden: data.hidden } : {}),
     ...(data.llmConfigId !== undefined ? { llmConfigId: data.llmConfigId } : {}),
+    ...(data.skillSlugs !== undefined ? { skillSlugs: data.skillSlugs } : {}),
+    ...(data.agentsMdSkillId !== undefined ? { agentsMdSkillId: data.agentsMdSkillId } : {}),
   };
 }
 
@@ -65,6 +73,22 @@ async function ownedLlmConfigExists(userId: string, llmConfigId: string): Promis
     select: { id: true },
   });
   return llmConfig !== null;
+}
+
+// Slugs from the patch body that have no Skill row — used to 400 with the
+// offending names instead of silently storing dead references.
+async function findUnknownSkillSlugs(slugs: string[]): Promise<string[]> {
+  const rows = await prisma.skill.findMany({
+    where: { slug: { in: slugs } },
+    select: { slug: true },
+  });
+  const known = new Set(rows.map((row) => row.slug));
+  return slugs.filter((slug) => !known.has(slug));
+}
+
+async function isAgentsMdSkill(id: string): Promise<boolean> {
+  const skill = await prisma.skill.findUnique({ where: { id }, select: { kind: true } });
+  return skill?.kind === 'agents_md';
 }
 
 const repositoriesRoutes: FastifyPluginAsync = async (app) => {
@@ -126,6 +150,17 @@ const repositoriesRoutes: FastifyPluginAsync = async (app) => {
     }
     if (data.llmConfigId && !(await ownedLlmConfigExists(userId, data.llmConfigId))) {
       return reply.code(400).send({ error: 'llmConfigId does not reference your LLM config' });
+    }
+    if (data.skillSlugs) {
+      const unknown = await findUnknownSkillSlugs(data.skillSlugs);
+      if (unknown.length > 0) {
+        return reply.code(400).send({ error: `Unknown skill slug(s): ${unknown.join(', ')}` });
+      }
+    }
+    if (data.agentsMdSkillId && !(await isAgentsMdSkill(data.agentsMdSkillId))) {
+      return reply
+        .code(400)
+        .send({ error: 'agentsMdSkillId does not reference an AGENTS.md skill' });
     }
 
     const updated = await prisma.repository.update({

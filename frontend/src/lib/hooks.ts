@@ -6,6 +6,7 @@
  * in responses (`hasApiKey` flags whether one is stored).
  */
 import { useMutation, useQuery, useQueryClient, type UseQueryOptions } from '@tanstack/react-query';
+import * as React from 'react';
 
 import { api } from '@/lib/api';
 
@@ -105,10 +106,31 @@ export type Repository = {
   /** True for near-empty (README-only) repositories — the composer invites a from-scratch app prompt. */
   bare: boolean;
   llmConfigId?: string | null;
+  /** Repository-level skill slugs injected into the agent's system prompt. */
+  skillSlugs?: string[];
+  /** AGENTS.md template skill applied when the repo root has no AGENTS.md. */
+  agentsMdSkillId?: string | null;
   connection: {
     provider: GitProvider;
     username: string;
   };
+};
+
+/** GET /api/skills list item — full content only comes from GET /api/skills/:slug. */
+export type Skill = {
+  id: string;
+  slug: string;
+  name: string;
+  category: string;
+  description: string;
+  tags: string[];
+  kind: 'skill' | 'agents_md';
+};
+
+/** GET /api/skills/categories item. */
+export type SkillCategory = {
+  name: string;
+  count: number;
 };
 
 export type TaskStatus =
@@ -236,6 +258,38 @@ export function useTask(id: string | null | undefined) {
   });
 }
 
+const SKILLS_SEARCH_DEBOUNCE_MS = 250;
+
+/** Debounced skills list; the backend matches search over name, description, and content. */
+export function useSkills(search: string, category?: string | null) {
+  const [debouncedSearch, setDebouncedSearch] = React.useState(search);
+  React.useEffect(() => {
+    const timer = setTimeout(() => setDebouncedSearch(search), SKILLS_SEARCH_DEBOUNCE_MS);
+    return () => clearTimeout(timer);
+  }, [search]);
+
+  return useQuery({
+    queryKey: ['skills', debouncedSearch, category ?? null],
+    queryFn: () => {
+      const params = new URLSearchParams();
+      if (debouncedSearch) params.set('search', debouncedSearch);
+      if (category) params.set('category', category);
+      const suffix = params.size > 0 ? `?${params.toString()}` : '';
+      return api.get<{ skills: Skill[] }>(`/api/skills${suffix}`).then((res) => res.skills);
+    },
+  });
+}
+
+export function useSkillCategories() {
+  return useQuery({
+    queryKey: ['skill-categories'],
+    queryFn: () =>
+      api
+        .get<{ categories: SkillCategory[] }>('/api/skills/categories')
+        .then((res) => res.categories),
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Mutations
 // ---------------------------------------------------------------------------
@@ -322,6 +376,36 @@ export function useUpdateAllRepositoryFlags() {
   });
 }
 
+interface RepositorySkillsPatch {
+  skillSlugs?: string[];
+  agentsMdSkillId?: string | null;
+}
+
+/** PATCH /api/repositories/:id — repository-level skill selection, optimistic like the flags hook. */
+export function useUpdateRepository() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, patch }: { id: string; patch: RepositorySkillsPatch }) =>
+      api
+        .patch<{ repository: Repository }>(`/api/repositories/${id}`, { ...patch })
+        .then((res) => res.repository),
+    onMutate: async ({ id, patch }) => {
+      await queryClient.cancelQueries({ queryKey: ['repositories'] });
+      const previous = queryClient.getQueryData<Repository[]>(['repositories']);
+      queryClient.setQueryData<Repository[]>(['repositories'], (old) =>
+        old?.map((repo) => (repo.id === id ? { ...repo, ...patch } : repo)),
+      );
+      return { previous };
+    },
+    onError: (_error, _vars, context) => {
+      queryClient.setQueryData(['repositories'], context?.previous);
+    },
+    onSettled: () => {
+      void queryClient.invalidateQueries({ queryKey: ['repositories'] });
+    },
+  });
+}
+
 /** POST /api/tasks — create a prompt task. */
 export function useCreateTask() {
   const queryClient = useQueryClient();
@@ -366,6 +450,18 @@ export function useRerunTask() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (id: string) => api.post<unknown>(`/api/tasks/${id}/rerun`),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['tasks'] });
+      void queryClient.invalidateQueries({ queryKey: ['task'] });
+    },
+  });
+}
+
+/** POST /api/tasks/:id/cancel — stop a pending/queued/running task. */
+export function useCancelTask() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => api.post<unknown>(`/api/tasks/${id}/cancel`),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['tasks'] });
       void queryClient.invalidateQueries({ queryKey: ['task'] });
