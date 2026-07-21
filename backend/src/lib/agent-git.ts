@@ -22,12 +22,26 @@ const execFileAsync = promisify(execFile);
 const GIT_USER_NAME = 'lemniscate-agent';
 const GIT_USER_EMAIL = 'agent@lemniscate.local';
 
+export interface GitOptions {
+  cwd?: string;
+  secrets?: string[];
+  /** When set, every command echoes a redacted `$ git ...` log event. */
+  taskId?: string;
+}
+
+// Best-effort console echo of the command line; secrets (credentialed URLs)
+// are scrubbed before anything reaches the event stream, and logging never
+// breaks the git operation itself.
+async function logGitCommand(args: string[], options: GitOptions): Promise<void> {
+  if (!options.taskId) return;
+  const line = redactSecrets(`$ git ${args.join(' ')}`, options.secrets ?? []);
+  await logEvent(options.taskId, line).catch(() => {});
+}
+
 // Runs git; never echoes full args (clone/push args may carry credentialed
 // URLs) into the thrown error.
-export async function git(
-  args: string[],
-  options: { cwd?: string; secrets?: string[] } = {},
-): Promise<string> {
+export async function git(args: string[], options: GitOptions = {}): Promise<string> {
+  await logGitCommand(args, options);
   try {
     const { stdout } = await execFileAsync('git', args, {
       ...(options.cwd ? { cwd: options.cwd } : {}),
@@ -64,14 +78,20 @@ export async function cloneRepository(
   cloneUrl: string,
   defaultBranch: string,
   secrets: string[],
-  options: { shallow?: boolean } = {},
+  options: { shallow?: boolean; taskId?: string } = {},
 ): Promise<void> {
   await fs.rm(workdir, { recursive: true, force: true });
   await fs.mkdir(path.dirname(workdir), { recursive: true });
   const depthArgs = options.shallow === false ? [] : ['--depth', '1'];
-  await git(['clone', ...depthArgs, '--branch', defaultBranch, cloneUrl, workdir], { secrets });
-  await git(['config', 'user.name', GIT_USER_NAME], { cwd: workdir });
-  await git(['config', 'user.email', GIT_USER_EMAIL], { cwd: workdir });
+  await git(['clone', ...depthArgs, '--branch', defaultBranch, cloneUrl, workdir], {
+    secrets,
+    taskId: options.taskId,
+  });
+  await git(['config', 'user.name', GIT_USER_NAME], { cwd: workdir, taskId: options.taskId });
+  await git(['config', 'user.email', GIT_USER_EMAIL], { cwd: workdir, taskId: options.taskId });
+  if (options.taskId) {
+    await logEvent(options.taskId, `clone complete (${defaultBranch})`).catch(() => {});
+  }
 }
 
 export async function hasDirtyWorkdir(workdir: string): Promise<boolean> {
@@ -89,8 +109,9 @@ export async function persistTokenUsage(taskId: string, usedTokens: number): Pro
     .catch(() => {});
 }
 
-export async function cleanupWorkdir(workdir: string): Promise<void> {
+export async function cleanupWorkdir(workdir: string, taskId?: string): Promise<void> {
   await fs.rm(workdir, { recursive: true, force: true }).catch(() => {});
+  if (taskId) await logEvent(taskId, 'cleaned up workdir').catch(() => {});
 }
 
 // Logs a job failure to the console and the task's event stream (both
@@ -118,10 +139,10 @@ export async function commitAndPush(
   secrets: string[],
 ): Promise<void> {
   const commitMessage = await generateCommitMessage(rt, task, summary);
-  await git(['add', '-A'], { cwd: workdir });
-  await git(['commit', '-m', commitMessage], { cwd: workdir });
+  await git(['add', '-A'], { cwd: workdir, taskId: task.id });
+  await git(['commit', '-m', commitMessage], { cwd: workdir, taskId: task.id });
   await logEvent(task.id, `committed: ${commitMessage}`);
-  await git(pushArgs, { cwd: workdir, secrets });
+  await git(pushArgs, { cwd: workdir, secrets, taskId: task.id });
 }
 
 // ---------------------------------------------------------------------------
@@ -142,7 +163,7 @@ async function publishWriteDiff(
   secrets: string[],
 ): Promise<void> {
   if (action === 'modify') {
-    const diff = (await git(['diff', '--', rel], { cwd: workdir, secrets })).trim();
+    const diff = (await git(['diff', '--', rel], { cwd: workdir, secrets, taskId })).trim();
     await publishTaskEvent(taskId, 'diff', {
       path: rel,
       diff: diff || `updated ${rel} (no textual diff available)`,

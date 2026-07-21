@@ -6,6 +6,7 @@ import { encrypt } from '../lib/crypto.js';
 import { fetchProviderProfile, hasAnyScope, ProviderError, type ProviderName } from '../lib/git-providers.js';
 import { prisma } from '../lib/prisma.js';
 import { syncConnectionByIdBestEffort } from '../lib/repo-sync.js';
+import { tokenExpiryFromNow } from '../lib/token-refresh.js';
 import { errorMessage } from '../lib/utils.js';
 import {
   AUTH_COOKIE,
@@ -140,11 +141,21 @@ function tokenRequestBody(
   };
 }
 
+// What the provider's token endpoint hands back. GitLab also returns a
+// refresh_token + expires_in (access tokens live ~2h); GitHub returns
+// neither, so those stay undefined and the stored fields remain null.
+interface OAuthTokens {
+  accessToken: string;
+  scope?: string;
+  refreshToken?: string;
+  expiresIn?: number;
+}
+
 async function exchangeCode(
   provider: OAuthProviderName,
   providerConfig: OAuthProviderConfig,
   code: string,
-): Promise<{ accessToken: string; scope?: string }> {
+): Promise<OAuthTokens> {
   const response = await fetch(providerConfig.tokenUrl, {
     method: 'POST',
     headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
@@ -153,6 +164,8 @@ async function exchangeCode(
   const data = (await response.json().catch(() => null)) as {
     access_token?: string;
     scope?: string;
+    refresh_token?: string;
+    expires_in?: number;
     error?: string;
     error_description?: string;
   } | null;
@@ -162,7 +175,27 @@ async function exchangeCode(
       response.status,
     );
   }
-  return { accessToken: data.access_token, scope: data.scope };
+  return {
+    accessToken: data.access_token,
+    scope: data.scope,
+    refreshToken: data.refresh_token,
+    expiresIn: typeof data.expires_in === 'number' ? data.expires_in : undefined,
+  };
+}
+
+// Encrypts the exchanged tokens for storage on the connection. The refresh
+// fields stay null for GitHub (no refresh_token) and drive the refresh flow
+// in lib/token-refresh.ts for GitLab.
+function oauthTokenFields(tokens: OAuthTokens): {
+  accessTokenEnc: string;
+  refreshTokenEnc: string | null;
+  tokenExpiresAt: Date | null;
+} {
+  return {
+    accessTokenEnc: encrypt(tokens.accessToken),
+    refreshTokenEnc: tokens.refreshToken ? encrypt(tokens.refreshToken) : null,
+    tokenExpiresAt: tokens.expiresIn ? tokenExpiryFromNow(tokens.expiresIn) : null,
+  };
 }
 
 // The token response echoes the granted scopes. Refuse to store a GitHub
@@ -186,27 +219,27 @@ function assertGrantedScopes(
 }
 
 // Finds the user behind an OAuth connection, or creates a new user plus
-// connection. The stored token is always refreshed.
+// connection. The stored tokens are always refreshed.
 async function upsertOAuthConnection(
   provider: OAuthProviderName,
   username: string,
-  accessToken: string,
+  tokens: OAuthTokens,
 ): Promise<{ userId: string; connectionId: string }> {
-  const accessTokenEnc = encrypt(accessToken);
+  const tokenFields = oauthTokenFields(tokens);
   const existing = await prisma.gitConnection.findFirst({
     where: { provider, username },
   });
   if (existing) {
     const connection = await prisma.gitConnection.update({
       where: { id: existing.id },
-      data: { accessTokenEnc, tokenType: 'oauth' },
+      data: { ...tokenFields, tokenType: 'oauth' },
     });
     return { userId: connection.userId, connectionId: connection.id };
   }
   const user = await prisma.user.create({
     data: {
       gitConnections: {
-        create: { provider, username, accessTokenEnc, tokenType: 'oauth' },
+        create: { provider, username, ...tokenFields, tokenType: 'oauth' },
       },
     },
     include: { gitConnections: { select: { id: true } } },
@@ -228,27 +261,27 @@ async function sessionUserId(request: FastifyRequest): Promise<string | null> {
 }
 
 // Attaches an OAuth connection to the given (logged-in) user. Reconnecting a
-// host refreshes the stored token and re-points the connection at this user —
+// host refreshes the stored tokens and re-points the connection at this user —
 // which also merges identities that were split by earlier logins.
 async function attachOAuthConnection(
   userId: string,
   provider: OAuthProviderName,
   username: string,
-  accessToken: string,
+  tokens: OAuthTokens,
 ): Promise<string> {
-  const accessTokenEnc = encrypt(accessToken);
+  const tokenFields = oauthTokenFields(tokens);
   const existing = await prisma.gitConnection.findFirst({
     where: { provider, username },
   });
   if (existing) {
     const connection = await prisma.gitConnection.update({
       where: { id: existing.id },
-      data: { accessTokenEnc, tokenType: 'oauth', userId },
+      data: { ...tokenFields, tokenType: 'oauth', userId },
     });
     return connection.id;
   }
   const connection = await prisma.gitConnection.create({
-    data: { provider, username, accessTokenEnc, tokenType: 'oauth', userId },
+    data: { provider, username, ...tokenFields, tokenType: 'oauth', userId },
   });
   return connection.id;
 }
@@ -258,14 +291,14 @@ async function attachOAuthConnection(
 async function resolveOAuthIdentity(
   provider: OAuthProviderName,
   username: string,
-  accessToken: string,
+  tokens: OAuthTokens,
   request: FastifyRequest,
 ): Promise<{ userId: string; connectionId: string }> {
   const loggedInUserId = await sessionUserId(request);
   if (!loggedInUserId) {
-    return upsertOAuthConnection(provider, username, accessToken);
+    return upsertOAuthConnection(provider, username, tokens);
   }
-  const connectionId = await attachOAuthConnection(loggedInUserId, provider, username, accessToken);
+  const connectionId = await attachOAuthConnection(loggedInUserId, provider, username, tokens);
   return { userId: loggedInUserId, connectionId };
 }
 
@@ -313,14 +346,14 @@ async function handleOAuthCallback(
   reply: FastifyReply,
 ): Promise<FastifyReply> {
   try {
-    const { accessToken, scope } = await exchangeCode(provider, providerConfig, code);
-    assertGrantedScopes(provider, scope, request.log);
+    const tokens = await exchangeCode(provider, providerConfig, code);
+    assertGrantedScopes(provider, tokens.scope, request.log);
     // OAuth access tokens authenticate as Bearer (matters for GitLab).
-    const profile = await fetchProviderProfile(provider, accessToken, null, 'oauth');
+    const profile = await fetchProviderProfile(provider, tokens.accessToken, null, 'oauth');
     const { userId, connectionId } = await resolveOAuthIdentity(
       provider,
       profile.username,
-      accessToken,
+      tokens,
       request,
     );
     return finishOAuthLogin(userId, connectionId, request, reply);

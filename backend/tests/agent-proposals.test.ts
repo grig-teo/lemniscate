@@ -60,7 +60,7 @@ function stubHappyPath(proposals: Array<{ title: string; prompt: string }>): voi
     cloneUrl: 'https://example/repo.git',
     rt: { cfg: { contextWindow: 1000, systemPromptExtra: null } },
   });
-  mocks.buildRepoContext.mockResolvedValue('CTX');
+  mocks.buildRepoContext.mockResolvedValue({ text: 'CTX', files: [] });
   mocks.requestProposals.mockResolvedValue(proposals);
   mocks.taskCreate.mockImplementation((args: { data: { title: string } }) =>
     Promise.resolve({ id: `task-${args.data.title}` }),

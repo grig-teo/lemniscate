@@ -40,7 +40,9 @@ async function cloneForTask(
 ): Promise<void> {
   const { repository } = task;
   await logEvent(task.id, `cloning ${repository.fullName} (${repository.defaultBranch})`);
-  await cloneRepository(workdir, cloneUrl, repository.defaultBranch, secrets);
+  await cloneRepository(workdir, cloneUrl, repository.defaultBranch, secrets, {
+    taskId: task.id,
+  });
 }
 
 async function createTaskBranch(
@@ -49,10 +51,24 @@ async function createTaskBranch(
   workdir: string,
 ): Promise<string> {
   const branchName = await generateBranchName(rt, task);
-  await git(['checkout', '-b', branchName], { cwd: workdir });
+  await git(['checkout', '-b', branchName], { cwd: workdir, taskId: task.id });
   await prisma.task.update({ where: { id: task.id }, data: { branchName } });
   await logEvent(task.id, `created branch ${branchName}`);
   return branchName;
+}
+
+async function logContextManifest(
+  taskId: string,
+  files: Array<{ path: string; chars: number }>,
+  totalChars: number,
+): Promise<void> {
+  for (const file of files) {
+    await logEvent(taskId, `read ${file.path} (${file.chars} chars)`);
+  }
+  await logEvent(
+    taskId,
+    `repository context ready: ${files.length} key file(s), ${totalChars} chars`,
+  );
 }
 
 async function proposeTaskChanges(
@@ -60,7 +76,9 @@ async function proposeTaskChanges(
   rt: LlmRuntime,
   workdir: string,
 ): Promise<LlmChangesResponse> {
-  const repoContext = await buildRepoContext(workdir, rt.cfg.contextWindow);
+  await logEvent(task.id, 'building repository context');
+  const { text: repoContext, files } = await buildRepoContext(workdir, rt.cfg.contextWindow);
+  await logContextManifest(task.id, files, repoContext.length);
   const result = await requestChanges(rt, task, repoContext);
   await logEvent(task.id, `LLM proposed ${result.changes.length} change(s): ${result.summary}`);
   await logEvent(task.id, `LLM usage so far: ~${rt.usedTokens} tokens`);
@@ -86,6 +104,7 @@ async function openTaskPullRequest(
   summary: string,
 ): Promise<void> {
   const { repository } = task;
+  await logEvent(task.id, `opening pull request (${branchName} → ${repository.defaultBranch})`);
   const { prUrl } = await openPullRequest(repository.connection, {
     repoFullName: repository.fullName,
     headBranch: branchName,
@@ -122,6 +141,7 @@ async function executeRunTask(
   workdir: string,
   secrets: string[],
 ): Promise<LlmRuntime> {
+  await logEvent(task.id, 'checking repository push access');
   const { cloneUrl, rt } = await prepareAgentRuntime(
     task,
     task.repository,
@@ -134,6 +154,7 @@ async function executeRunTask(
   const branchName = await createTaskBranch(task, rt, workdir);
   const { summary, changes } = await proposeTaskChanges(task, rt, workdir);
   const applied = await applyChanges(task.id, workdir, changes, secrets);
+  await logEvent(task.id, `applied ${applied} of ${changes.length} proposed change(s)`);
   if (applied === 0 || !(await hasDirtyWorkdir(workdir))) {
     await logEvent(task.id, 'no changes produced; nothing to commit');
     await setTaskStatus(task.id, 'done');
@@ -167,6 +188,6 @@ export async function runTask(taskId: string): Promise<void> {
     await setTaskStatus(taskId, 'failed', { error: message }).catch(() => {});
   } finally {
     await persistTokenUsage(taskId, rt?.usedTokens ?? task.llmTokensUsed);
-    await cleanupWorkdir(workdir);
+    await cleanupWorkdir(workdir, taskId);
   }
 }

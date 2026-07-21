@@ -9,6 +9,7 @@ import {
 import { extractJsonArray, parseLlmJson } from './llm-json.js';
 import type { ChatMessage } from './llm-client.js';
 import { imageContentPart, parseTaskAttachments } from './task-attachments.js';
+import { errorMessage } from './utils.js';
 
 // Prompt builders, response schemas, and slug/message helpers for the agent
 // loop's LLM calls. Extracted from agent-loop.ts; the pure builders are
@@ -68,6 +69,15 @@ export function changesUserMessage(task: Task, repoContext: string): ChatMessage
   };
 }
 
+// One-shot self-repair: the failed response plus why it was rejected.
+function repairUserPrompt(err: unknown): string {
+  return [
+    'Your previous response could not be used:',
+    errorMessage(err),
+    'Return ONLY the JSON object, no prose.',
+  ].join('\n');
+}
+
 export async function requestChanges(
   rt: LlmRuntime,
   task: Task,
@@ -78,11 +88,21 @@ export async function requestChanges(
     userContentOverride !== undefined
       ? { role: 'user', content: userContentOverride }
       : changesUserMessage(task, repoContext);
-  const content = await llmCall(rt, [
+  const messages: ChatMessage[] = [
     { role: 'system', content: agentSystemPrompt(rt.cfg.systemPromptExtra) },
     userMessage,
-  ]);
-  return parseLlmJson(llmChangesResponseSchema, content, 'an invalid change set');
+  ];
+  const content = await llmCall(rt, messages);
+  try {
+    return parseLlmJson(llmChangesResponseSchema, content, 'an invalid change set');
+  } catch (err) {
+    const repair: ChatMessage[] = [
+      { role: 'assistant', content },
+      { role: 'user', content: repairUserPrompt(err) },
+    ];
+    const repaired = await llmCall(rt, [...messages, ...repair]);
+    return parseLlmJson(llmChangesResponseSchema, repaired, 'an invalid change set');
+  }
 }
 
 // ---------------------------------------------------------------------------

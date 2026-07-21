@@ -57,6 +57,11 @@ model GitConnection {
   // How the stored token authenticates: 'pat' (GitLab PRIVATE-TOKEN header)
   // or 'oauth' (Authorization: Bearer). GitHub/GitVerse ignore this.
   tokenType      String?      @default("pat")
+  // GitLab OAuth tokens expire (~2h): the encrypted refresh token and the
+  // access-token expiry (with a safety margin) let us refresh before calls
+  // start failing with 401. Null for GitHub/GitVerse and PAT connections.
+  refreshTokenEnc String?
+  tokenExpiresAt  DateTime?
   user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
   repositories   Repository[]
 

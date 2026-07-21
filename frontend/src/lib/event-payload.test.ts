@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   firstStringField,
+  payloadToDiffText,
   payloadToLogText,
   statusFromPayload,
 } from '@/lib/event-payload';
@@ -52,5 +53,31 @@ describe('statusFromPayload', () => {
     expect(statusFromPayload({ status: 3 })).toBeNull();
     expect(statusFromPayload({ other: 'x' })).toBeNull();
     expect(statusFromPayload(null)).toBeNull();
+  });
+});
+
+describe('payloadToDiffText', () => {
+  it('renders action payloads with their action label', () => {
+    expect(payloadToDiffText({ path: 'src/a.ts', action: 'deleted' })).toBe(
+      '✎ src/a.ts (deleted)',
+    );
+    expect(payloadToDiffText({ path: 'src/b.ts', action: 'conflict-resolved' })).toBe(
+      '✎ src/b.ts (conflict-resolved)',
+    );
+  });
+
+  it('labels a diff from /dev/null as created, anything else as modified', () => {
+    expect(
+      payloadToDiffText({ path: 'src/new.ts', diff: '--- /dev/null\n+++ b/src/new.ts\n+x' }),
+    ).toBe('✎ src/new.ts (created)');
+    expect(payloadToDiffText({ path: 'src/a.ts', diff: 'diff --git a/src/a.ts b/src/a.ts' })).toBe(
+      '✎ src/a.ts (modified)',
+    );
+  });
+
+  it('returns null when there is no path', () => {
+    expect(payloadToDiffText({ diff: 'x' })).toBeNull();
+    expect(payloadToDiffText('src/a.ts')).toBeNull();
+    expect(payloadToDiffText(null)).toBeNull();
   });
 });

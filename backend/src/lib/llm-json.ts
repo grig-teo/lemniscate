@@ -4,16 +4,27 @@ import { z } from 'zod';
 // duplicated verbatim between agent-loop.ts and pr-review.ts. Kept free of
 // config/prisma/redis imports so it stays unit-testable without any env.
 
+const SNIPPET_MAX_CHARS = 300;
+
+// Whitespace-collapsed head of the raw response, for diagnosable errors.
+function rawSnippet(text: string): string {
+  return text.replace(/\s+/g, ' ').trim().slice(0, SNIPPET_MAX_CHARS);
+}
+
+function snippetSuffix(text: string): string {
+  return ` Raw response (first ${SNIPPET_MAX_CHARS} chars, whitespace-collapsed): "${rawSnippet(text)}"`;
+}
+
 export function extractJsonObject(text: string): unknown {
   const start = text.indexOf('{');
   const end = text.lastIndexOf('}');
   if (start === -1 || end <= start) {
-    throw new Error('LLM response did not contain a JSON object');
+    throw new Error(`LLM response did not contain a JSON object.${snippetSuffix(text)}`);
   }
   try {
     return JSON.parse(text.slice(start, end + 1));
   } catch {
-    throw new Error('LLM response contained malformed JSON');
+    throw new Error(`LLM response contained malformed JSON.${snippetSuffix(text)}`);
   }
 }
 
@@ -21,12 +32,12 @@ export function extractJsonArray(text: string): unknown {
   const start = text.indexOf('[');
   const end = text.lastIndexOf(']');
   if (start === -1 || end <= start) {
-    throw new Error('LLM response did not contain a JSON array');
+    throw new Error(`LLM response did not contain a JSON array.${snippetSuffix(text)}`);
   }
   try {
     return JSON.parse(text.slice(start, end + 1));
   } catch {
-    throw new Error('LLM response contained malformed JSON');
+    throw new Error(`LLM response contained malformed JSON.${snippetSuffix(text)}`);
   }
 }
 

@@ -1,10 +1,17 @@
 import type { GitConnection, LlmConfig, Repository, Task } from '@prisma/client';
 import { z } from 'zod';
+import { logEvent } from './agent-git.js';
 import { decrypt } from './crypto.js';
 import { assertRepoPushAccess, cloneUrlWithToken, type ProviderName } from './git-providers.js';
-import { chatCompletions, type ChatMessage, type ThinkingLevel } from './llm-client.js';
+import {
+  chatCompletions,
+  type ChatCompletionsParams,
+  type ChatMessage,
+  type ThinkingLevel,
+} from './llm-client.js';
 import { parseTaskThinkingLevel } from './task-attachments.js';
 import { prisma } from './prisma.js';
+import { withGitlabRefreshRetry } from './token-refresh.js';
 import { sleep } from './utils.js';
 
 // LLM runtime for the agent loop: per-run state (token usage + throttle
@@ -19,6 +26,8 @@ export interface LlmRuntime {
   lastCallStartedAt: number;
   /** Per-task override of the config's thinkingLevel (null column = unset). */
   thinkingLevelOverride?: ThinkingLevel;
+  /** When set, llmCall echoes start/done/retry lines to the task console. */
+  taskId?: string;
 }
 
 export class TokenBudgetExceededError extends Error {
@@ -104,9 +113,22 @@ export function parseCustomHeaders(raw: unknown): Record<string, string> {
   return parsed.success ? parsed.data : {};
 }
 
-function chatParams(rt: LlmRuntime, messages: ChatMessage[]) {
+// Retry-hook payload shared with llm-client's chatCompletions onRetry param.
+interface LlmRetryInfo {
+  attempt: number;
+  maxAttempts: number;
+  delayMs: number;
+  reason: string;
+}
+
+function logLlmRetry(taskId: string, info: LlmRetryInfo): void {
+  const line = `  LLM retry ${info.attempt}/${info.maxAttempts} in ${info.delayMs}ms (${info.reason})`;
+  void logEvent(taskId, line).catch(() => {});
+}
+
+function chatParams(rt: LlmRuntime, messages: ChatMessage[]): ChatCompletionsParams {
   const thinkingLevel = rt.thinkingLevelOverride ?? rt.cfg.thinkingLevel;
-  return {
+  const params: ChatCompletionsParams & { onRetry?: (info: LlmRetryInfo) => void } = {
     baseUrl: rt.cfg.baseUrl,
     apiKey: rt.apiKey,
     model: rt.cfg.model,
@@ -118,16 +140,32 @@ function chatParams(rt: LlmRuntime, messages: ChatMessage[]) {
     maxRetries: rt.cfg.maxRetries,
     customHeaders: parseCustomHeaders(rt.cfg.customHeaders),
   };
+  if (rt.taskId) params.onRetry = (info) => logLlmRetry(rt.taskId as string, info);
+  return params;
+}
+
+async function logLlmStart(rt: LlmRuntime): Promise<void> {
+  if (!rt.taskId) return;
+  await logEvent(rt.taskId, `→ LLM call (${rt.cfg.model})`).catch(() => {});
+}
+
+async function logLlmDone(rt: LlmRuntime, latencyMs: number, billed: number): Promise<void> {
+  if (!rt.taskId) return;
+  await logEvent(rt.taskId, `← LLM done in ${(latencyMs / 1000).toFixed(1)}s, ~${billed} tokens`)
+    .catch(() => {});
 }
 
 export async function llmCall(rt: LlmRuntime, messages: ChatMessage[]): Promise<string> {
   await throttle(rt);
+  await logLlmStart(rt);
   const result = await chatCompletions(chatParams(rt, messages));
-  rt.usedTokens += billedTokens(
+  const billed = billedTokens(
     sumMessageChars(messages),
     result.content.length,
     result.usage?.totalTokens,
   );
+  rt.usedTokens += billed;
+  await logLlmDone(rt, result.latencyMs, billed);
   assertWithinBudget(rt.usedTokens, rt.cfg.maxTokensPerRun);
   return result.content;
 }
@@ -197,16 +235,21 @@ export async function prepareAgentRuntime(
   secrets: string[],
   usedTokens = 0,
 ): Promise<AgentRunContext> {
-  const token = decrypt(repository.connection.accessTokenEnc);
+  const connection = repository.connection;
+  // Resolve a valid token (refreshing an expired GitLab OAuth token first,
+  // with one refresh+retry on a 401) and fail fast when it cannot push,
+  // before cloning and LLM spend.
+  const token = await withGitlabRefreshRetry(connection, async (t) => {
+    await assertRepoPushAccess(
+      connection.provider as ProviderName,
+      t,
+      repository.fullName,
+      connection.baseUrl,
+      connection.tokenType === 'oauth' ? 'oauth' : 'pat',
+    );
+    return t;
+  });
   secrets.push(token);
-  // Fail fast when the token cannot push, before cloning and LLM spend.
-  await assertRepoPushAccess(
-    repository.connection.provider as ProviderName,
-    token,
-    repository.fullName,
-    repository.connection.baseUrl,
-    repository.connection.tokenType === 'oauth' ? 'oauth' : 'pat',
-  );
   const cloneUrl = cloneUrlWithToken(repository.cloneUrl, token);
   secrets.push(cloneUrl);
   const llmConfig = await resolveLlmConfig(task, repository, repository.connection.userId);
@@ -214,6 +257,7 @@ export async function prepareAgentRuntime(
   secrets.push(apiKey);
   const rt = makeLlmRuntime(llmConfig, apiKey);
   rt.usedTokens = usedTokens;
+  rt.taskId = task?.id;
   const thinkingLevelOverride = parseTaskThinkingLevel(task?.thinkingLevel);
   if (thinkingLevelOverride) rt.thinkingLevelOverride = thinkingLevelOverride;
   return { cloneUrl, rt };

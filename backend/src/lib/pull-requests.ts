@@ -1,5 +1,4 @@
 import { z } from 'zod';
-import { decrypt } from './crypto.js';
 import {
   GITHUB_API,
   githubHeaders,
@@ -12,6 +11,7 @@ import {
   type ProviderName,
   type ProviderTokenType,
 } from './git-providers.js';
+import { withGitlabRefreshRetry } from './token-refresh.js';
 import { errorMessage, redactSecrets } from './utils.js';
 
 // Opens pull/merge requests on the connected git host. Kept separate from
@@ -27,6 +27,10 @@ export interface PrConnectionInput {
   accessTokenEnc: string;
   /** 'pat' | 'oauth' — GitLab OAuth tokens need Bearer, everything else PRIVATE-TOKEN. */
   tokenType?: string | null;
+  /** Refresh-flow fields (migration 0006); optional for partial selections. */
+  id?: string;
+  refreshTokenEnc?: string | null;
+  tokenExpiresAt?: Date | null;
 }
 
 export interface OpenPullRequestInput {
@@ -644,8 +648,8 @@ interface ProviderPrApi {
 }
 
 // The ONE place the provider is selected for PR operations (AGENTS.md §4).
-function providerPrApi(connection: PrConnectionInput): ProviderPrApi {
-  const token = decrypt(connection.accessTokenEnc);
+// The token is resolved by the caller (via the refresh flow) and passed in.
+function providerPrApi(connection: PrConnectionInput, token: string): ProviderPrApi {
   switch (connection.provider) {
     case 'github':
       return {
@@ -672,7 +676,9 @@ export async function openPullRequest(
   connection: PrConnectionInput,
   input: OpenPullRequestInput,
 ): Promise<OpenPullRequestResult> {
-  return providerPrApi(connection).open(input);
+  return withGitlabRefreshRetry(connection, (token) =>
+    providerPrApi(connection, token).open(input),
+  );
 }
 
 // Merges the open PR for the head branch into the base branch. A provider
@@ -682,7 +688,9 @@ export async function mergePullRequest(
   connection: PrConnectionInput,
   input: PullRequestRefInput,
 ): Promise<MergePullRequestResult> {
-  return providerPrApi(connection).merge(input);
+  return withGitlabRefreshRetry(connection, (token) =>
+    providerPrApi(connection, token).merge(input),
+  );
 }
 
 // Unified diff text of the open PR for the head branch, for the LLM review.
@@ -690,5 +698,7 @@ export async function getPullRequestDiff(
   connection: PrConnectionInput,
   input: PullRequestRefInput,
 ): Promise<string> {
-  return providerPrApi(connection).diff(input);
+  return withGitlabRefreshRetry(connection, (token) =>
+    providerPrApi(connection, token).diff(input),
+  );
 }

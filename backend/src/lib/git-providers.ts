@@ -1,5 +1,5 @@
 import { config } from '../config.js';
-import { decrypt } from './crypto.js';
+import { withGitlabRefreshRetry } from './token-refresh.js';
 
 // Per-provider REST clients. Each client talks to the git host's API with
 // the connection's decrypted access token and returns normalized shapes so
@@ -472,17 +472,25 @@ const notImplementedPr = (provider: ProviderName) =>
   };
 
 export function getProviderClient(connection: {
+  id?: string;
   provider: ProviderName;
   baseUrl: string | null;
   accessTokenEnc: string;
   tokenType?: string | null;
+  refreshTokenEnc?: string | null;
+  tokenExpiresAt?: Date | null;
 }): GitProviderClient {
-  const token = decrypt(connection.accessTokenEnc);
   const tokenType: ProviderTokenType =
     connection.tokenType === 'oauth' ? 'oauth' : 'pat';
   const api = providerApis[connection.provider];
   return {
-    listRepos: () => api.listRepos(token, connection.baseUrl, tokenType),
+    // Token resolution goes through the refresh flow: expired GitLab OAuth
+    // tokens are swapped before the call, and a 401 on a legacy row (no
+    // stored expiry) triggers one refresh+retry.
+    listRepos: () =>
+      withGitlabRefreshRetry(connection, (token) =>
+        api.listRepos(token, connection.baseUrl, tokenType),
+      ),
     createPullRequest: notImplementedPr(connection.provider),
   };
 }

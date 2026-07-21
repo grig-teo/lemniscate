@@ -88,7 +88,7 @@ async function executeGenerateProposals(
     console.log(`generate-proposals: ${repository.fullName}: repository is empty, skipping`);
     return;
   }
-  const repoContext = await buildRepoContext(workdir, rt.cfg.contextWindow);
+  const { text: repoContext } = await buildRepoContext(workdir, rt.cfg.contextWindow);
   const proposals = await requestProposals(rt, repository, repoContext);
   const created = await createProposalTasks(repository, proposals);
   console.log(

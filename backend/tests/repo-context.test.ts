@@ -90,15 +90,24 @@ describe('file tree + repo context (on a real temp repo)', () => {
   });
 
   it('buildRepoContext includes the tree header and key file contents only', async () => {
-    const context = await buildRepoContext(workdir, 100_000);
-    expect(context).toContain('## File tree (4 files)');
-    expect(context).toContain('## File: package.json');
-    expect(context).toContain('{"name":"demo"}');
-    expect(context).toContain('## File: README.md');
-    expect(context).toContain('## File: src/index.ts');
+    const { text } = await buildRepoContext(workdir, 100_000);
+    expect(text).toContain('## File tree (4 files)');
+    expect(text).toContain('## File: package.json');
+    expect(text).toContain('{"name":"demo"}');
+    expect(text).toContain('## File: README.md');
+    expect(text).toContain('## File: src/index.ts');
     // src/util.ts is listed in the tree but is not a key file.
-    expect(context).toContain('src/util.ts');
-    expect(context).not.toContain('## File: src/util.ts');
-    expect(context).not.toContain('export const x = 1;');
+    expect(text).toContain('src/util.ts');
+    expect(text).not.toContain('## File: src/util.ts');
+    expect(text).not.toContain('export const x = 1;');
+  });
+
+  it('buildRepoContext returns a manifest of the key files it read', async () => {
+    const { files } = await buildRepoContext(workdir, 100_000);
+    expect(files).toEqual([
+      { path: 'package.json', chars: '{"name":"demo"}'.length },
+      { path: 'README.md', chars: '# demo'.length },
+      { path: 'src/index.ts', chars: 'console.log(1)'.length },
+    ]);
   });
 });

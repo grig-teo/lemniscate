@@ -40,6 +40,19 @@ export interface ChatCompletionsParams {
   /** Retries on 429 / 5xx / network errors. Defaults to 3. */
   maxRetries?: number;
   customHeaders?: Record<string, string>;
+  /** Called before each backoff wait, with 1-based attempt info. */
+  onRetry?: (info: LlmRetryInfo) => void;
+}
+
+export interface LlmRetryInfo {
+  /** 1-based number of the attempt that just failed. */
+  attempt: number;
+  /** Total attempts (maxRetries + 1). */
+  maxAttempts: number;
+  /** Backoff wait about to happen. */
+  delayMs: number;
+  /** Why the attempt failed: 'timeout', 'network error', or 'HTTP <status>'. */
+  reason: string;
 }
 
 export interface ChatUsage {
@@ -92,7 +105,7 @@ export function backoffMs(attempt: number, retryAfterHeader: string | null): num
 }
 
 interface ChatCompletionsResponseBody {
-  choices?: { message?: { content?: string } }[];
+  choices?: { message?: { content?: string }; finish_reason?: string }[];
   model?: string;
   usage?: {
     prompt_tokens?: number;
@@ -111,6 +124,7 @@ interface RequestState {
   maxTokens?: number;
   thinkingLevel?: ThinkingLevel;
   customHeaders?: Record<string, string>;
+  onRetry?: (info: LlmRetryInfo) => void;
   timeoutSeconds: number;
   maxRetries: number;
   startedAt: number;
@@ -133,6 +147,7 @@ function makeRequestState(params: ChatCompletionsParams): RequestState {
   if (params.maxTokens !== undefined) state.maxTokens = params.maxTokens;
   if (params.thinkingLevel !== undefined) state.thinkingLevel = params.thinkingLevel;
   if (params.customHeaders !== undefined) state.customHeaders = params.customHeaders;
+  if (params.onRetry !== undefined) state.onRetry = params.onRetry;
   return state;
 }
 
@@ -176,11 +191,11 @@ async function attemptFetch(state: RequestState, body: unknown): Promise<FetchOu
   }
 }
 
-function networkFailure(state: RequestState, outcome: FetchOutcome): LlmError {
+function networkFailure(state: RequestState, outcome: FetchOutcome, attempt: number): LlmError {
   if (outcome.timedOut) {
     return new LlmError(
       'timeout',
-      `Request timed out after ${state.timeoutSeconds}s (${state.maxRetries + 1} attempts)`,
+      `Request timed out after ${state.timeoutSeconds}s (attempt ${attempt + 1} of ${state.maxRetries + 1})`,
     );
   }
   const detail = errorMessage(outcome.error);
@@ -214,7 +229,17 @@ function extractUsage(usage: ChatCompletionsResponseBody['usage']): ChatUsage | 
   return undefined;
 }
 
+function assertNotTruncated(parsed: ChatCompletionsResponseBody, state: RequestState): void {
+  if (parsed.choices?.[0]?.finish_reason === 'length') {
+    throw new LlmError(
+      'protocol',
+      `LLM response truncated at maxTokens=${state.maxTokens ?? 'unset'} — raise maxTokens in the LLM config`,
+    );
+  }
+}
+
 function toResult(parsed: ChatCompletionsResponseBody, state: RequestState): ChatCompletionsResult {
+  assertNotTruncated(parsed, state);
   const content = parsed.choices?.[0]?.message?.content;
   if (typeof content !== 'string') {
     throw new LlmError(
@@ -240,6 +265,27 @@ function isRetryableStatus(status: number): boolean {
   return status === 429 || status >= 500;
 }
 
+function networkRetryReason(outcome: FetchOutcome): string {
+  return outcome.timedOut ? 'timeout' : 'network error';
+}
+
+// Notifies onRetry, then waits out the backoff before the next attempt.
+async function backoffAndRetry(
+  state: RequestState,
+  attempt: number,
+  retryAfterHeader: string | null,
+  reason: string,
+): Promise<void> {
+  const delayMs = backoffMs(attempt, retryAfterHeader);
+  state.onRetry?.({
+    attempt: attempt + 1,
+    maxAttempts: state.maxRetries + 1,
+    delayMs,
+    reason,
+  });
+  await sleep(delayMs);
+}
+
 export async function chatCompletions(
   params: ChatCompletionsParams,
 ): Promise<ChatCompletionsResult> {
@@ -248,10 +294,10 @@ export async function chatCompletions(
     const outcome = await attemptFetch(state, buildRequestBody(state));
     if (!outcome.response) {
       if (attempt < state.maxRetries) {
-        await sleep(backoffMs(attempt, null));
+        await backoffAndRetry(state, attempt, null, networkRetryReason(outcome));
         continue;
       }
-      throw networkFailure(state, outcome);
+      throw networkFailure(state, outcome, attempt);
     }
     const { response } = outcome;
     if (response.ok) {
@@ -264,7 +310,7 @@ export async function chatCompletions(
       continue;
     }
     if (isRetryableStatus(status) && attempt < state.maxRetries) {
-      await sleep(backoffMs(attempt, response.headers.get('retry-after')));
+      await backoffAndRetry(state, attempt, response.headers.get('retry-after'), `HTTP ${status}`);
       continue;
     }
     throw new LlmError(

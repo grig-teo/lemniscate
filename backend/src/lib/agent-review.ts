@@ -98,7 +98,7 @@ async function proposeFixes(
   review: PrReview,
   workdir: string,
 ): Promise<LlmChangesResponse> {
-  const repoContext = await buildRepoContext(workdir, rt.cfg.contextWindow);
+  const { text: repoContext } = await buildRepoContext(workdir, rt.cfg.contextWindow);
   const fixPrompt = [
     buildFixUserPrompt({ taskTitle: task.title, taskPrompt: task.prompt, review }),
     `\n# Repository context\n${repoContext}`,

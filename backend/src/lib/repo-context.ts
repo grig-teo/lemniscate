@@ -144,6 +144,18 @@ interface KeyFileSection {
   consumed: number;
 }
 
+// One entry of the manifest buildRepoContext returns alongside the text:
+// which key files were actually included and how many chars each contributed.
+export interface RepoContextFile {
+  path: string;
+  chars: number;
+}
+
+export interface RepoContext {
+  text: string;
+  files: RepoContextFile[];
+}
+
 async function readKeyFileSection(
   workdir: string,
   rel: string,
@@ -166,6 +178,7 @@ async function appendKeyFileSections(
   workdir: string,
   tree: string[],
   sections: string[],
+  files: RepoContextFile[],
   budgetChars: number,
 ): Promise<void> {
   let remaining = budgetChars;
@@ -175,6 +188,7 @@ async function appendKeyFileSections(
     const section = await readKeyFileSection(workdir, rel, remaining);
     if (!section) continue;
     sections.push(section.text);
+    files.push({ path: rel, chars: section.consumed });
     remaining -= section.consumed;
   }
 }
@@ -182,15 +196,17 @@ async function appendKeyFileSections(
 export async function buildRepoContext(
   workdir: string,
   contextWindowTokens: number,
-): Promise<string> {
+): Promise<RepoContext> {
   const tree = await buildFileTree(workdir);
   const treeText = tree.slice(0, MAX_TREE_ENTRIES).join('\n').slice(0, MAX_TREE_CHARS);
   const sections: string[] = [`## File tree (${tree.length} files)\n${treeText}`];
+  const files: RepoContextFile[] = [];
   await appendKeyFileSections(
     workdir,
     tree,
     sections,
+    files,
     contextBudgetChars(contextWindowTokens) - treeText.length,
   );
-  return sections.join('\n\n');
+  return { text: sections.join('\n\n'), files };
 }

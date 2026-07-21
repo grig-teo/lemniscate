@@ -94,7 +94,8 @@ async function upsertAuthenticatedConnection(
   if (existing) {
     const connection = await prisma.gitConnection.update({
       where: { id: existing.id },
-      data: { accessTokenEnc, tokenType: 'pat' },
+      // A PAT replaces any OAuth tokens: clear the refresh flow's fields.
+      data: { accessTokenEnc, tokenType: 'pat', refreshTokenEnc: null, tokenExpiresAt: null },
       select: connectionSelect,
     });
     return { connection, created: false };
@@ -122,7 +123,8 @@ async function connectByPatIdentity(
   if (existing) {
     const connection = await prisma.gitConnection.update({
       where: { id: existing.id },
-      data: { accessTokenEnc, tokenType: 'pat' },
+      // A PAT replaces any OAuth tokens: clear the refresh flow's fields.
+      data: { accessTokenEnc, tokenType: 'pat', refreshTokenEnc: null, tokenExpiresAt: null },
       select: connectionSelect,
     });
     setAuthCookie(reply, existing.userId);

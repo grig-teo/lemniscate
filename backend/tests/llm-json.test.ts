@@ -22,6 +22,23 @@ describe('extractJsonObject', () => {
   it('throws on malformed JSON', () => {
     expect(() => extractJsonObject('{"a": }')).toThrow(/malformed JSON/);
   });
+
+  it('includes a whitespace-collapsed snippet of the raw response in errors', () => {
+    expect(() => extractJsonObject('no\n  json\n\there')).toThrow(/no json here/);
+    expect(() => extractJsonObject('{"a":\n  }')).toThrow(/"a": }/);
+  });
+
+  it('caps the snippet at 300 characters', () => {
+    const raw = 'y'.repeat(400);
+    let message = '';
+    try {
+      extractJsonObject(raw);
+    } catch (err) {
+      message = (err as Error).message;
+    }
+    expect(message).toContain('y'.repeat(300));
+    expect(message).not.toContain('y'.repeat(301));
+  });
 });
 
 describe('extractJsonArray', () => {

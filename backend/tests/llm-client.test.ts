@@ -148,6 +148,77 @@ describe('chatCompletions', () => {
     expect((err as LlmError).kind).toBe('protocol');
     expect((err as LlmError).message).toMatch(/missing choices\[0\]\.message\.content/);
   });
+
+  it('throws a protocol LlmError naming maxTokens when finish_reason is length', async () => {
+    stubFetch(
+      jsonResponse({
+        choices: [{ message: { content: '{"summary": "partial' }, finish_reason: 'length' }],
+      }),
+    );
+    const err = await chatCompletions({ ...BASE, maxTokens: 512 }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(LlmError);
+    expect((err as LlmError).kind).toBe('protocol');
+    expect((err as LlmError).message).toContain('maxTokens=512');
+    expect((err as LlmError).message).toMatch(/raise maxTokens in the LLM config/);
+  });
+
+  it('reports the real attempt number in the timeout message', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        (_url: string | URL, init?: RequestInit) =>
+          new Promise<Response>((_resolve, reject) => {
+            init?.signal?.addEventListener('abort', () =>
+              reject(new DOMException('Aborted', 'AbortError')),
+            );
+          }),
+      ),
+    );
+    const err = await chatCompletions({ ...BASE, maxRetries: 1, timeoutSeconds: 0 }).catch(
+      (e: unknown) => e,
+    );
+    expect((err as LlmError).kind).toBe('timeout');
+    expect((err as LlmError).message).toBe('Request timed out after 0s (attempt 2 of 2)');
+  });
+
+  it('calls onRetry with attempt info before each backoff wait', async () => {
+    stubFetch(
+      jsonResponse({ error: 'slow down' }, 429, { 'retry-after': '0' }),
+      jsonResponse({ choices: [{ message: { content: 'ok' } }] }),
+    );
+    const infos: { attempt: number; maxAttempts: number; delayMs: number; reason: string }[] = [];
+    const result = await chatCompletions({
+      ...BASE,
+      maxRetries: 1,
+      onRetry: (info) => infos.push(info),
+    });
+    expect(result.content).toBe('ok');
+    expect(infos).toEqual([{ attempt: 1, maxAttempts: 2, delayMs: 0, reason: 'HTTP 429' }]);
+  });
+
+  it('reports network errors to onRetry before retrying', async () => {
+    let calls = 0;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        calls += 1;
+        if (calls === 1) throw new Error('boom');
+        return jsonResponse({ choices: [{ message: { content: 'ok' } }] });
+      }),
+    );
+    const infos: { attempt: number; maxAttempts: number; delayMs: number; reason: string }[] = [];
+    await chatCompletions({ ...BASE, maxRetries: 1, onRetry: (info) => infos.push(info) });
+    expect(infos).toHaveLength(1);
+    expect(infos[0]).toMatchObject({ attempt: 1, maxAttempts: 2, reason: 'network error' });
+    expect(infos[0]?.delayMs).toBeGreaterThan(0);
+  });
+
+  it('never calls onRetry when the first attempt succeeds', async () => {
+    stubFetch(jsonResponse({ choices: [{ message: { content: 'ok' } }] }));
+    const onRetry = vi.fn();
+    await chatCompletions({ ...BASE, onRetry });
+    expect(onRetry).not.toHaveBeenCalled();
+  });
 });
 
 describe('toReasoningEffort', () => {

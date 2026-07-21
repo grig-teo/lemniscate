@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Task } from '@prisma/client';
 import {
   agentSystemPrompt,
@@ -9,8 +9,10 @@ import {
   fallbackBranchSlug,
   maxBranchSlugLength,
   proposalsSystemPrompt,
+  requestChanges,
   slugify,
 } from '../src/lib/agent-prompts.js';
+import type { LlmRuntime } from '../src/lib/agent-runtime.js';
 
 // Locking tests for the pure prompt/slug builders extracted from agent-loop.ts.
 
@@ -133,5 +135,77 @@ describe('changesUserMessage', () => {
     const t = task({ attachments: [{ name: 'broken' }] });
     const message = changesUserMessage(t, 'CTX');
     expect(typeof message.content).toBe('string');
+  });
+});
+
+describe('requestChanges', () => {
+  const validChangeSet = JSON.stringify({
+    summary: 'did it',
+    changes: [{ path: 'a.ts', action: 'modify', content: 'x' }],
+  });
+
+  function fakeRt(): LlmRuntime {
+    return {
+      cfg: {
+        baseUrl: 'https://llm.example.com/v1',
+        model: 'm',
+        temperature: 0,
+        maxTokens: 1024,
+        thinkingLevel: 'off',
+        timeoutSeconds: 5,
+        maxRetries: 0,
+        requestsPerMinute: 60,
+        maxTokensPerRun: null,
+        customHeaders: null,
+        systemPromptExtra: null,
+      } as unknown as LlmRuntime['cfg'],
+      apiKey: 'sk-test',
+      usedTokens: 0,
+      lastCallStartedAt: 0,
+    };
+  }
+
+  // Stubs the LLM endpoint; returns the request bodies for inspection.
+  function stubLlm(...contents: string[]): { messages: { role: string; content: string }[] }[] {
+    const bodies: { messages: { role: string; content: string }[] }[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_url: string | URL, init?: RequestInit) => {
+        bodies.push(JSON.parse(String(init?.body)));
+        const content = contents.length > 1 ? contents.shift() : contents[0];
+        return new Response(JSON.stringify({ choices: [{ message: { content } }] }));
+      }),
+    );
+    return bodies;
+  }
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('parses a valid change set without retrying', async () => {
+    const bodies = stubLlm(validChangeSet);
+    const result = await requestChanges(fakeRt(), task({}), 'CTX');
+    expect(result.summary).toBe('did it');
+    expect(bodies).toHaveLength(1);
+  });
+
+  it('retries once with a repair message when the first response is not JSON', async () => {
+    const bodies = stubLlm('sorry, no json', validChangeSet);
+    const result = await requestChanges(fakeRt(), task({}), 'CTX');
+    expect(result.summary).toBe('did it');
+    expect(bodies).toHaveLength(2);
+    const messages = bodies[1]?.messages ?? [];
+    expect(messages.at(-2)).toMatchObject({ role: 'assistant', content: 'sorry, no json' });
+    expect(messages.at(-1)?.role).toBe('user');
+    expect(messages.at(-1)?.content).toContain('Return ONLY the JSON object, no prose');
+  });
+
+  it('throws after the repair attempt also fails', async () => {
+    const bodies = stubLlm('junk one', 'junk two');
+    await expect(requestChanges(fakeRt(), task({}), 'CTX')).rejects.toThrow(
+      /did not contain a JSON object/,
+    );
+    expect(bodies).toHaveLength(2);
   });
 });
