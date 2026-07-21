@@ -86,12 +86,22 @@ describe('runHermesTask', () => {
         'model:',
         '  default: model-x',
         '  provider: custom',
+        '  api_mode: chat_completions',
         '  base_url: https://llm.example/v1',
         '  api_key: sk-test',
         '  context_length: 128000',
         '',
       ].join('\n'),
     );
+  });
+
+  it('rejects when hermes reports an initialization failure despite exiting 0', async () => {
+    const child = fakeChild();
+    mocks.spawn.mockReturnValue(child);
+    const promise = runHermesTask(makeOpts());
+    child.stdout.write('Failed to initialize agent: boom\n');
+    await closeWith(child, 0);
+    await expect(promise).rejects.toThrow('Failed to initialize agent');
   });
 
   it('excludes .hermes-home/ from git via .git/info/exclude', async () => {

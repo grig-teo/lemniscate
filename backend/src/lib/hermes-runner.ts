@@ -39,12 +39,15 @@ export function stripAnsi(text: string): string {
   );
 }
 
-// config.yaml for a custom OpenAI-compatible endpoint.
+// config.yaml for a custom OpenAI-compatible endpoint. api_mode is pinned:
+// left to auto-detect, Hermes picks the anthropic_messages transport for
+// coding endpoints (kimi/z.ai) and then fails on a missing optional package.
 export function hermesConfigYaml(llm: HermesLlmConfig): string {
   return [
     'model:',
     `  default: ${llm.model}`,
     '  provider: custom',
+    '  api_mode: chat_completions',
     `  base_url: ${llm.baseUrl}`,
     `  api_key: ${llm.apiKey}`,
     `  context_length: ${llm.contextWindow}`,
@@ -120,8 +123,16 @@ function waitForHermes(child: ChildProcess, opts: HermesTaskOptions): Promise<vo
       clearTimeout(timer);
       reject(spawnError(err as NodeJS.ErrnoException));
     });
+// Hermes prints an init-failure banner but still exits 0 — without this
+// marker check a broken run would look like "no changes produced".
+const INIT_FAILURE_MARKER = 'Failed to initialize agent';
+
     child.on('close', (code) => {
       clearTimeout(timer);
+      if (tail.text().includes(INIT_FAILURE_MARKER)) {
+        reject(new Error(`hermes agent failed to initialize: ${tail.text()}`));
+        return;
+      }
       if (code === 0) resolve();
       else reject(new Error(`hermes agent exited with code ${code}: ${tail.text()}`));
     });
