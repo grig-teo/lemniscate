@@ -5,6 +5,7 @@ import { useWorkspaceSelection } from '@/lib/selection';
 
 import { ConsoleHeader } from '@/components/console/ConsoleHeader';
 import { ConsoleLog } from '@/components/console/ConsoleLog';
+import { ArchivedPane } from '@/components/console/ArchivedPane';
 import { ProposalDetail } from '@/components/console/ProposalDetail';
 import { ComposerCard, TaskComposerFab } from '@/components/console/TaskComposer';
 import { useTaskConsole } from '@/components/console/useTaskConsole';
@@ -39,13 +40,17 @@ function EmptyConsole() {
  * once started it flips to queued and the log view takes over.
  * With no task selected the composer (ComposerCard) renders inline in the
  * empty console; once a task is selected, the floating + button opens the
- * same composer as the TaskComposerDialog modal.
+ * same composer as the TaskComposerDialog modal. When the repo tree's
+ * "show more" opens a repo's archived view (selection.archivedRepoId),
+ * ArchivedPane replaces the console/composer until closed or a task is
+ * selected.
  */
 export function ConsolePane() {
-  const { selectedTask, liveStatus } = useWorkspaceSelection();
+  const { selectedTask, liveStatus, archivedRepoId } = useWorkspaceSelection();
   const taskId = selectedTask?.id ?? null;
   const consoleState = useTaskConsole(taskId);
 
+  if (archivedRepoId) return <ArchivedPane repositoryId={archivedRepoId} />;
   if (!selectedTask) return <EmptyConsole />;
 
   const status = liveStatus ?? consoleState.historyStatus ?? selectedTask.status;

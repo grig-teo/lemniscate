@@ -45,6 +45,11 @@ export function groupRepoTasks(tasks: Task[]): RepoTaskGroups {
   };
 }
 
+/** Archived tasks, most recently archived first (null timestamps sort last). */
+export function sortByArchivedAtDesc(tasks: Task[]): Task[] {
+  return [...tasks].sort((a, b) => (b.archivedAt ?? '').localeCompare(a.archivedAt ?? ''));
+}
+
 /**
  * Refetch interval for a repo's tasks query: poll while generation may be in
  * flight (pending proposals below target), stop once the repo is stocked.

@@ -6,6 +6,7 @@ import {
   isArchivable,
   isStartableTask,
   proposalPollInterval,
+  sortByArchivedAtDesc,
   PROPOSAL_POLL_INTERVAL_MS,
   PROPOSAL_TARGET_COUNT,
 } from '@/lib/repo-tasks';
@@ -52,6 +53,27 @@ describe('proposalPollInterval', () => {
       makeTask({ id: 's1', status: 'running' }),
     ];
     expect(proposalPollInterval(tasks)).toBe(PROPOSAL_POLL_INTERVAL_MS);
+  });
+});
+
+describe('sortByArchivedAtDesc', () => {
+  it('orders most recently archived first without mutating the input', () => {
+    const tasks = [
+      makeTask({ id: 'old', archivedAt: '2024-01-01T00:00:00Z' }),
+      makeTask({ id: 'new', archivedAt: '2024-03-01T00:00:00Z' }),
+      makeTask({ id: 'mid', archivedAt: '2024-02-01T00:00:00Z' }),
+    ];
+    const sorted = sortByArchivedAtDesc(tasks);
+    expect(sorted.map((t) => t.id)).toEqual(['new', 'mid', 'old']);
+    expect(tasks.map((t) => t.id)).toEqual(['old', 'new', 'mid']);
+  });
+
+  it('sorts tasks with a null archivedAt last', () => {
+    const tasks = [
+      makeTask({ id: 'null', archivedAt: null }),
+      makeTask({ id: 'archived', archivedAt: '2024-01-01T00:00:00Z' }),
+    ];
+    expect(sortByArchivedAtDesc(tasks).map((t) => t.id)).toEqual(['archived', 'null']);
   });
 });
 

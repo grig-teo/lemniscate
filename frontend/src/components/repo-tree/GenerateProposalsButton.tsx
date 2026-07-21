@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Sparkles } from 'lucide-react';
 
-import { useGenerateProposals, useTasks } from '@/lib/hooks';
+import { useGenerateProposals, useProposalGenerationStatus, useTasks } from '@/lib/hooks';
 import { isPendingProposal, proposalPollInterval, PROPOSAL_TARGET_COUNT } from '@/lib/repo-tasks';
 import { cn } from '@/lib/utils';
 
@@ -42,11 +42,12 @@ export function GenerateProposalsButton({ repositoryId }: { repositoryId: string
     refetchInterval: (query) => proposalPollInterval(query.state.data),
   });
   const generate = useGenerateProposals();
+  const statusQuery = useProposalGenerationStatus(repositoryId);
   const pendingCount = (tasksQuery.data ?? []).filter(isPendingProposal).length;
   const tracking = useGenerationTracking(pendingCount);
-  // Spin whenever generation may be in flight — after a click, or while the
-  // repo is short of fresh proposals (generation is automatic).
-  const generating = tracking.generating || pendingCount < PROPOSAL_TARGET_COUNT;
+  // Spin only while generation is actually in flight: just clicked locally,
+  // or the backend reports a generate-proposals job running.
+  const generating = tracking.generating || (statusQuery.data ?? false);
 
   const onClick = () => {
     tracking.start();

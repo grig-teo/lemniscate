@@ -270,6 +270,18 @@ export function useTask(id: string | null | undefined) {
   });
 }
 
+/** Polls whether proposal generation is actually in flight for a repository. */
+export function useProposalGenerationStatus(repositoryId: string) {
+  return useQuery({
+    queryKey: ['proposal-generation-status', repositoryId],
+    queryFn: () =>
+      api
+        .get<{ generating: boolean }>(`/api/repositories/${repositoryId}/proposals/status`)
+        .then((res) => res.generating),
+    refetchInterval: 10_000,
+  });
+}
+
 const SKILLS_SEARCH_DEBOUNCE_MS = 250;
 
 /** Debounced skills list; the backend matches search over name, description, and content. */

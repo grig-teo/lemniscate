@@ -1,17 +1,17 @@
-import { useState, type ReactNode } from 'react';
-import { Archive, ArchiveRestore, Loader2, Play, RotateCcw } from 'lucide-react';
+import type { ReactNode } from 'react';
+import { Archive, Loader2, Play, RotateCcw } from 'lucide-react';
 
 import {
   useArchiveTask,
   useRerunTask,
   useStartTask,
   useTasks,
-  useUnarchiveTask,
   type Task,
 } from '@/lib/hooks';
-import { groupRepoTasks, isArchivable, isStartableTask } from '@/lib/repo-tasks';
+import { groupRepoTasks, isArchivable, isStartableTask, sortByArchivedAtDesc } from '@/lib/repo-tasks';
 import { useWorkspaceSelection } from '@/lib/selection';
 import { cn } from '@/lib/utils';
+import { ArchivedTaskRow } from '@/components/repo-tree/ArchivedTaskRow';
 import { GenerateProposalsButton } from '@/components/repo-tree/GenerateProposalsButton';
 import { StatusBadge } from '@/components/StatusBadge';
 import { Badge } from '@/components/ui/badge';
@@ -60,44 +60,35 @@ function TaskGroups({ repositoryId, tasks }: { repositoryId: string; tasks: Task
           ))}
         </TaskGroup>
       )}
-      <ArchivedTasksSection repositoryId={repositoryId} />
+      <ArchivedTasksGroup repositoryId={repositoryId} />
     </div>
   );
 }
 
-/** Toggle + greyed-out list of the repo's archived tasks, below the active ones. */
-function ArchivedTasksSection({ repositoryId }: { repositoryId: string }) {
-  const [showArchived, setShowArchived] = useState(false);
-  const archivedQuery = useTasks(repositoryId, { archived: true, enabled: showArchived });
-  const archived = archivedQuery.data ?? [];
-  return (
-    <div className="pl-2">
-      <button
-        type="button"
-        onClick={() => setShowArchived((value) => !value)}
-        className="text-[11px] text-muted-foreground/70 hover:text-muted-foreground"
-      >
-        {showArchived ? 'Hide archived' : 'Show archived'}
-      </button>
-      {showArchived && archived.length > 0 && (
-        <ul className="mt-0.5 flex flex-col gap-0.5">
-          {archived.map((task) => (
-            <ArchivedTaskRow key={task.id} task={task} />
-          ))}
-        </ul>
-      )}
-    </div>
-  );
-}
+/** How many archived tasks the repo tree previews before "show more". */
+const ARCHIVED_PREVIEW_COUNT = 5;
 
-/** Greyed-out archived task with an unarchive action; not selectable. */
-function ArchivedTaskRow({ task }: { task: Task }) {
+/** Always-visible group with the repo's latest archived tasks; "show more" opens the full view. */
+function ArchivedTasksGroup({ repositoryId }: { repositoryId: string }) {
+  const { openArchived } = useWorkspaceSelection();
+  const archivedQuery = useTasks(repositoryId, { archived: true });
+  const archived = sortByArchivedAtDesc(archivedQuery.data ?? []);
+  if (archived.length === 0) return null;
   return (
-    <li className="flex items-center gap-2 rounded-md px-2 py-1 text-xs text-muted-foreground/70">
-      <span className="min-w-0 flex-1 truncate">{task.title}</span>
-      <StatusBadge status={task.status} className="px-1.5 py-0 text-[10px] opacity-70" />
-      <UnarchiveTaskButton task={task} />
-    </li>
+    <TaskGroup label="Archived">
+      {archived.slice(0, ARCHIVED_PREVIEW_COUNT).map((task) => (
+        <ArchivedTaskRow key={task.id} task={task} />
+      ))}
+      <li className="flex justify-end px-1">
+        <button
+          type="button"
+          onClick={() => openArchived(repositoryId)}
+          className="text-[11px] text-muted-foreground/70 hover:text-muted-foreground"
+        >
+          Show more
+        </button>
+      </li>
+    </TaskGroup>
   );
 }
 
@@ -231,31 +222,6 @@ function ArchiveTaskButton({ task }: { task: Task }) {
         <Loader2 className="h-3 w-3 animate-spin" />
       ) : (
         <Archive className="h-3 w-3" />
-      )}
-    </Button>
-  );
-}
-
-/** Unarchive button that brings an archived task back to the lists. */
-function UnarchiveTaskButton({ task }: { task: Task }) {
-  const unarchiveTask = useUnarchiveTask();
-  return (
-    <Button
-      variant="ghost"
-      size="icon"
-      className="h-5 w-5 shrink-0"
-      aria-label={`Unarchive ${task.title}`}
-      title="Unarchive"
-      disabled={unarchiveTask.isPending}
-      onClick={(event) => {
-        event.stopPropagation();
-        unarchiveTask.mutate(task.id);
-      }}
-    >
-      {unarchiveTask.isPending ? (
-        <Loader2 className="h-3 w-3 animate-spin" />
-      ) : (
-        <ArchiveRestore className="h-3 w-3" />
       )}
     </Button>
   );

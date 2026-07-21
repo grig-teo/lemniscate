@@ -68,6 +68,19 @@ export function autoMergeViolation(flags: {
   return flags.autoMergePr === true && !flags.autoReviewPr;
 }
 
+// True when any queued generate-proposals job targets this repository —
+// used by the proposals/status endpoint to flag in-flight generation.
+export function isGeneratingProposals(
+  jobs: Array<{ name: string; data?: unknown }>,
+  repositoryId: string,
+): boolean {
+  return jobs.some((job) => {
+    if (job.name !== 'generate-proposals') return false;
+    const data = job.data as { repositoryId?: unknown } | undefined;
+    return data?.repositoryId === repositoryId;
+  });
+}
+
 async function ownedLlmConfigExists(userId: string, llmConfigId: string): Promise<boolean> {
   const llmConfig = await prisma.llmConfig.findFirst({
     where: { id: llmConfigId, userId },
@@ -184,6 +197,29 @@ const repositoriesRoutes: FastifyPluginAsync = async (app) => {
       return reply.code(502).send({ error: 'Failed to enqueue proposal generation' });
     }
     return reply.code(202).send({ enqueued: true });
+  });
+
+  // Poll endpoint: is a generate-proposals job for this repo in flight?
+  app.get('/repositories/:id/proposals/status', async (request, reply) => {
+    const userId = authenticatedUserId(request);
+    const params = parseOrReply(idParamsSchema, request.params, reply, 'Invalid repository id');
+    if (params === null) return;
+
+    const repository = await prisma.repository.findFirst({
+      where: { id: params.id, connection: { userId } },
+      select: { id: true },
+    });
+    if (!repository) {
+      return reply.code(404).send({ error: 'Repository not found' });
+    }
+    try {
+      const scheduler = await import('../lib/proposal-scheduler.js');
+      const jobs = await scheduler.getAgentTasksQueue().getJobs(['active', 'waiting', 'delayed']);
+      return { generating: isGeneratingProposals(jobs, repository.id) };
+    } catch (err) {
+      request.log.error({ err }, 'failed to read proposal generation status');
+      return reply.code(502).send({ error: 'Failed to read proposal generation status' });
+    }
   });
 };
 
