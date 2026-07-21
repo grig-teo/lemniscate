@@ -100,6 +100,7 @@ beforeEach(() => {
   mocks.config.AGENT_EXECUTOR = 'hermes';
   mocks.loadTaskWithRepo.mockResolvedValue(stubTask());
   mocks.prepareAgentRuntime.mockResolvedValue({ cloneUrl: 'https://clone', rt: stubRuntime() });
+  mocks.cloneRepository.mockResolvedValue({ emptyRepo: false });
   mocks.generateBranchName.mockResolvedValue('lemniscate/add-feature-x');
   mocks.hasDirtyWorkdir.mockResolvedValue(true);
   mocks.buildPrBody.mockReturnValue('pr body');
@@ -185,5 +186,21 @@ describe('runTask with AGENT_EXECUTOR=internal', () => {
     expect(mocks.applyChanges).toHaveBeenCalled();
     expect(mocks.commitAndPush).toHaveBeenCalled();
     expect(mocks.openPullRequest).toHaveBeenCalled();
+  });
+});
+
+describe('runTask on an empty repository', () => {
+  it('bootstraps on the default branch and finishes without a PR', async () => {
+    mocks.cloneRepository.mockResolvedValue({ emptyRepo: true });
+    await runTask('task-1');
+
+    expect(mocks.runHermesTask).toHaveBeenCalledTimes(1);
+    expect(mocks.generateBranchName).not.toHaveBeenCalled();
+    expect(mocks.taskUpdate).toHaveBeenCalledWith({
+      where: { id: 'task-1' },
+      data: { branchName: 'main' },
+    });
+    expect(mocks.openPullRequest).not.toHaveBeenCalled();
+    expect(mocks.setTaskStatus).toHaveBeenCalledWith('task-1', 'done');
   });
 });

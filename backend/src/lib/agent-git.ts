@@ -73,25 +73,65 @@ export function sanitizeRelativePath(rawPath: string): string {
   return normalized;
 }
 
+// Empty repositories have no branch to clone; detect that specific failure
+// so the caller can fall back to initializing a fresh repo. Single home —
+// agent-proposals uses it too.
+export function isEmptyRepoCloneError(err: unknown): boolean {
+  return (
+    err instanceof Error && /Remote branch .+ not found|couldn't find remote ref/.test(err.message)
+  );
+}
+
+export interface CloneResult {
+  emptyRepo: boolean;
+}
+
+// A clone of a branchless (empty) remote cannot work; bootstrap a local
+// repo on the default branch with origin set instead.
+async function initEmptyRepository(
+  workdir: string,
+  cloneUrl: string,
+  defaultBranch: string,
+  secrets: string[],
+  taskId?: string,
+): Promise<void> {
+  await fs.rm(workdir, { recursive: true, force: true });
+  await fs.mkdir(workdir, { recursive: true });
+  await git(['init', '-b', defaultBranch], { cwd: workdir, taskId });
+  await git(['remote', 'add', 'origin', cloneUrl], { cwd: workdir, secrets, taskId });
+  if (taskId) {
+    await logEvent(taskId, 'remote is empty — initialized a fresh repository').catch(() => {});
+  }
+}
+
 export async function cloneRepository(
   workdir: string,
   cloneUrl: string,
   defaultBranch: string,
   secrets: string[],
   options: { shallow?: boolean; taskId?: string } = {},
-): Promise<void> {
+): Promise<CloneResult> {
   await fs.rm(workdir, { recursive: true, force: true });
   await fs.mkdir(path.dirname(workdir), { recursive: true });
   const depthArgs = options.shallow === false ? [] : ['--depth', '1'];
-  await git(['clone', ...depthArgs, '--branch', defaultBranch, cloneUrl, workdir], {
-    secrets,
-    taskId: options.taskId,
-  });
+  try {
+    await git(['clone', ...depthArgs, '--branch', defaultBranch, cloneUrl, workdir], {
+      secrets,
+      taskId: options.taskId,
+    });
+  } catch (err) {
+    if (!isEmptyRepoCloneError(err)) throw err;
+    await initEmptyRepository(workdir, cloneUrl, defaultBranch, secrets, options.taskId);
+    await git(['config', 'user.name', GIT_USER_NAME], { cwd: workdir, taskId: options.taskId });
+    await git(['config', 'user.email', GIT_USER_EMAIL], { cwd: workdir, taskId: options.taskId });
+    return { emptyRepo: true };
+  }
   await git(['config', 'user.name', GIT_USER_NAME], { cwd: workdir, taskId: options.taskId });
   await git(['config', 'user.email', GIT_USER_EMAIL], { cwd: workdir, taskId: options.taskId });
   if (options.taskId) {
     await logEvent(options.taskId, `clone complete (${defaultBranch})`).catch(() => {});
   }
+  return { emptyRepo: false };
 }
 
 export async function hasDirtyWorkdir(workdir: string): Promise<boolean> {

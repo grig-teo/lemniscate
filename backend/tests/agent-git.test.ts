@@ -6,7 +6,7 @@ vi.mock('../src/lib/task-events.js', () => ({
   publishTaskEvent: mocks.publishTaskEvent,
 }));
 
-import { git, sanitizeRelativePath } from '../src/lib/agent-git.js';
+import { cloneRepository, git, sanitizeRelativePath } from '../src/lib/agent-git.js';
 
 // Locking tests for the LLM-path safety check extracted from agent-loop.ts,
 // plus the git() console logging: every command echoes a redacted
@@ -56,5 +56,47 @@ describe('git() console logging', () => {
     const line = mocks.publishTaskEvent.mock.calls[0]?.[2].line as string;
     expect(line).toBe('$ git clone [redacted] /nonexistent-dir');
     expect(line).not.toContain('super-secret-token');
+  });
+});
+
+describe('cloneRepository empty-repo fallback', () => {
+  it('inits a fresh repo when the remote has no branches', async () => {
+    const fs = await import('node:fs/promises');
+    const os = await import('node:os');
+    const path = await import('node:path');
+    const tmp = await fs.mkdtemp(path.join(os.tmpdir(), 'clone-empty-'));
+    try {
+      const remote = path.join(tmp, 'remote.git');
+      await git(['init', '--bare', remote]);
+      const workdir = path.join(tmp, 'work');
+      const result = await cloneRepository(workdir, remote, 'master', []);
+      expect(result.emptyRepo).toBe(true);
+      const branch = await git(['branch', '--show-current'], { cwd: workdir });
+      expect(branch.trim()).toBe('master');
+      const origin = await git(['remote', 'get-url', 'origin'], { cwd: workdir });
+      expect(origin.trim()).toBe(remote);
+    } finally {
+      await fs.rm(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it('clones normally when the remote has the branch', async () => {
+    const fs = await import('node:fs/promises');
+    const os = await import('node:os');
+    const path = await import('node:path');
+    const tmp = await fs.mkdtemp(path.join(os.tmpdir(), 'clone-normal-'));
+    try {
+      const seed = path.join(tmp, 'seed');
+      await git(['init', '-b', 'main', seed]);
+      await git(['config', 'user.email', 't@t'], { cwd: seed });
+      await git(['config', 'user.name', 't'], { cwd: seed });
+      await fs.writeFile(path.join(seed, 'a.txt'), 'a');
+      await git(['add', '.'], { cwd: seed });
+      await git(['commit', '-m', 'init'], { cwd: seed });
+      const result = await cloneRepository(path.join(tmp, 'work'), seed, 'main', []);
+      expect(result.emptyRepo).toBe(false);
+    } finally {
+      await fs.rm(tmp, { recursive: true, force: true });
+    }
   });
 });

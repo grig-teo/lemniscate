@@ -38,12 +38,22 @@ async function cloneForTask(
   workdir: string,
   cloneUrl: string,
   secrets: string[],
-): Promise<void> {
+): Promise<boolean> {
   const { repository } = task;
   await logEvent(task.id, `cloning ${repository.fullName} (${repository.defaultBranch})`);
-  await cloneRepository(workdir, cloneUrl, repository.defaultBranch, secrets, {
+  const { emptyRepo } = await cloneRepository(workdir, cloneUrl, repository.defaultBranch, secrets, {
     taskId: task.id,
   });
+  return emptyRepo;
+}
+
+// An empty repository has no base for a task branch or PR: work directly on
+// the default branch and finish after the push.
+async function prepareEmptyRepoBranch(task: TaskWithRepo): Promise<string> {
+  const branchName = task.repository.defaultBranch;
+  await logEvent(task.id, `bootstrapping empty repository on ${branchName}`);
+  await prisma.task.update({ where: { id: task.id }, data: { branchName } });
+  return branchName;
 }
 
 async function createTaskBranch(
@@ -207,8 +217,10 @@ async function executeRunTask(
   );
   await setTaskStatus(task.id, 'running');
   await logEvent(task.id, `starting task "${task.title}" on ${task.repository.fullName}`);
-  await cloneForTask(task, workdir, cloneUrl, secrets);
-  const branchName = await createTaskBranch(task, rt, workdir);
+  const emptyRepo = await cloneForTask(task, workdir, cloneUrl, secrets);
+  const branchName = emptyRepo
+    ? await prepareEmptyRepoBranch(task)
+    : await createTaskBranch(task, rt, workdir);
   const summary = await implementTask(task, rt, workdir, secrets);
   if (summary === null) {
     await logEvent(task.id, 'no changes produced; nothing to commit');
@@ -216,6 +228,11 @@ async function executeRunTask(
     return rt;
   }
   await pushBranch(task, rt, workdir, branchName, summary, secrets);
+  if (emptyRepo) {
+    await logEvent(task.id, `empty repository bootstrapped on ${branchName}; no PR opened`);
+    await setTaskStatus(task.id, 'done');
+    return rt;
+  }
   await finalizeRunTask(task, rt, branchName, summary);
   return rt;
 }
