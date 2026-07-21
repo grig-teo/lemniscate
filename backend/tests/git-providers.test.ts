@@ -241,10 +241,10 @@ describe('assertRepoPushAccess', () => {
     );
   });
 
-  it('uses namespace_access for GitLab when project_access is absent', async () => {
+  it('uses group_access for GitLab when project_access is absent', async () => {
     stubFetch(() =>
       jsonResponse({
-        permissions: { project_access: null, namespace_access: { access_level: 40 } },
+        permissions: { project_access: null, group_access: { access_level: 50 } },
       }),
     );
     await expect(assertRepoPushAccess('gitlab', 'tok', 'acme/repo')).resolves.toBeUndefined();

@@ -157,13 +157,20 @@ async function githubProfile(token: string): Promise<ProviderProfile> {
 }
 
 // Shared failure for the push pre-flight: one message shape for every
-// provider so the task error always tells the user how to fix it.
-function noPushAccessError(provider: string, repoFullName: string, detail?: string): ProviderError {
+// provider so the task error always tells the user how to fix it, with a
+// provider-specific hint (a GitHub hint in a GitLab error misleads).
+const PUSH_ACCESS_HINTS: Record<ProviderName, string> = {
+  github: `'repo' scope or a fine-grained PAT with Contents: write`,
+  gitlab: `the 'api' scope and a Developer (or higher) role on the project or its group`,
+  gitverse: `a token with write permission on the repository`,
+};
+
+function noPushAccessError(provider: ProviderName, repoFullName: string, detail?: string): ProviderError {
   return new ProviderError(
     `${provider}: the stored token has no write (push) access to ${repoFullName}. ` +
       (detail ? `${detail} ` : '') +
       `Reconnect the ${provider} connection with a token that can write to this repository ` +
-      `(github: 'repo' scope or a fine-grained PAT with Contents: write).`,
+      `(${PUSH_ACCESS_HINTS[provider]}).`,
   );
 }
 
@@ -274,12 +281,13 @@ async function gitlabAssertPushAccess(
   )) as {
     permissions?: {
       project_access?: { access_level?: number } | null;
-      namespace_access?: { access_level?: number } | null;
+      // GitLab reports inherited group membership as `group_access`.
+      group_access?: { access_level?: number } | null;
     };
   };
   const level = Math.max(
     data.permissions?.project_access?.access_level ?? 0,
-    data.permissions?.namespace_access?.access_level ?? 0,
+    data.permissions?.group_access?.access_level ?? 0,
   );
   if (level >= GITLAB_DEVELOPER_ACCESS) return;
   throw noPushAccessError('gitlab', repoFullName);
