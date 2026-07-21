@@ -157,25 +157,25 @@ export function SkillsDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-2xl">
+      <DialogContent className="overflow-hidden sm:max-w-2xl">
         <DialogHeader>
           <DialogTitle>Repository skills</DialogTitle>
-          <DialogDescription>
+          <DialogDescription className="break-words">
             {repository
               ? `Skills for ${repository.fullName} — injected into the agent's system prompt on every task and proposal.`
               : 'Select a repository first.'}
           </DialogDescription>
         </DialogHeader>
 
-        <div className="flex min-h-0 flex-col gap-3">
+        <div className="flex min-w-0 flex-col gap-3">
           <SelectedChips
             selectedSlugs={draft.selectedSlugs}
             skills={skills}
             onRemove={draft.removeSlug}
           />
 
-          <div className="flex items-center gap-2">
-            <div className="relative flex-1">
+          <div className="flex min-w-0 items-center gap-2">
+            <div className="relative min-w-0 flex-1">
               <Search
                 className="pointer-events-none absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground"
                 aria-hidden
@@ -207,7 +207,7 @@ export function SkillsDialog({
           </div>
 
           <ScrollArea className="h-72 rounded-md border">
-            <div className="flex flex-col gap-3 p-2">
+            <div className="flex min-w-0 flex-col gap-3 p-2">
               <SkillGroups
                 skills={skills}
                 selectedSlugs={draft.selectedSlugs}
