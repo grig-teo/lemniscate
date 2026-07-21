@@ -7,7 +7,7 @@ import { useQuery } from '@tanstack/react-query';
 
 import { API_BASE_URL, type TaskEventItem } from '@/lib/hooks';
 import { api } from '@/lib/api';
-import { payloadToLogText, statusFromPayload } from '@/lib/event-payload';
+import { payloadToDiffText, payloadToLogText, statusFromPayload } from '@/lib/event-payload';
 import { useWorkspaceSelection } from '@/lib/selection';
 
 export interface LogLine {
@@ -47,6 +47,13 @@ function parseStreamEvent(data: string): StreamEvent | null {
   }
 }
 
+/** Console text for one event, or null for kinds the console doesn't show. */
+function eventToLogText(kind: string, payload: unknown): string | null {
+  if (kind === 'log') return payloadToLogText(payload);
+  if (kind === 'diff') return payloadToDiffText(payload);
+  return null;
+}
+
 /** Route one stream event to the log list or the status badge. */
 function createEventDispatcher(
   logCounter: React.MutableRefObject<number>,
@@ -59,11 +66,12 @@ function createEventDispatcher(
       if (status) setLiveStatus(status);
       return;
     }
-    if (event.kind !== 'log') return;
+    const text = eventToLogText(event.kind, event.payload);
+    if (text === null) return;
     logCounter.current += 1;
     const line: LogLine = {
       key: event.id ?? `live-${logCounter.current}`,
-      text: payloadToLogText(event.payload),
+      text,
     };
     setLiveLogs((prev) => [...prev, line]);
   };
@@ -142,9 +150,10 @@ export function useTaskConsole(taskId: string | null) {
 
   const historyLogs = React.useMemo<LogLine[]>(
     () =>
-      (historyQuery.data ?? [])
-        .filter((event) => event.kind === 'log')
-        .map((event) => ({ key: event.id, text: payloadToLogText(event.payload) })),
+      (historyQuery.data ?? []).flatMap((event) => {
+        const text = eventToLogText(event.kind, event.payload);
+        return text === null ? [] : [{ key: event.id, text }];
+      }),
     [historyQuery.data],
   );
   const historyStatus = React.useMemo(() => lastHistoryStatus(historyQuery.data), [historyQuery.data]);
