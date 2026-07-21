@@ -32,6 +32,20 @@ export function payloadToLogText(payload: unknown): string {
   return firstStringField(payload, ['message', 'line', 'text']) ?? JSON.stringify(payload);
 }
 
+/**
+ * One-line console text for a `diff` event payload ({ path, diff } or
+ * { path, action }), or null when the shape is off. A diff from /dev/null
+ * means the file was created; any other diff means modified.
+ */
+export function payloadToDiffText(payload: unknown): string | null {
+  const path = firstStringField(payload, ['path']);
+  if (!path) return null;
+  const action = firstStringField(payload, ['action']);
+  if (action) return `✎ ${path} (${action})`;
+  const diff = firstStringField(payload, ['diff']);
+  return `✎ ${path} (${diff?.startsWith('--- /dev/null') ? 'created' : 'modified'})`;
+}
+
 /** Task status carried by a `status` event payload, or null. */
 export function statusFromPayload(payload: unknown): string | null {
   if (typeof payload === 'string') return payload;
