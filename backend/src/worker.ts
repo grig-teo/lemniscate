@@ -5,8 +5,10 @@ import { config } from './config.js';
 import { generateProposals, reviewTask, runTask } from './lib/agent-loop.js';
 import {
   AGENT_QUEUE_NAME,
+  enqueueProposalAutoRuns,
   enqueueProposalTopUps,
   recoverQueuedTasks,
+  registerProposalAutoRunSchedule,
   registerProposalTopUpSchedule,
 } from './lib/proposal-scheduler.js';
 
@@ -47,6 +49,11 @@ const worker = new Worker(
         await enqueueProposalTopUps();
         return;
       }
+      case 'proposals-autorun': {
+        proposalsTopUpDataSchema.parse(job.data);
+        await enqueueProposalAutoRuns();
+        return;
+      }
       default:
         throw new Error(`unknown job name: ${job.name}`);
     }
@@ -63,6 +70,7 @@ console.log(`worker ready, consuming queue '${AGENT_QUEUE_NAME}' via ${config.RE
 
 // Register the single global repeatable 'proposals-topup' job (every 6h).
 await registerProposalTopUpSchedule();
+await registerProposalAutoRunSchedule();
 
 // Re-enqueue any tasks left in 'queued' without a job (crashed/failed
 // enqueues from before the worker came up).

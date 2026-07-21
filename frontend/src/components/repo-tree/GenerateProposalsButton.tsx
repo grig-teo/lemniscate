@@ -1,12 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Sparkles } from 'lucide-react';
 
-import {
-  useGenerateProposals,
-  useProposalGenerationStatus,
-  useRepositories,
-  useTasks,
-} from '@/lib/hooks';
+import { useGenerateProposals, useProposalGenerationStatus, useTasks } from '@/lib/hooks';
 import { isPendingProposal, proposalPollInterval, PROPOSAL_TARGET_COUNT } from '@/lib/repo-tasks';
 import { cn } from '@/lib/utils';
 
@@ -46,7 +41,6 @@ export function GenerateProposalsButton({ repositoryId }: { repositoryId: string
   const tasksQuery = useTasks(repositoryId, {
     refetchInterval: (query) => proposalPollInterval(query.state.data),
   });
-  const repositoriesQuery = useRepositories();
   const generate = useGenerateProposals();
   const statusQuery = useProposalGenerationStatus(repositoryId);
   const pendingCount = (tasksQuery.data ?? []).filter(isPendingProposal).length;
@@ -54,26 +48,11 @@ export function GenerateProposalsButton({ repositoryId }: { repositoryId: string
   // Spin only while generation is actually in flight: just clicked locally,
   // or the backend reports a generate-proposals job running.
   const generating = tracking.generating || (statusQuery.data ?? false);
-  const repo = (repositoriesQuery.data ?? []).find((r) => r.id === repositoryId);
 
-  const fire = () => {
+  const onClick = () => {
     tracking.start();
     generate.mutate(repositoryId, { onError: tracking.stop });
   };
-
-  // Auto-start generation once per mount when the repo is understocked, its
-  // codebase is not empty (bare), and no generation is already in flight.
-  const autoFiredRef = useRef(false);
-  useEffect(() => {
-    if (autoFiredRef.current) return;
-    if (repo?.bare !== false) return;
-    if (tasksQuery.data === undefined || statusQuery.data !== false) return;
-    if (pendingCount >= PROPOSAL_TARGET_COUNT) return;
-    autoFiredRef.current = true;
-    fire();
-  });
-
-  const onClick = fire;
 
   return (
     <button

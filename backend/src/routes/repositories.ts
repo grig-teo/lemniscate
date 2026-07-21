@@ -12,6 +12,7 @@ const patchBodySchema = z
     autoCreatePr: z.boolean().optional(),
     autoReviewPr: z.boolean().optional(),
     autoMergePr: z.boolean().optional(),
+    autoRunProposals: z.boolean().optional(),
     hidden: z.boolean().optional(),
     // null explicitly detaches the LLM config.
     llmConfigId: z.string().min(1).nullable().optional(),
@@ -41,6 +42,7 @@ export function buildPatchData(data: PatchBody) {
     ...(data.autoCreatePr !== undefined ? { autoCreatePr: data.autoCreatePr } : {}),
     ...(data.autoReviewPr !== undefined ? { autoReviewPr: data.autoReviewPr } : {}),
     ...(data.autoMergePr !== undefined ? { autoMergePr: data.autoMergePr } : {}),
+    ...(data.autoRunProposals !== undefined ? { autoRunProposals: data.autoRunProposals } : {}),
     ...(data.hidden !== undefined ? { hidden: data.hidden } : {}),
     ...(data.llmConfigId !== undefined ? { llmConfigId: data.llmConfigId } : {}),
     ...(data.skillSlugs !== undefined ? { skillSlugs: data.skillSlugs } : {}),

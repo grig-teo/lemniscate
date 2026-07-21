@@ -102,6 +102,7 @@ export type Repository = {
   autoCreatePr: boolean;
   autoReviewPr: boolean;
   autoMergePr: boolean;
+  autoRunProposals: boolean;
   hidden: boolean;
   /** True for near-empty (README-only) repositories — the composer invites a from-scratch app prompt. */
   bare: boolean;
@@ -361,6 +362,7 @@ interface RepoFlagsPatch {
   autoCreatePr?: boolean;
   autoReviewPr?: boolean;
   autoMergePr?: boolean;
+  autoRunProposals?: boolean;
 }
 
 /** PATCH /api/repositories/:id with an optimistic cache update. */
@@ -392,8 +394,9 @@ export function useUpdateRepositoryFlags() {
 export function useUpdateAllRepositoryFlags() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (flags: Required<RepoFlagsPatch>) =>
-      api.post<{ updated: number }>('/api/repositories/flags', { ...flags }),
+    mutationFn: (
+      flags: Required<Pick<RepoFlagsPatch, 'autoCreatePr' | 'autoReviewPr' | 'autoMergePr'>>,
+    ) => api.post<{ updated: number }>('/api/repositories/flags', { ...flags }),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['repositories'] });
     },

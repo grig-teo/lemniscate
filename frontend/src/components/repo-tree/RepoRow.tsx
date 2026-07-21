@@ -75,6 +75,12 @@ function RepoFlags({ repo }: { repo: Repository }) {
         disabledTitle="Enable auto-review first"
         onChange={(checked) => patch({ autoMergePr: checked })}
       />
+      <FlagSwitch
+        label="auto-run"
+        ariaLabel={`Auto-run generated proposals for ${repo.fullName} (every 20 min, one at a time)`}
+        checked={repo.autoRunProposals}
+        onChange={(checked) => patch({ autoRunProposals: checked })}
+      />
     </div>
   );
 }

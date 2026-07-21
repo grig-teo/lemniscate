@@ -9,6 +9,9 @@ const mocks = vi.hoisted(() => ({
   upsertJobScheduler: vi.fn().mockResolvedValue(undefined),
   taskGroupBy: vi.fn(),
   taskFindMany: vi.fn(),
+  taskFindFirst: vi.fn(),
+  taskCount: vi.fn(),
+  taskUpdate: vi.fn(),
   repositoryFindMany: vi.fn(),
 }));
 
@@ -21,7 +24,13 @@ vi.mock('bullmq', () => ({
 vi.mock('ioredis', () => ({ Redis: vi.fn() }));
 vi.mock('../src/lib/prisma.js', () => ({
   prisma: {
-    task: { groupBy: mocks.taskGroupBy, findMany: mocks.taskFindMany },
+    task: {
+      groupBy: mocks.taskGroupBy,
+      findMany: mocks.taskFindMany,
+      findFirst: mocks.taskFindFirst,
+      count: mocks.taskCount,
+      update: mocks.taskUpdate,
+    },
     repository: { findMany: mocks.repositoryFindMany },
   },
 }));
@@ -29,8 +38,10 @@ vi.mock('../src/lib/prisma.js', () => ({
 import {
   enqueueRunTask,
   enqueueGenerateProposalsNow,
+  enqueueProposalAutoRuns,
   enqueueProposalTopUps,
   recoverQueuedTasks,
+  registerProposalAutoRunSchedule,
   registerProposalTopUpSchedule,
 } from '../src/lib/proposal-scheduler.js';
 
@@ -62,11 +73,11 @@ describe('enqueueGenerateProposalsNow', () => {
 });
 
 describe('registerProposalTopUpSchedule', () => {
-  it('registers one global repeatable proposals-topup job every 6h', async () => {
+  it('registers one global repeatable proposals-topup job every 10 minutes', async () => {
     await registerProposalTopUpSchedule();
     expect(mocks.upsertJobScheduler).toHaveBeenCalledWith(
       'proposals-topup',
-      { every: 6 * 60 * 60 * 1000 },
+      { every: 10 * 60 * 1000 },
       { name: 'proposals-topup', data: {} },
     );
   });
@@ -132,6 +143,68 @@ describe('enqueueRunTask', () => {
       'run-task',
       { taskId: 'task-1' },
       expect.objectContaining({ removeOnComplete: true, removeOnFail: true }),
+    );
+  });
+});
+
+// proposals-autorun job: for repos with autoRunProposals on, start the oldest
+// pending proposal every 20 min — but only when no proposal of that repo is
+// queued/running yet.
+describe('enqueueProposalAutoRuns', () => {
+  it('queries only repos with the flag on', async () => {
+    mocks.repositoryFindMany.mockResolvedValue([]);
+    await enqueueProposalAutoRuns();
+    expect(mocks.repositoryFindMany).toHaveBeenCalledWith({
+      where: { autoRunProposals: true },
+      select: { id: true },
+    });
+  });
+
+  it('starts the oldest pending proposal when none is queued or running', async () => {
+    mocks.repositoryFindMany.mockResolvedValue([{ id: 'r1' }]);
+    mocks.taskCount.mockResolvedValue(0);
+    mocks.taskFindFirst.mockResolvedValue({ id: 'p1' });
+    await enqueueProposalAutoRuns();
+    expect(mocks.taskFindFirst).toHaveBeenCalledWith({
+      where: { repositoryId: 'r1', kind: 'proposal', status: 'pending' },
+      orderBy: { createdAt: 'asc' },
+      select: { id: true },
+    });
+    expect(mocks.taskUpdate).toHaveBeenCalledWith({
+      where: { id: 'p1' },
+      data: { status: 'queued' },
+    });
+    expect(mocks.add).toHaveBeenCalledWith(
+      'run-task',
+      { taskId: 'p1' },
+      expect.objectContaining({ jobId: 'run-task-p1' }),
+    );
+  });
+
+  it('skips repos that already have a proposal queued or running', async () => {
+    mocks.repositoryFindMany.mockResolvedValue([{ id: 'r1' }]);
+    mocks.taskCount.mockResolvedValue(1);
+    await enqueueProposalAutoRuns();
+    expect(mocks.taskFindFirst).not.toHaveBeenCalled();
+    expect(mocks.add).not.toHaveBeenCalled();
+  });
+
+  it('skips repos with no pending proposals', async () => {
+    mocks.repositoryFindMany.mockResolvedValue([{ id: 'r1' }]);
+    mocks.taskCount.mockResolvedValue(0);
+    mocks.taskFindFirst.mockResolvedValue(null);
+    await enqueueProposalAutoRuns();
+    expect(mocks.add).not.toHaveBeenCalled();
+  });
+});
+
+describe('registerProposalAutoRunSchedule', () => {
+  it('registers the repeatable job every 20 minutes', async () => {
+    await registerProposalAutoRunSchedule();
+    expect(mocks.upsertJobScheduler).toHaveBeenCalledWith(
+      'proposals-autorun',
+      { every: 20 * 60 * 1000 },
+      { name: 'proposals-autorun', data: {} },
     );
   });
 });

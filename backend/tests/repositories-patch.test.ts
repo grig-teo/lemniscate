@@ -28,4 +28,8 @@ describe('buildPatchData', () => {
   it('omits skill fields when they were not sent', () => {
     expect(buildPatchData({ hidden: true })).toEqual({ hidden: true });
   });
+
+  it('passes autoRunProposals through when sent', () => {
+    expect(buildPatchData({ autoRunProposals: true })).toEqual({ autoRunProposals: true });
+  });
 });

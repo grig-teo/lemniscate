@@ -10,8 +10,10 @@ import { prisma } from './prisma.js';
 
 export const AGENT_QUEUE_NAME = 'agent-tasks';
 
-const PROPOSAL_TOPUP_INTERVAL_MS = 6 * 60 * 60 * 1000; // every 6h
+const PROPOSAL_TOPUP_INTERVAL_MS = 10 * 60 * 1000; // every 10 minutes
 const TOPUP_SCHEDULER_ID = 'proposals-topup';
+const AUTORUN_INTERVAL_MS = 20 * 60 * 1000; // every 20 minutes
+const AUTORUN_SCHEDULER_ID = 'proposals-autorun';
 
 let queue: Queue | null = null;
 
@@ -32,6 +34,48 @@ export async function registerProposalTopUpSchedule(): Promise<void> {
     { every: PROPOSAL_TOPUP_INTERVAL_MS },
     { name: 'proposals-topup', data: {} },
   );
+}
+
+// Registers the repeatable 'proposals-autorun' job (every 20 min), which
+// starts pending proposals for repos that opted in via autoRunProposals.
+export async function registerProposalAutoRunSchedule(): Promise<void> {
+  await getAgentTasksQueue().upsertJobScheduler(
+    AUTORUN_SCHEDULER_ID,
+    { every: AUTORUN_INTERVAL_MS },
+    { name: 'proposals-autorun', data: {} },
+  );
+}
+
+// Job: proposals-autorun — for every repo with autoRunProposals on, start the
+// oldest pending proposal, but only when no proposal of that repo is already
+// queued/running (one at a time per repo).
+export async function enqueueProposalAutoRuns(): Promise<void> {
+  const repositories = await prisma.repository.findMany({
+    where: { autoRunProposals: true },
+    select: { id: true },
+  });
+  let started = 0;
+  for (const repository of repositories) {
+    if (await startNextProposal(repository.id)) started += 1;
+  }
+  console.log(`proposals-autorun: started ${started}/${repositories.length} proposal(s)`);
+}
+
+// Returns true when a pending proposal was queued for the repository.
+async function startNextProposal(repositoryId: string): Promise<boolean> {
+  const active = await prisma.task.count({
+    where: { repositoryId, kind: 'proposal', status: { in: ['queued', 'running'] } },
+  });
+  if (active > 0) return false;
+  const next = await prisma.task.findFirst({
+    where: { repositoryId, kind: 'proposal', status: 'pending' },
+    orderBy: { createdAt: 'asc' },
+    select: { id: true },
+  });
+  if (!next) return false;
+  await prisma.task.update({ where: { id: next.id }, data: { status: 'queued' } });
+  await enqueueRunTask(next.id);
+  return true;
 }
 
 // Pending proposal count per repository (repos with none are absent).

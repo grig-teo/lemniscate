@@ -109,6 +109,9 @@ model Repository {
   // review approves it (enforced in the PATCH route).
   autoReviewPr  Boolean      @default(false)
   autoMergePr   Boolean      @default(false)
+  // proposals-autorun job (every 20 min) starts pending proposals one at a
+  // time per repo when this is on; default off.
+  autoRunProposals Boolean   @default(false)
   hidden        Boolean      @default(false)
   // Slugs of skills (Skill model) injected into the agent's system prompt
   // for tasks on this repository; string[] stored as JSON.
