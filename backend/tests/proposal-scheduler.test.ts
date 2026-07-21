@@ -83,6 +83,17 @@ describe('enqueueProposalTopUps', () => {
     const repoIds = mocks.add.mock.calls.map((call) => call[1].repositoryId);
     expect(repoIds).toEqual(['r1', 'r3']);
   });
+
+  it('skips bare (codeless) repositories even when understocked', async () => {
+    mocks.repositoryFindMany.mockResolvedValue([
+      { id: 'r1', bare: false },
+      { id: 'r2', bare: true },
+    ]);
+    mocks.taskGroupBy.mockResolvedValue([]);
+    await enqueueProposalTopUps();
+    const repoIds = mocks.add.mock.calls.map((call) => call[1].repositoryId);
+    expect(repoIds).toEqual(['r1']);
+  });
 });
 
 // Worker-startup recovery: tasks left in 'queued' without a BullMQ job

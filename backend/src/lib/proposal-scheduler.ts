@@ -46,11 +46,14 @@ async function pendingProposalCounts(): Promise<Map<string, number>> {
 
 // Job: proposals-topup — enqueues 'generate-proposals' for every repository
 // below MAX_PENDING_PROPOSALS pending proposals, keeping each repo topped up.
+// Bare repositories (README-only, no implementation) are skipped — there is
+// no codebase to analyze.
 export async function enqueueProposalTopUps(): Promise<void> {
-  const repositories = await prisma.repository.findMany({ select: { id: true } });
+  const repositories = await prisma.repository.findMany({ select: { id: true, bare: true } });
   const counts = await pendingProposalCounts();
   let enqueued = 0;
   for (const repository of repositories) {
+    if (repository.bare) continue;
     if ((counts.get(repository.id) ?? 0) >= MAX_PENDING_PROPOSALS) continue;
     await enqueueGenerateProposalsNow(repository.id);
     enqueued += 1;
