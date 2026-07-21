@@ -1,5 +1,5 @@
-import type { ReactNode } from 'react';
-import { Archive, Loader2, Play, RotateCcw } from 'lucide-react';
+import { useState, type ReactNode } from 'react';
+import { Archive, ChevronDown, ChevronRight, Loader2, Play, RotateCcw } from 'lucide-react';
 
 import {
   useArchiveTask,
@@ -68,27 +68,44 @@ function TaskGroups({ repositoryId, tasks }: { repositoryId: string; tasks: Task
 /** How many archived tasks the repo tree previews before "show more". */
 const ARCHIVED_PREVIEW_COUNT = 5;
 
-/** Always-visible group with the repo's latest archived tasks; "show more" opens the full view. */
+/** Collapsible group with the repo's latest archived tasks; "show more" opens the full view. */
 function ArchivedTasksGroup({ repositoryId }: { repositoryId: string }) {
   const { openArchived } = useWorkspaceSelection();
+  const [collapsed, setCollapsed] = useState(true);
   const archivedQuery = useTasks(repositoryId, { archived: true });
   const archived = sortByArchivedAtDesc(archivedQuery.data ?? []);
   if (archived.length === 0) return null;
+  const Chevron = collapsed ? ChevronRight : ChevronDown;
   return (
-    <TaskGroup label="Archived">
-      {archived.slice(0, ARCHIVED_PREVIEW_COUNT).map((task) => (
-        <ArchivedTaskRow key={task.id} task={task} />
-      ))}
-      <li className="flex justify-end px-1">
+    <section>
+      <div className="flex items-center gap-2 py-0.5 pl-2 pr-1">
         <button
           type="button"
-          onClick={() => openArchived(repositoryId)}
-          className="text-[11px] text-muted-foreground/70 hover:text-muted-foreground"
+          onClick={() => setCollapsed((value) => !value)}
+          aria-expanded={!collapsed}
+          className="flex flex-1 items-center gap-1.5 text-left text-[10px] font-medium uppercase tracking-wide text-muted-foreground/70 hover:text-muted-foreground"
         >
-          Show more
+          <Chevron className="h-3 w-3 shrink-0" aria-hidden />
+          Archived ({archived.length})
         </button>
-      </li>
-    </TaskGroup>
+      </div>
+      {!collapsed && (
+        <ul className="flex flex-col gap-0.5">
+          {archived.slice(0, ARCHIVED_PREVIEW_COUNT).map((task) => (
+            <ArchivedTaskRow key={task.id} task={task} />
+          ))}
+          <li className="flex justify-end px-1">
+            <button
+              type="button"
+              onClick={() => openArchived(repositoryId)}
+              className="text-[11px] text-muted-foreground/70 hover:text-muted-foreground"
+            >
+              Show more
+            </button>
+          </li>
+        </ul>
+      )}
+    </section>
   );
 }
 
