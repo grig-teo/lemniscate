@@ -101,6 +101,8 @@ production line is deleted or rewritten.
 docker-compose.yml    # postgres, redis, backend, worker, frontend
 backend/              # Fastify API + BullMQ worker (npm run build / npm test)
 frontend/             # Vite/React app (npm run build = tsc --noEmit && vite build)
+android/              # native Android app, Kotlin + Compose Material 3 (gradle assembleDebug)
+ios/                  # native iOS app, SwiftUI glass design (xcodebuild -scheme Lemniscate)
 scripts/              # install-linux.sh / install-macos.sh one-command deploy
 landing/              # static landing page
 docs/                 # design specs

@@ -1,0 +1,13 @@
+// Base build settings for the Lemniscate iOS app.
+//
+// Local overrides live in Config.xcconfig (git-ignored): copy
+// Config.example.xcconfig to Config.xcconfig and adjust. The optional include
+// below comes last, so values in Config.xcconfig win over the defaults here.
+//
+// NOTE: xcconfig treats "//" as a comment, so URLs use "$()" for the second
+// slash: https:/$()/host/path
+
+// Default backend URL (no trailing slash).
+SERVER_URL = https:/$()/grig-teo.space/lemniscate
+
+#include? "Config.xcconfig"

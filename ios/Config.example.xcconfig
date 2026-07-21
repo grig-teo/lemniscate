@@ -1,0 +1,10 @@
+// Local configuration for the Lemniscate iOS app.
+// Copy this file to Config.xcconfig (git-ignored) and adjust as needed.
+// Config.xcconfig is optionally included from Base.xcconfig; values here
+// override the defaults there.
+//
+// NOTE: xcconfig treats "//" as a comment, so write URLs with "$()" for the
+// second slash: https:/$()/host/path
+
+// Base URL of the deployed lemniscate backend (no trailing slash).
+SERVER_URL = https:/$()/grig-teo.space/lemniscate

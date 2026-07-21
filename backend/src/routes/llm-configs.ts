@@ -155,6 +155,7 @@ async function listConfigs(request: FastifyRequest) {
 async function createConfig(request: FastifyRequest, reply: FastifyReply) {
   const data = parseOrReply(createSchema, request.body, reply, 'Invalid request body', {
     includeIssues: true,
+    request,
   });
   if (data === null) return;
   const { apiKey, ...fields } = data;
@@ -192,6 +193,7 @@ async function updateConfig(request: FastifyRequest, reply: FastifyReply) {
   }
   const data = parseOrReply(updateSchema, request.body, reply, 'Invalid request body', {
     includeIssues: true,
+    request,
   });
   if (data === null) return;
   const { apiKey, ...fields } = data;
@@ -224,6 +226,7 @@ async function deleteConfig(request: FastifyRequest, reply: FastifyReply) {
 async function testUnsavedConfig(request: FastifyRequest, reply: FastifyReply) {
   const data = parseOrReply(testSchema, request.body, reply, 'Invalid request body', {
     includeIssues: true,
+    request,
   });
   if (data === null) return;
   const { apiKey, thinkingLevel, customHeaders, ...fields } = data;

@@ -33,6 +33,28 @@ export class ApiError extends Error {
   }
 }
 
+interface ZodIssueLike {
+  path?: (string | number)[];
+  message?: string;
+}
+
+function issueSummary(issue: ZodIssueLike): string {
+  const path = Array.isArray(issue.path) ? issue.path.join('.') : '';
+  return path ? `${path}: ${issue.message}` : String(issue.message);
+}
+
+/**
+ * Human-readable error text: appends the server's zod validation issues
+ * (sent as `details.issues` on 400s) so users see WHICH field failed.
+ */
+export function describeApiError(error: Error): string {
+  if (!(error instanceof ApiError)) return error.message;
+  const issues = (error.details as { issues?: ZodIssueLike[] } | undefined)?.issues;
+  if (!Array.isArray(issues) || issues.length === 0) return error.message;
+  const summary = issues.slice(0, 3).map(issueSummary).join('; ');
+  return `${error.message} — ${summary}`;
+}
+
 type JsonBody = Record<string, unknown> | unknown[] | undefined;
 
 async function parseErrorMessage(res: Response): Promise<{ message: string; details?: unknown }> {

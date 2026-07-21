@@ -3,6 +3,7 @@ import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
 import { FormField } from '@/components/ui/form-field';
 import type { LlmConfig } from '@/lib/hooks';
+import { describeApiError } from '@/lib/api';
 import type { FormState } from '@/lib/llm-config-form';
 
 import { LlmConfigFields } from '@/components/settings/LlmConfigFields';
@@ -99,7 +100,7 @@ export function LlmConfigForm({ initial, onDone }: { initial?: LlmConfig; onDone
       <FlagSwitches form={state.form} set={state.set} />
 
       {state.formError && <p className="text-sm text-destructive">{state.formError}</p>}
-      {state.saveError && <p className="text-sm text-destructive">{state.saveError.message}</p>}
+      {state.saveError && <p className="text-sm text-destructive">{describeApiError(state.saveError)}</p>}
       {state.testResult && <TestResultBanner result={state.testResult} />}
 
       <FormActions

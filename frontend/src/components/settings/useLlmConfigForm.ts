@@ -9,6 +9,7 @@ import {
   type LlmTestResult,
 } from '@/lib/hooks';
 import { buildPayload, DEFAULTS, fromConfig, type FormState } from '@/lib/llm-config-form';
+import { describeApiError } from '@/lib/api';
 
 export type SetField = <K extends keyof FormState>(field: K, value: FormState[K]) => void;
 
@@ -75,7 +76,7 @@ function useTestConnection(
     if (!payload) return;
     const callbacks = {
       onSuccess: (result: LlmTestResult) => setTestResult(result),
-      onError: (error: Error) => setTestResult({ ok: false, error: error.message }),
+      onError: (error: Error) => setTestResult({ ok: false, error: describeApiError(error) }),
     };
     if (initial && !form.apiKey) {
       testConfig.mutate({ id: initial.id }, callbacks);
