@@ -185,7 +185,7 @@ function ComposerRepoSelect({
 }) {
   return (
     <Select value={repositoryId} onValueChange={onChange} disabled={repositories.length === 0}>
-      <SelectTrigger className="h-8 w-48 shrink-0" aria-label="Repository">
+      <SelectTrigger className="h-8 w-40 shrink-0" aria-label="Repository">
         <SelectValue placeholder="Select a repository…" />
       </SelectTrigger>
       <SelectContent>
@@ -217,7 +217,7 @@ function LlmConfigSelect({
       onValueChange={(v) => onChange(v === 'default' ? null : v)}
       disabled={configs.length === 0}
     >
-      <SelectTrigger className="h-8 w-44 shrink-0" aria-label="Model">
+      <SelectTrigger className="h-8 w-40 shrink-0" aria-label="Model">
         <SelectValue />
       </SelectTrigger>
       <SelectContent>
@@ -396,7 +396,7 @@ function submitOnCmdEnter(event: React.KeyboardEvent<HTMLTextAreaElement>, submi
 
 function ComposerToolbar({ composer }: { composer: ReturnType<typeof useTaskComposer> }) {
   return (
-    <div className="flex items-end gap-2 px-2 pb-2">
+    <div className="flex flex-wrap items-end gap-2 px-2 pb-2">
       <FormField label="Repository (the agent clones this repo and implements the task there)">
         <ComposerRepoSelect
           repositories={composer.repositories}
