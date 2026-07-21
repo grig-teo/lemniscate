@@ -573,15 +573,16 @@ async function giteeProfile(token: string): Promise<ProviderProfile> {
   return { username: data.login };
 }
 
-// Gitee reports the authenticated user's permissions on the repo payload;
-// unlike GitHub OAuth tokens there is no scope-header footgun to check.
+// Gitee's repo payload carries NO permissions object (unlike GitHub), so
+// absence means "cannot determine" and passes — only an explicit
+// permissions.push === false blocks the job.
 async function giteeAssertPushAccess(token: string, repoFullName: string): Promise<void> {
   const data = (await requestJson(
     `${GITEE_API}/repos/${repoFullName}`,
     giteeHeaders(token),
     'gitee',
   )) as { permissions?: { push?: boolean } };
-  if (data.permissions?.push !== true) {
+  if (data.permissions?.push === false) {
     throw noPushAccessError('gitee', repoFullName);
   }
 }

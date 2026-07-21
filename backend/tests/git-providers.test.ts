@@ -423,7 +423,7 @@ describe('gitee API client', () => {
     expect(repos[100]).toMatchObject({ externalId: '100', defaultBranch: 'dev' });
   });
 
-  it('passes the push pre-flight on permissions.push, throws otherwise', async () => {
+  it('passes the push pre-flight unless permissions explicitly deny push', async () => {
     stubFetch((url) => {
       expect(url).toBe('https://gitee.com/api/v5/repos/acme/repo');
       return jsonResponse({ full_name: 'acme/repo', permissions: { push: true } });
@@ -435,10 +435,10 @@ describe('gitee API client', () => {
       ProviderError,
     );
 
+    // Gitee's repo payload carries no permissions object at all — absence
+    // means "cannot determine" and must not block the job.
     stubFetch(() => jsonResponse({ full_name: 'acme/repo' }));
-    await expect(assertRepoPushAccess('gitee', 'tok', 'acme/repo')).rejects.toBeInstanceOf(
-      ProviderError,
-    );
+    await expect(assertRepoPushAccess('gitee', 'tok', 'acme/repo')).resolves.toBeUndefined();
   });
 });
 
