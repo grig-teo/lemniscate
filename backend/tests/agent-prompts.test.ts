@@ -3,13 +3,11 @@ import type { Task } from '@prisma/client';
 import {
   agentSystemPrompt,
   buildPrBody,
-  buildSkillsSection,
   changesUserContent,
   changesUserMessage,
   commitMessageFromResponse,
   fallbackBranchSlug,
   maxBranchSlugLength,
-  MAX_SKILLS_SECTION_CHARS,
   proposalsSystemPrompt,
   requestChanges,
   slugify,

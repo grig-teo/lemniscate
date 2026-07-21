@@ -4,7 +4,6 @@ import cors from '@fastify/cors';
 import { config } from './config.js';
 import apiRoutes from './routes/index.js';
 import llmConfigRoutes from './routes/llm-configs.js';
-import skillsRoutes from './routes/skills.js';
 import tasksRoutes from './routes/tasks.js';
 
 const app = Fastify({
@@ -22,7 +21,6 @@ await app.register(cors, {
 // Auth, git connections, repositories (prefixed /api inside the plugin).
 await app.register(apiRoutes);
 await app.register(llmConfigRoutes, { prefix: '/api/llm-configs' });
-await app.register(skillsRoutes, { prefix: '/api/skills' });
 // tasks.ts declares its routes as `/tasks...` (same convention as
 // repositories.ts), so it mounts under /api, not /api/tasks.
 await app.register(tasksRoutes, { prefix: '/api' });
