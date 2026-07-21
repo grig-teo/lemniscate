@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import type { Task } from '@/lib/hooks';
 import {
   groupRepoTasks,
+  isArchivable,
   isStartableTask,
   proposalPollInterval,
   PROPOSAL_POLL_INTERVAL_MS,
@@ -16,6 +17,7 @@ function makeTask(overrides: Partial<Task>): Task {
     kind: 'proposal',
     title: 'Do a thing',
     status: 'pending',
+    archivedAt: null,
     createdAt: '2024-01-01T00:00:00Z',
     updatedAt: '2024-01-01T00:00:00Z',
     ...overrides,
@@ -77,5 +79,17 @@ describe('isStartableTask', () => {
   it('rejects started tasks and other kinds', () => {
     expect(isStartableTask(makeTask({ status: 'queued' }))).toBe(false);
     expect(isStartableTask(makeTask({ kind: 'review' }))).toBe(false);
+  });
+});
+
+// Archive availability mirrors the backend: anything except running and
+// queued (about to run) tasks can be archived.
+describe('isArchivable', () => {
+  it.each(['running', 'queued'])('rejects %s tasks', (status) => {
+    expect(isArchivable(status)).toBe(false);
+  });
+
+  it.each(['pending', 'awaiting_review', 'done', 'failed'])('allows %s tasks', (status) => {
+    expect(isArchivable(status)).toBe(true);
   });
 });

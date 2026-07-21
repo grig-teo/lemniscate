@@ -72,6 +72,18 @@ export function parseProposalsFile(raw: string): LlmProposals | null {
 
 type PendingProposalState = { titles: Set<string>; pendingCount: number };
 
+// Pure core of loadPendingProposalState: dedupe titles come from ALL
+// pending/queued proposals (archived ones included — don't re-propose what
+// the user archived), but only non-archived pendings count toward the
+// top-up cap.
+export function pendingProposalState(
+  rows: Array<{ title: string; status: string; archivedAt?: Date | null }>,
+): PendingProposalState {
+  const titles = new Set(rows.map((t) => t.title.trim().toLowerCase()));
+  const pendingCount = rows.filter((t) => t.status === 'pending' && !t.archivedAt).length;
+  return { titles, pendingCount };
+}
+
 // Titles of proposals already pending/queued for this repo (normalized), so
 // re-runs do not pile up duplicates, plus the pending count for the top-up cap.
 async function loadPendingProposalState(repositoryId: string): Promise<PendingProposalState> {
@@ -81,11 +93,9 @@ async function loadPendingProposalState(repositoryId: string): Promise<PendingPr
       kind: 'proposal',
       status: { in: ['pending', 'queued'] },
     },
-    select: { title: true, status: true },
+    select: { title: true, status: true, archivedAt: true },
   });
-  const titles = new Set(existing.map((t) => t.title.trim().toLowerCase()));
-  const pendingCount = existing.filter((t) => t.status === 'pending').length;
-  return { titles, pendingCount };
+  return pendingProposalState(existing);
 }
 
 function proposalTaskData(repository: RepositoryWithConnection, proposal: LlmProposals[number]) {

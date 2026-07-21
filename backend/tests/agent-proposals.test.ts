@@ -59,6 +59,7 @@ import {
   buildHermesProposalPrompt,
   generateProposals,
   parseProposalsFile,
+  pendingProposalState,
 } from '../src/lib/agent-proposals.js';
 
 type RepositoryWithConnection = Repository & { connection: GitConnection };
@@ -165,6 +166,45 @@ describe('generateProposals', () => {
     await generateProposals('repo-1');
     expect(mocks.requestProposals).toHaveBeenCalled();
     expect(mocks.taskCreate).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not re-propose an archived title, but archived pendings do not fill the cap', async () => {
+    stubHappyPath([proposal(1), proposal(2)]);
+    mocks.taskFindMany.mockResolvedValue([
+      { title: 'Proposal 1', status: 'pending', archivedAt: new Date() },
+    ]);
+    await generateProposals('repo-1');
+    expect(mocks.taskCreate).toHaveBeenCalledTimes(1);
+    expect(mocks.taskCreate.mock.calls[0]?.[0].data.title).toBe('Proposal 2');
+  });
+
+  it('does not bail early when the 5 pending proposals are all archived', async () => {
+    stubHappyPath([proposal(1)]);
+    mocks.taskFindMany.mockResolvedValue(
+      [1, 2, 3, 4, 5].map((i) => ({ title: `Old ${i}`, status: 'pending', archivedAt: new Date() })),
+    );
+    await generateProposals('repo-1');
+    expect(mocks.prepareAgentRuntime).toHaveBeenCalled();
+    expect(mocks.taskCreate).toHaveBeenCalledTimes(1);
+  });
+});
+
+// Archived pending proposals keep their title in the dedupe set (don't
+// re-propose what the user archived) but do not count toward the top-up cap.
+describe('pendingProposalState', () => {
+  it('counts only non-archived pending rows while keeping all titles', () => {
+    const state = pendingProposalState([
+      { title: ' Active ', status: 'pending', archivedAt: null },
+      { title: 'Archived', status: 'pending', archivedAt: new Date() },
+      { title: 'Queued', status: 'queued', archivedAt: null },
+    ]);
+    expect(state.pendingCount).toBe(1);
+    expect(state.titles).toEqual(new Set(['active', 'archived', 'queued']));
+  });
+
+  it('treats rows without archivedAt as not archived', () => {
+    const state = pendingProposalState([{ title: 'T', status: 'pending' }]);
+    expect(state.pendingCount).toBe(1);
   });
 });
 

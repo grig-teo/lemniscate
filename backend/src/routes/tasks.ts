@@ -27,6 +27,8 @@ const SSE_HEARTBEAT_MS = 15_000;
 
 const listQuerySchema = z.object({
   repositoryId: z.string().min(1).optional(),
+  // ?archived=true returns ONLY archived tasks; anything else excludes them.
+  archived: z.enum(['true', 'false']).optional(),
 });
 
 const promptSchema = z.string().min(1).max(8000);
@@ -61,6 +63,20 @@ export type StartBody = z.infer<typeof startBodySchema>;
 const idParamsSchema = z.object({ id: z.string().min(1) });
 
 const CANCELLABLE_STATUSES = ['pending', 'queued', 'running'] as const;
+
+// Archive eligibility for POST /tasks/:id/archive: anything except running
+// and queued (about to run) tasks can be archived.
+const UNARCHIVABLE_STATUSES = ['running', 'queued'] as const;
+
+export function isArchivable(status: string): boolean {
+  return !(UNARCHIVABLE_STATUSES as readonly string[]).includes(status);
+}
+
+// GET /tasks archived filter: archived tasks are hidden by default; with
+// ?archived=true ONLY the archived ones are returned.
+export function archivedTasksWhere(archived?: boolean) {
+  return archived ? { archivedAt: { not: null } } : { archivedAt: null };
+}
 
 // Ownership scope: task → repository → connection → user.
 function ownedTaskWhere(userId: string, taskId: string) {
@@ -102,6 +118,7 @@ async function listTasks(request: FastifyRequest, reply: FastifyReply) {
     where: {
       repository: { connection: { userId } },
       ...(query.repositoryId ? { repositoryId: query.repositoryId } : {}),
+      ...archivedTasksWhere(query.archived === 'true'),
     },
     orderBy: { createdAt: 'desc' },
     take: TASK_LIST_LIMIT,
@@ -300,6 +317,50 @@ async function cancelTask(request: FastifyRequest, reply: FastifyReply) {
   return { task: updated };
 }
 
+// Archive a task: hide it from the task lists. Running and queued tasks
+// cannot be archived — cancel them first.
+async function archiveTask(request: FastifyRequest, reply: FastifyReply) {
+  const userId = authenticatedUserId(request);
+  const params = parseOrReply(idParamsSchema, request.params, reply, 'Invalid task id');
+  if (params === null) return;
+  const task = await prisma.task.findFirst({
+    where: ownedTaskWhere(userId, params.id),
+    select: { id: true, status: true },
+  });
+  if (!task) {
+    return reply.code(404).send({ error: 'Task not found' });
+  }
+  if (!isArchivable(task.status)) {
+    return reply.code(409).send({ error: `Task is ${task.status} and cannot be archived` });
+  }
+
+  const updated = await prisma.task.update({
+    where: { id: task.id },
+    data: { archivedAt: new Date() },
+  });
+  return { task: updated };
+}
+
+// Unarchive a task: clear archivedAt so it reappears in the task lists.
+async function unarchiveTask(request: FastifyRequest, reply: FastifyReply) {
+  const userId = authenticatedUserId(request);
+  const params = parseOrReply(idParamsSchema, request.params, reply, 'Invalid task id');
+  if (params === null) return;
+  const task = await prisma.task.findFirst({
+    where: ownedTaskWhere(userId, params.id),
+    select: { id: true },
+  });
+  if (!task) {
+    return reply.code(404).send({ error: 'Task not found' });
+  }
+
+  const updated = await prisma.task.update({
+    where: { id: task.id },
+    data: { archivedAt: null },
+  });
+  return { task: updated };
+}
+
 // SSE is served only when the client explicitly asks for it (EventSource
 // always sends Accept: text/event-stream). Everything else — fetch's
 // default included — gets the JSON history; otherwise a plain fetch hangs
@@ -341,6 +402,8 @@ const tasksRoutes: FastifyPluginAsync = async (app) => {
   app.post('/tasks/:id/start', startTask);
   app.post('/tasks/:id/rerun', rerunTask);
   app.post('/tasks/:id/cancel', cancelTask);
+  app.post('/tasks/:id/archive', archiveTask);
+  app.post('/tasks/:id/unarchive', unarchiveTask);
   app.get('/tasks/:id/events', getTaskEvents);
 };
 

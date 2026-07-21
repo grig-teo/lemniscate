@@ -163,6 +163,8 @@ export type Task = {
   prUrl?: string | null;
   thinkingLevel?: TaskThinkingLevel | null;
   attachments?: TaskImage[] | null;
+  /** Soft-archive timestamp; null = active. Archived tasks only appear in ?archived=true lists. */
+  archivedAt: string | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -232,20 +234,30 @@ export function useRepositories() {
   });
 }
 
-function tasksPath(repositoryId: string | null | undefined): string {
-  if (!repositoryId) return '/api/tasks';
-  return `/api/tasks?repositoryId=${encodeURIComponent(repositoryId)}`;
+function tasksPath(repositoryId: string | null | undefined, archived?: boolean): string {
+  const params = new URLSearchParams();
+  if (repositoryId) params.set('repositoryId', repositoryId);
+  if (archived) params.set('archived', 'true');
+  const suffix = params.size > 0 ? `?${params.toString()}` : '';
+  return `/api/tasks${suffix}`;
 }
 
 /** Tasks for one repository, or all of the user's tasks (cap 100) when no id is given. */
 export function useTasks(
   repositoryId?: string | null,
-  options?: { refetchInterval?: UseQueryOptions<Task[]>['refetchInterval'] },
+  options?: {
+    refetchInterval?: UseQueryOptions<Task[]>['refetchInterval'];
+    /** Fetch ONLY archived tasks instead of the default active ones. */
+    archived?: boolean;
+    enabled?: boolean;
+  },
 ) {
   return useQuery({
-    queryKey: ['tasks', repositoryId ?? null],
-    queryFn: () => api.get<{ tasks: Task[] }>(tasksPath(repositoryId)).then((res) => res.tasks),
+    queryKey: ['tasks', repositoryId ?? null, options?.archived ? 'archived' : 'active'],
+    queryFn: () =>
+      api.get<{ tasks: Task[] }>(tasksPath(repositoryId, options?.archived)).then((res) => res.tasks),
     refetchInterval: options?.refetchInterval,
+    enabled: options?.enabled,
   });
 }
 
@@ -462,6 +474,30 @@ export function useCancelTask() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (id: string) => api.post<unknown>(`/api/tasks/${id}/cancel`),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['tasks'] });
+      void queryClient.invalidateQueries({ queryKey: ['task'] });
+    },
+  });
+}
+
+/** POST /api/tasks/:id/archive — hide a task from the task lists. */
+export function useArchiveTask() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => api.post<unknown>(`/api/tasks/${id}/archive`),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['tasks'] });
+      void queryClient.invalidateQueries({ queryKey: ['task'] });
+    },
+  });
+}
+
+/** POST /api/tasks/:id/unarchive — bring an archived task back to the task lists. */
+export function useUnarchiveTask() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => api.post<unknown>(`/api/tasks/${id}/unarchive`),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['tasks'] });
       void queryClient.invalidateQueries({ queryKey: ['task'] });

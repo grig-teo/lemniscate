@@ -27,6 +27,11 @@ export function isStartableTask(task: { kind?: string; status: string }): boolea
   return isPendingProposal(task) || isPendingPrompt(task);
 }
 
+/** Tasks the user can archive — anything not running or queued (mirrors the backend). */
+export function isArchivable(status: string): boolean {
+  return status !== 'running' && status !== 'queued';
+}
+
 function isProcessTask(task: Task): boolean {
   return !isPendingProposal(task) && !isPendingPrompt(task);
 }

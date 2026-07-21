@@ -1,8 +1,15 @@
-import type { ReactNode } from 'react';
-import { Loader2, Play, RotateCcw } from 'lucide-react';
+import { useState, type ReactNode } from 'react';
+import { Archive, ArchiveRestore, Loader2, Play, RotateCcw } from 'lucide-react';
 
-import { useRerunTask, useStartTask, useTasks, type Task } from '@/lib/hooks';
-import { groupRepoTasks, isStartableTask } from '@/lib/repo-tasks';
+import {
+  useArchiveTask,
+  useRerunTask,
+  useStartTask,
+  useTasks,
+  useUnarchiveTask,
+  type Task,
+} from '@/lib/hooks';
+import { groupRepoTasks, isArchivable, isStartableTask } from '@/lib/repo-tasks';
 import { useWorkspaceSelection } from '@/lib/selection';
 import { cn } from '@/lib/utils';
 import { GenerateProposalsButton } from '@/components/repo-tree/GenerateProposalsButton';
@@ -53,7 +60,44 @@ function TaskGroups({ repositoryId, tasks }: { repositoryId: string; tasks: Task
           ))}
         </TaskGroup>
       )}
+      <ArchivedTasksSection repositoryId={repositoryId} />
     </div>
+  );
+}
+
+/** Toggle + greyed-out list of the repo's archived tasks, below the active ones. */
+function ArchivedTasksSection({ repositoryId }: { repositoryId: string }) {
+  const [showArchived, setShowArchived] = useState(false);
+  const archivedQuery = useTasks(repositoryId, { archived: true, enabled: showArchived });
+  const archived = archivedQuery.data ?? [];
+  return (
+    <div className="pl-2">
+      <button
+        type="button"
+        onClick={() => setShowArchived((value) => !value)}
+        className="text-[11px] text-muted-foreground/70 hover:text-muted-foreground"
+      >
+        {showArchived ? 'Hide archived' : 'Show archived'}
+      </button>
+      {showArchived && archived.length > 0 && (
+        <ul className="mt-0.5 flex flex-col gap-0.5">
+          {archived.map((task) => (
+            <ArchivedTaskRow key={task.id} task={task} />
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+/** Greyed-out archived task with an unarchive action; not selectable. */
+function ArchivedTaskRow({ task }: { task: Task }) {
+  return (
+    <li className="flex items-center gap-2 rounded-md px-2 py-1 text-xs text-muted-foreground/70">
+      <span className="min-w-0 flex-1 truncate">{task.title}</span>
+      <StatusBadge status={task.status} className="px-1.5 py-0 text-[10px] opacity-70" />
+      <UnarchiveTaskButton task={task} />
+    </li>
   );
 }
 
@@ -101,6 +145,7 @@ function TaskRow({ task }: { task: Task }) {
         <StatusBadge status={task.status} className="px-1.5 py-0 text-[10px]" />
         {isStartableTask(task) && <StartTaskButton task={task} />}
         {task.status === 'failed' && <RerunTaskButton task={task} />}
+        {isArchivable(task.status) && <ArchiveTaskButton task={task} />}
       </button>
     </li>
   );
@@ -161,6 +206,56 @@ function RerunTaskButton({ task }: { task: Task }) {
         <Loader2 className="h-3 w-3 animate-spin" />
       ) : (
         <RotateCcw className="h-3 w-3" />
+      )}
+    </Button>
+  );
+}
+
+/** Archive button that hides a task from the lists (not offered on running/queued). */
+function ArchiveTaskButton({ task }: { task: Task }) {
+  const archiveTask = useArchiveTask();
+  return (
+    <Button
+      variant="ghost"
+      size="icon"
+      className="h-5 w-5 shrink-0"
+      aria-label={`Archive ${task.title}`}
+      title="Archive"
+      disabled={archiveTask.isPending}
+      onClick={(event) => {
+        event.stopPropagation();
+        archiveTask.mutate(task.id);
+      }}
+    >
+      {archiveTask.isPending ? (
+        <Loader2 className="h-3 w-3 animate-spin" />
+      ) : (
+        <Archive className="h-3 w-3" />
+      )}
+    </Button>
+  );
+}
+
+/** Unarchive button that brings an archived task back to the lists. */
+function UnarchiveTaskButton({ task }: { task: Task }) {
+  const unarchiveTask = useUnarchiveTask();
+  return (
+    <Button
+      variant="ghost"
+      size="icon"
+      className="h-5 w-5 shrink-0"
+      aria-label={`Unarchive ${task.title}`}
+      title="Unarchive"
+      disabled={unarchiveTask.isPending}
+      onClick={(event) => {
+        event.stopPropagation();
+        unarchiveTask.mutate(task.id);
+      }}
+    >
+      {unarchiveTask.isPending ? (
+        <Loader2 className="h-3 w-3 animate-spin" />
+      ) : (
+        <ArchiveRestore className="h-3 w-3" />
       )}
     </Button>
   );
