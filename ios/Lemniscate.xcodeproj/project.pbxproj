@@ -15,6 +15,7 @@
 		5F867095E563BC28BA43A088 /* GitVerseTokenView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 913DDC8AC5DD23B00C5CCEE1 /* GitVerseTokenView.swift */; };
 		612CDA6070497A0C6C5EFE58 /* LemniscateApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3B2BC103FDAA2C6308531BBC /* LemniscateApp.swift */; };
 		6DE1ED60E86BED38488AF7CD /* AuthView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B648B3188E4F1D9A5FA91882 /* AuthView.swift */; };
+		76FBD461669DB060783CF62A /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 3E3547BA7748F843A84C3EDD /* Assets.xcassets */; };
 		7A75EB446872ED3965E6688C /* SpeechRecognizer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2A42777957E5D462B0465F52 /* SpeechRecognizer.swift */; };
 		7D4173284D7E0877C56A85C7 /* OAuthWebView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 71166FBAC8858256014CA38E /* OAuthWebView.swift */; };
 		83757A36E2D937DD4AE50595 /* ConnectionsSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A23E92C704AFA9DC12835998 /* ConnectionsSettingsView.swift */; };
@@ -44,6 +45,7 @@
 		19892DE9F678BF3D794CD83C /* Endpoints.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Endpoints.swift; sourceTree = "<group>"; };
 		2A42777957E5D462B0465F52 /* SpeechRecognizer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpeechRecognizer.swift; sourceTree = "<group>"; };
 		3B2BC103FDAA2C6308531BBC /* LemniscateApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LemniscateApp.swift; sourceTree = "<group>"; };
+		3E3547BA7748F843A84C3EDD /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		40EF11683E9506FABACF434D /* LlmConfigsViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LlmConfigsViewModel.swift; sourceTree = "<group>"; };
 		5F200A4DA57B91F1A5B31535 /* LlmConfigListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LlmConfigListView.swift; sourceTree = "<group>"; };
 		64850821FBE007B6B24A49F7 /* LlmConfigFormState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LlmConfigFormState.swift; sourceTree = "<group>"; };
@@ -64,7 +66,7 @@
 		B648B3188E4F1D9A5FA91882 /* AuthView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthView.swift; sourceTree = "<group>"; };
 		EA2ABCEF5A1F9FB98ACC5B8B /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
 		FF6D0B58A2DA90E6473B5D95 /* RepoPickerViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepoPickerViewModel.swift; sourceTree = "<group>"; };
-		"TEMP_D5C2096A-4323-4D73-8BF8-5717875C5A25" /* Base.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Base.xcconfig; sourceTree = "<group>"; };
+		"TEMP_4619C170-6BD8-4191-8430-CBC782076081" /* Base.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Base.xcconfig; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXGroup section */
@@ -142,6 +144,7 @@
 		9B937856D2291A685E1121BA /* Lemniscate */ = {
 			isa = PBXGroup;
 			children = (
+				3E3547BA7748F843A84C3EDD /* Assets.xcassets */,
 				0AF1E2ABCD9FD352D8F50ACE /* Info.plist */,
 				3B2BC103FDAA2C6308531BBC /* LemniscateApp.swift */,
 				7B471B6C649EADD126CC936A /* RootView.swift */,
@@ -174,10 +177,10 @@
 			path = Auth;
 			sourceTree = "<group>";
 		};
-		"TEMP_8EDE2544-7F36-4B9F-9434-E1FF2485F1DC" /* ios */ = {
+		"TEMP_10D04817-9A69-4D39-AABF-2FE03377E414" /* ios */ = {
 			isa = PBXGroup;
 			children = (
-				"TEMP_D5C2096A-4323-4D73-8BF8-5717875C5A25" /* Base.xcconfig */,
+				"TEMP_4619C170-6BD8-4191-8430-CBC782076081" /* Base.xcconfig */,
 			);
 			path = ios;
 			sourceTree = "<group>";
@@ -190,6 +193,7 @@
 			buildConfigurationList = E8907A5E29EF542717935612 /* Build configuration list for PBXNativeTarget "Lemniscate" */;
 			buildPhases = (
 				7AD0200CBAB380D11F4715BC /* Sources */,
+				3806525A19375C2112E587C3 /* Resources */,
 			);
 			buildRules = (
 			);
@@ -231,6 +235,17 @@
 			);
 		};
 /* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		3806525A19375C2112E587C3 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				76FBD461669DB060783CF62A /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		7AD0200CBAB380D11F4715BC /* Sources */ = {
@@ -334,7 +349,7 @@
 		};
 		4B84B558172E33ECF73E2AE7 /* Release */ = {
 			isa = XCBuildConfiguration;
-			baseConfigurationReference = "TEMP_D5C2096A-4323-4D73-8BF8-5717875C5A25" /* Base.xcconfig */;
+			baseConfigurationReference = "TEMP_4619C170-6BD8-4191-8430-CBC782076081" /* Base.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
@@ -356,7 +371,7 @@
 		};
 		53A9BEC153AFBADE1DBBF596 /* Debug */ = {
 			isa = XCBuildConfiguration;
-			baseConfigurationReference = "TEMP_D5C2096A-4323-4D73-8BF8-5717875C5A25" /* Base.xcconfig */;
+			baseConfigurationReference = "TEMP_4619C170-6BD8-4191-8430-CBC782076081" /* Base.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
