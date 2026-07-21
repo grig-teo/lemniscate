@@ -42,6 +42,7 @@ export interface GitProviderClient {
   listRepos(): Promise<NormalizedRepo[]>;
   createRepo(input: CreateRepoInput): Promise<NormalizedRepo>;
   createPullRequest(input: CreatePullRequestInput): Promise<PullRequestResult>;
+  isBare(repoFullName: string): Promise<boolean>;
 }
 
 export type ProviderName = 'github' | 'gitverse' | 'gitlab' | 'gitee';
@@ -139,6 +140,48 @@ export function hasAnyScope(
   if (!granted) return false;
   const scopes = granted.split(/[\s,]+/).filter(Boolean);
   return wanted.some((scope) => scopes.includes(scope));
+}
+
+// ---------------------------------------------------------------------------
+// Bare-repo detection
+// ---------------------------------------------------------------------------
+
+// Root entries that carry no implementation: docs and git meta files only.
+const BARE_ROOT_ENTRY =
+  /^(readme(\..+)?|license(\..+)?|copying(\..+)?|\.gitignore|\.gitattributes)$/i;
+
+// Pure judge for a root listing: a repo is bare when its root has zero
+// entries or nothing but README/LICENSE/COPYING/.gitignore/.gitattributes.
+export function isBareRootListing(names: string[]): boolean {
+  return names.every((name) => BARE_ROOT_ENTRY.test(name));
+}
+
+// Bare-repo probe shared by every provider: fetch the root listing and judge
+// the entry names. Any API error (404/403/…) returns false so a failed
+// check never breaks repository sync.
+async function rootListingIsBare(
+  url: string,
+  headers: Record<string, string>,
+  provider: string,
+): Promise<boolean> {
+  try {
+    const data = (await requestJson(url, headers, provider)) as Array<{ name?: unknown }>;
+    if (!Array.isArray(data)) return false;
+    return isBareRootListing(data.map((entry) => String(entry?.name ?? '')));
+  } catch {
+    return false;
+  }
+}
+
+// GitHub-shaped providers (github/gitverse/gitee) expose the root listing at
+// /repos/{fullName}/contents; GitLab uses /projects/{id}/repository/tree.
+function contentsUrl(apiBase: string, repoFullName: string): string {
+  return `${apiBase}/repos/${repoFullName}/contents?per_page=100`;
+}
+
+function gitlabTreeUrl(baseUrl: string | null | undefined, repoFullName: string): string {
+  const project = encodeURIComponent(repoFullName);
+  return `${gitlabApiBase(baseUrl)}/projects/${project}/repository/tree?per_page=100`;
 }
 
 // ---------------------------------------------------------------------------
@@ -580,6 +623,12 @@ interface ProviderApi {
     tokenType: ProviderTokenType,
     input: CreateRepoInput,
   ): Promise<NormalizedRepo>;
+  isBare(
+    token: string,
+    baseUrl: string | null | undefined,
+    tokenType: ProviderTokenType,
+    repoFullName: string,
+  ): Promise<boolean>;
 }
 
 // GitVerse's public API documents no repository-creation endpoint — the
@@ -594,6 +643,8 @@ const providerApis: Record<ProviderName, ProviderApi> = {
     assertPushAccess: (token, _baseUrl, _tokenType, repoFullName) =>
       githubAssertPushAccess(token, repoFullName),
     createRepo: (token, _baseUrl, _tokenType, input) => githubCreateRepo(token, input),
+    isBare: (token, _baseUrl, _tokenType, repoFullName) =>
+      rootListingIsBare(contentsUrl(GITHUB_API, repoFullName), githubHeaders(token), 'github'),
   },
   gitlab: {
     profile: (token, _baseUrl, tokenType) => gitlabProfile(token, tokenType),
@@ -601,6 +652,12 @@ const providerApis: Record<ProviderName, ProviderApi> = {
     assertPushAccess: (token, _baseUrl, tokenType, repoFullName) =>
       gitlabAssertPushAccess(token, tokenType, repoFullName),
     createRepo: (token, _baseUrl, tokenType, input) => gitlabCreateRepo(token, tokenType, input),
+    isBare: (token, baseUrl, tokenType, repoFullName) =>
+      rootListingIsBare(
+        gitlabTreeUrl(baseUrl, repoFullName),
+        gitlabHeaders(token, tokenType),
+        'gitlab',
+      ),
   },
   gitverse: {
     profile: (token, baseUrl) => gitverseProfile(baseUrl, token),
@@ -610,6 +667,12 @@ const providerApis: Record<ProviderName, ProviderApi> = {
     createRepo: async () => {
       throw new ProviderError(GITVERSE_CREATE_REPO_UNSUPPORTED);
     },
+    isBare: (token, baseUrl, _tokenType, repoFullName) =>
+      rootListingIsBare(
+        contentsUrl(gitverseApiBase(baseUrl), repoFullName),
+        gitverseHeaders(token),
+        'gitverse',
+      ),
   },
   gitee: {
     profile: (token) => giteeProfile(token),
@@ -617,6 +680,8 @@ const providerApis: Record<ProviderName, ProviderApi> = {
     assertPushAccess: (token, _baseUrl, _tokenType, repoFullName) =>
       giteeAssertPushAccess(token, repoFullName),
     createRepo: (token, _baseUrl, _tokenType, input) => giteeCreateRepo(token, input),
+    isBare: (token, _baseUrl, _tokenType, repoFullName) =>
+      rootListingIsBare(contentsUrl(GITEE_API, repoFullName), giteeHeaders(token), 'gitee'),
   },
 };
 
@@ -674,5 +739,9 @@ export function getProviderClient(connection: {
         api.createRepo(token, connection.baseUrl, tokenType, input),
       ),
     createPullRequest: notImplementedPr(connection.provider),
+    isBare: (repoFullName) =>
+      withGitlabRefreshRetry(connection, (token) =>
+        api.isBare(token, connection.baseUrl, tokenType, repoFullName),
+      ),
   };
 }

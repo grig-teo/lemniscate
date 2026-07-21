@@ -52,6 +52,12 @@ const TEXTAREA_MIN_HEIGHT =
 const TEXTAREA_MAX_HEIGHT =
   TEXTAREA_MAX_ROWS * TEXTAREA_LINE_HEIGHT_PX + TEXTAREA_VERTICAL_PADDING_PX;
 
+const DEFAULT_PLACEHOLDER = 'Describe a task for the agent… (⌘/Ctrl+Enter to send)';
+const BARE_PLACEHOLDER = 'Describe your app idea… (⌘/Ctrl+Enter to send)';
+/** Inviting line shown above the textarea when the target repo is near-empty (README-only). */
+const BARE_REPO_MESSAGE =
+  'This repository is almost empty — describe the app you want to build and the agent will create the first implementation.';
+
 /** Grows the textarea with its content, clamped to the min/max row bounds. */
 export function useAutoResizeTextarea(value: string) {
   const ref = React.useRef<HTMLTextAreaElement | null>(null);
@@ -94,7 +100,7 @@ function useTaskComposer(onSubmitted?: () => void) {
   const repositoriesQuery = useRepositories();
   const llmConfigsQuery = useLlmConfigs();
   const createTask = useCreateTask();
-  const { selectedTask, selectTask } = useWorkspaceSelection();
+  const { selectedTask, selectTask, selectedRepositoryId } = useWorkspaceSelection();
   const repositories = repositoriesQuery.data ?? [];
   const llmConfigs = llmConfigsQuery.data ?? [];
   const [manualRepositoryId, setManualRepositoryId] = React.useState<string | null>(null);
@@ -106,7 +112,8 @@ function useTaskComposer(onSubmitted?: () => void) {
   const manualChoiceValid = repositories.some((repo) => repo.id === manualRepositoryId);
   const repositoryId = manualChoiceValid
     ? (manualRepositoryId as string)
-    : defaultRepositoryId(repositories, selectedTask);
+    : defaultRepositoryId(repositories, selectedTask, selectedRepositoryId);
+  const repository = repositories.find((repo) => repo.id === repositoryId) ?? null;
   const enabledConfigs = llmConfigs.filter((config) => config.enabled);
 
   const canSend =
@@ -175,6 +182,7 @@ function useTaskComposer(onSubmitted?: () => void) {
   return {
     repositories,
     repositoryId,
+    repository,
     setManualRepositoryId,
     prompt,
     setPrompt,
@@ -482,12 +490,14 @@ function ComposerToolbar({ composer }: { composer: ReturnType<typeof useTaskComp
 export function ComposerCard({ onSubmitted }: { onSubmitted?: () => void }) {
   const composer = useTaskComposer(onSubmitted);
   const textareaRef = useAutoResizeTextarea(composer.prompt);
+  const bare = composer.repository?.bare === true;
 
   return (
     <div className="flex flex-col gap-2">
       {composer.createTask.isError && (
         <p className="text-xs text-destructive">{composer.createTask.error.message}</p>
       )}
+      {bare && <p className="text-xs text-muted-foreground">{BARE_REPO_MESSAGE}</p>}
       <div className="rounded-lg border bg-background shadow-sm focus-within:ring-1 focus-within:ring-ring">
         <ImageThumbnails images={composer.images} onRemove={composer.removeImage} />
         <Textarea
@@ -495,7 +505,7 @@ export function ComposerCard({ onSubmitted }: { onSubmitted?: () => void }) {
           value={composer.prompt}
           onChange={(event) => composer.setPrompt(event.target.value)}
           onKeyDown={(event) => submitOnCmdEnter(event, composer.submit)}
-          placeholder="Describe a task for the agent… (⌘/Ctrl+Enter to send)"
+          placeholder={bare ? BARE_PLACEHOLDER : DEFAULT_PLACEHOLDER}
           rows={TEXTAREA_MIN_ROWS}
           aria-label="Prompt"
           className="resize-none overflow-y-auto border-0 shadow-none focus-visible:ring-0"

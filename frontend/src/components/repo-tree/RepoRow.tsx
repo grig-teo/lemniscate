@@ -4,6 +4,7 @@ import { ChevronDown, ChevronRight, Settings } from 'lucide-react';
 import { useUpdateRepositoryFlags, type Repository } from '@/lib/hooks';
 import { setAutoReview } from '@/lib/repo-flags';
 import { repoDisplayName } from '@/lib/repo-display';
+import { useWorkspaceSelection } from '@/lib/selection';
 import { cn } from '@/lib/utils';
 import { RepoTasks } from '@/components/repo-tree/RepoTasks';
 import { Button } from '@/components/ui/button';
@@ -120,11 +121,16 @@ function RepoToggle({
   expanded: boolean;
   onToggle: () => void;
 }) {
+  const { selectRepository } = useWorkspaceSelection();
   const Chevron = expanded ? ChevronDown : ChevronRight;
+  const handleClick = () => {
+    onToggle();
+    selectRepository(repo.id);
+  };
   return (
     <button
       type="button"
-      onClick={onToggle}
+      onClick={handleClick}
       className="flex min-w-0 flex-1 items-center gap-1.5 text-left text-sm"
       aria-expanded={expanded}
     >

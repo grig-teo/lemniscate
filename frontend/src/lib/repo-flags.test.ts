@@ -17,6 +17,7 @@ function makeRepo(overrides: Partial<Repository> = {}): Repository {
     autoReviewPr: true,
     autoMergePr: true,
     hidden: false,
+    bare: false,
     connection: { provider: 'github', username: 'octo' },
     ...overrides,
   };

@@ -110,6 +110,9 @@ model Repository {
   autoReviewPr  Boolean      @default(false)
   autoMergePr   Boolean      @default(false)
   hidden        Boolean      @default(false)
+  // bare = near-empty repository (README-only, no implementation), refreshed
+  // on every repo sync; a failed check keeps the previous value.
+  bare          Boolean      @default(false)
   llmConfigId   String?
   connection    GitConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
   llmConfig     LlmConfig?    @relation(fields: [llmConfigId], references: [id], onDelete: SetNull)

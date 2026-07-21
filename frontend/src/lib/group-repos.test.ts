@@ -17,6 +17,7 @@ function makeRepo(id: string, connectionId: string, provider: 'github' | 'gitlab
     autoReviewPr: false,
     autoMergePr: false,
     hidden: false,
+    bare: false,
     connection: { provider, username },
   };
 }

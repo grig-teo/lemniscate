@@ -8,6 +8,7 @@ import * as React from 'react';
 import { readPersisted, writePersisted } from '@/lib/persist';
 
 const SELECTED_TASK_STORAGE_KEY = 'lemniscate.selected-task';
+const SELECTED_REPO_STORAGE_KEY = 'lemniscate.selected-repo';
 
 export interface SelectedTask {
   id: string;
@@ -23,6 +24,9 @@ interface WorkspaceSelectionValue {
   selectedTask: SelectedTask | null;
   /** Select a task (or clear with null); resets live status. */
   selectTask: (task: SelectedTask | null) => void;
+  /** Repository selected in the repo tree; defaults the composer target. */
+  selectedRepositoryId: string | null;
+  selectRepository: (id: string | null) => void;
   /** Live status from SSE `status` events; overrides selectedTask.status. */
   liveStatus: string | null;
   setLiveStatus: (status: string | null) => void;
@@ -36,6 +40,9 @@ export function WorkspaceSelectionProvider({ children }: { children: React.React
     readPersisted<SelectedTask | null>(SELECTED_TASK_STORAGE_KEY, null),
   );
   const [liveStatus, setLiveStatus] = React.useState<string | null>(null);
+  const [selectedRepositoryId, setSelectedRepositoryId] = React.useState<string | null>(() =>
+    readPersisted<string | null>(SELECTED_REPO_STORAGE_KEY, null),
+  );
 
   const selectTask = React.useCallback((task: SelectedTask | null) => {
     setSelectedTask(task);
@@ -43,9 +50,21 @@ export function WorkspaceSelectionProvider({ children }: { children: React.React
     setLiveStatus(null);
   }, []);
 
+  const selectRepository = React.useCallback((id: string | null) => {
+    setSelectedRepositoryId(id);
+    writePersisted(SELECTED_REPO_STORAGE_KEY, id);
+  }, []);
+
   const value = React.useMemo<WorkspaceSelectionValue>(
-    () => ({ selectedTask, selectTask, liveStatus, setLiveStatus }),
-    [selectedTask, selectTask, liveStatus],
+    () => ({
+      selectedTask,
+      selectTask,
+      selectedRepositoryId,
+      selectRepository,
+      liveStatus,
+      setLiveStatus,
+    }),
+    [selectedTask, selectTask, selectedRepositoryId, selectRepository, liveStatus],
   );
 
   return (

@@ -18,6 +18,7 @@ function makeRepo(id: string): Repository {
     autoReviewPr: false,
     autoMergePr: false,
     hidden: false,
+    bare: false,
     connection: { provider: 'github', username: 'ann' },
   };
 }
@@ -49,5 +50,20 @@ describe('defaultRepositoryId', () => {
   it('falls back to the first repository when the selected task has no repositoryId', () => {
     const task: SelectedTask = { id: 't1', title: 'Task', status: 'done' };
     expect(defaultRepositoryId([makeRepo('r1')], task)).toBe('r1');
+  });
+
+  it('defaults to the selected repository when no task is selected', () => {
+    const repos = [makeRepo('r1'), makeRepo('r2')];
+    expect(defaultRepositoryId(repos, null, 'r2')).toBe('r2');
+  });
+
+  it("prefers the selected task's repository over the selected repository", () => {
+    const repos = [makeRepo('r1'), makeRepo('r2'), makeRepo('r3')];
+    expect(defaultRepositoryId(repos, makeTask('r3'), 'r2')).toBe('r3');
+  });
+
+  it('falls back to the first repository when the selected repository is gone', () => {
+    const repos = [makeRepo('r1'), makeRepo('r2')];
+    expect(defaultRepositoryId(repos, null, 'rX')).toBe('r1');
   });
 });

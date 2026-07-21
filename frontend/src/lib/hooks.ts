@@ -102,6 +102,8 @@ export type Repository = {
   autoReviewPr: boolean;
   autoMergePr: boolean;
   hidden: boolean;
+  /** True for near-empty (README-only) repositories — the composer invites a from-scratch app prompt. */
+  bare: boolean;
   llmConfigId?: string | null;
   connection: {
     provider: GitProvider;

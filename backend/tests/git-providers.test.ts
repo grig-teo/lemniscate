@@ -13,6 +13,7 @@ import {
   gitverseBase,
   gitverseHeaders,
   hasAnyScope,
+  isBareRootListing,
   normalizeGiteeRepo,
   normalizeGitverseRepo,
   ProviderError,
@@ -506,5 +507,91 @@ describe('createRepo', () => {
         accessTokenEnc: encrypt('tok'),
       }).createRepo({ name: 'new' }),
     ).rejects.toThrow(/not supported/);
+  });
+});
+
+describe('isBareRootListing', () => {
+  it('treats an empty root as bare', () => {
+    expect(isBareRootListing([])).toBe(true);
+  });
+
+  it('treats a README-only root as bare', () => {
+    expect(isBareRootListing(['README.md'])).toBe(true);
+    expect(isBareRootListing(['README'])).toBe(true);
+  });
+
+  it('treats README + LICENSE + .gitignore as bare', () => {
+    expect(isBareRootListing(['README.md', 'LICENSE', '.gitignore'])).toBe(true);
+    expect(isBareRootListing(['README.md', 'LICENSE', 'COPYING', '.gitattributes'])).toBe(true);
+  });
+
+  it('is not bare when package.json is present', () => {
+    expect(isBareRootListing(['README.md', 'package.json'])).toBe(false);
+  });
+
+  it('is not bare when a src/ entry is present', () => {
+    expect(isBareRootListing(['README.md', 'src'])).toBe(false);
+  });
+
+  it('matches entry names case-insensitively', () => {
+    expect(isBareRootListing(['readme.MD', 'License.txt', '.GITIGNORE'])).toBe(true);
+  });
+});
+
+describe('isBare', () => {
+  function connection(provider: 'github' | 'gitlab' | 'gitverse' | 'gitee') {
+    return { provider, baseUrl: null, accessTokenEnc: encrypt('tok') };
+  }
+
+  it('github: reads the root via /repos/{fullName}/contents', async () => {
+    vi.stubGlobal(
+      'fetch',
+      stubFetch((url) => {
+        expect(url).toBe('https://api.github.com/repos/ivan/empty/contents?per_page=100');
+        return jsonResponse([{ name: 'README.md' }, { name: 'LICENSE' }]);
+      }),
+    );
+    await expect(getProviderClient(connection('github')).isBare('ivan/empty')).resolves.toBe(true);
+  });
+
+  it('gitlab: reads the root via /projects/{encoded}/repository/tree', async () => {
+    vi.stubGlobal(
+      'fetch',
+      stubFetch((url) => {
+        expect(url).toBe(
+          'https://gitlab.com/api/v4/projects/group%2Frepo/repository/tree?per_page=100',
+        );
+        return jsonResponse([{ name: 'README.md' }, { name: 'src' }]);
+      }),
+    );
+    await expect(getProviderClient(connection('gitlab')).isBare('group/repo')).resolves.toBe(false);
+  });
+
+  it('gitverse: reads the root via the api. subdomain contents endpoint', async () => {
+    vi.stubGlobal(
+      'fetch',
+      stubFetch((url) => {
+        expect(url).toBe('https://api.gitverse.ru/repos/ivan/empty/contents?per_page=100');
+        return jsonResponse([]);
+      }),
+    );
+    await expect(getProviderClient(connection('gitverse')).isBare('ivan/empty')).resolves.toBe(true);
+  });
+
+  it('gitee: reads the root via the v5 contents endpoint', async () => {
+    vi.stubGlobal(
+      'fetch',
+      stubFetch((url) => {
+        expect(url).toBe('https://gitee.com/api/v5/repos/ivan/code/contents?per_page=100');
+        return jsonResponse([{ name: 'README.md' }, { name: 'main.go' }]);
+      }),
+    );
+    await expect(getProviderClient(connection('gitee')).isBare('ivan/code')).resolves.toBe(false);
+  });
+
+  it('returns false on API errors so sync is never broken', async () => {
+    vi.stubGlobal('fetch', stubFetch(() => jsonResponse({ message: 'Not Found' }, 404)));
+    await expect(getProviderClient(connection('github')).isBare('ivan/gone')).resolves.toBe(false);
+    await expect(getProviderClient(connection('gitlab')).isBare('ivan/gone')).resolves.toBe(false);
   });
 });
