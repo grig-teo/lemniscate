@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#1c1c1e"/>
+      <stop offset="1" stop-color="#0c0c0d"/>
+    </linearGradient>
+    <linearGradient id="mark" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#e5e5e5"/>
+      <stop offset="1" stop-color="#a3a3a3"/>
+    </linearGradient>
+  </defs>
+  <rect width="1024" height="1024" rx="220" fill="url(#bg)"/>
+  <rect x="24" y="24" width="976" height="976" rx="200" fill="none" stroke="#2e2e32" stroke-width="2"/>
+  <g transform="translate(344 250) scale(14)" fill="none" stroke="url(#mark)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M12 12c-2-2.67-4-4-6-4a4 4 0 1 0 0 8c2 0 4-1.33 6-4Zm0 0c2 2.67 4 4 6 4a4 4 0 0 0 0-8c-2 0-4 1.33-6 4Z"/>
+  </g>
+  <text x="512" y="730" text-anchor="middle" font-family="ui-monospace, 'SF Mono', Menlo, monospace" font-size="76" font-weight="600" letter-spacing="4" fill="#e5e5e5">lemniscate</text>
+  <text x="512" y="792" text-anchor="middle" font-family="ui-monospace, 'SF Mono', Menlo, monospace" font-size="30" letter-spacing="6" fill="#737373">self-improving code</text>
+</svg>
