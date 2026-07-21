@@ -39,6 +39,7 @@ COPY --from=build --chown=app:app /app/node_modules ./node_modules
 COPY --from=build --chown=app:app /app/dist ./dist
 COPY --from=build --chown=app:app /app/package.json ./package.json
 COPY --from=build --chown=app:app /app/prisma ./prisma
+COPY --from=build --chown=app:app /app/scripts ./scripts
 USER app
 EXPOSE 3000
 # API server entrypoint: apply migrations, then start.
