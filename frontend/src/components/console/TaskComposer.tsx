@@ -6,6 +6,7 @@ import {
   useCreateTask,
   useLlmConfigs,
   useRepositories,
+  type LlmConfig,
   type Repository,
   type TaskImage,
   type TaskThinkingLevel,
@@ -100,12 +101,14 @@ function useTaskComposer(onSubmitted?: () => void) {
   const [manualRepositoryId, setManualRepositoryId] = React.useState<string | null>(null);
   const [prompt, setPrompt] = React.useState('');
   const [thinkingLevel, setThinkingLevel] = React.useState<TaskThinkingLevel | null>(null);
+  const [llmConfigId, setLlmConfigId] = React.useState<string | null>(null);
   const [images, setImages] = React.useState<TaskImage[]>([]);
 
   const manualChoiceValid = repositories.some((repo) => repo.id === manualRepositoryId);
   const repositoryId = manualChoiceValid
     ? (manualRepositoryId as string)
     : defaultRepositoryId(repositories, selectedTask);
+  const enabledConfigs = llmConfigs.filter((config) => config.enabled);
 
   const canSend =
     repositories.length > 0 &&
@@ -114,7 +117,7 @@ function useTaskComposer(onSubmitted?: () => void) {
     !createTask.isPending;
 
   const estimatedTokens = estimateTokens(prompt);
-  const contextWindow = resolveContextWindow(llmConfigs, repositories, repositoryId);
+  const contextWindow = resolveContextWindow(llmConfigs, repositories, repositoryId, llmConfigId);
 
   const addImageFiles = (files: FileList | null) => appendImageFiles(files, setImages);
 
@@ -129,6 +132,7 @@ function useTaskComposer(onSubmitted?: () => void) {
         repositoryId,
         prompt: prompt.trim(),
         ...(thinkingLevel ? { thinkingLevel } : {}),
+        ...(llmConfigId ? { llmConfigId } : {}),
         ...(images.length > 0 ? { images } : {}),
       },
       {
@@ -156,6 +160,9 @@ function useTaskComposer(onSubmitted?: () => void) {
     setPrompt,
     thinkingLevel,
     setThinkingLevel,
+    llmConfigId,
+    setLlmConfigId,
+    enabledConfigs,
     images,
     addImageFiles,
     removeImage,
@@ -187,6 +194,38 @@ function ComposerRepoSelect({
             <span className="flex items-center gap-2">
               <ProviderIcon provider={repo.connection.provider} className="h-3.5 w-3.5" />
               <span className="truncate">{repo.fullName}</span>
+            </span>
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
+  );
+}
+
+function LlmConfigSelect({
+  configs,
+  value,
+  onChange,
+}: {
+  configs: LlmConfig[];
+  value: string | null;
+  onChange: (id: string | null) => void;
+}) {
+  return (
+    <Select
+      value={value ?? 'default'}
+      onValueChange={(v) => onChange(v === 'default' ? null : v)}
+      disabled={configs.length === 0}
+    >
+      <SelectTrigger className="h-8 w-44 shrink-0" aria-label="Model">
+        <SelectValue />
+      </SelectTrigger>
+      <SelectContent>
+        <SelectItem value="default">Default model</SelectItem>
+        {configs.map((config) => (
+          <SelectItem key={config.id} value={config.id}>
+            <span className="truncate">
+              {config.name} · {config.model}
             </span>
           </SelectItem>
         ))}
@@ -365,6 +404,11 @@ function ComposerToolbar({ composer }: { composer: ReturnType<typeof useTaskComp
           onChange={composer.setManualRepositoryId}
         />
       </FormField>
+      <LlmConfigSelect
+        configs={composer.enabledConfigs}
+        value={composer.llmConfigId}
+        onChange={composer.setLlmConfigId}
+      />
       <ThinkingLevelSelect value={composer.thinkingLevel} onChange={composer.setThinkingLevel} />
       <ContextRing tokens={composer.estimatedTokens} contextWindow={composer.contextWindow} />
       <div className="flex-1" />

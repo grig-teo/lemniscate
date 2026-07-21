@@ -148,6 +148,7 @@ export type CreateTaskBody = {
   repositoryId: string;
   prompt: string;
   thinkingLevel?: TaskThinkingLevel;
+  llmConfigId?: string;
   images?: TaskImage[];
 };
 

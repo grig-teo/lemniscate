@@ -15,15 +15,20 @@ export function estimateTokens(text: string): number {
 }
 
 /**
- * Context window of the LLM config that will run the task: the selected
- * repo's llmConfigId config, otherwise the user's default config — the same
- * resolution order as the backend task route (routes/tasks.ts).
+ * Context window of the LLM config that will run the task: an explicit
+ * composer choice wins, then the selected repo's llmConfigId config, then the
+ * user's default config — the same resolution order as the backend task route
+ * (routes/tasks.ts).
  */
 export function resolveContextWindow(
   configs: LlmConfig[],
   repositories: Repository[],
   repositoryId: string,
+  explicitConfigId?: string | null,
 ): number | null {
+  if (explicitConfigId) {
+    return configs.find((c) => c.id === explicitConfigId)?.contextWindow ?? null;
+  }
   const repo = repositories.find((r) => r.id === repositoryId);
   const repoConfig = repo?.llmConfigId
     ? configs.find((c) => c.id === repo.llmConfigId)

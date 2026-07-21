@@ -36,6 +36,8 @@ const createBodySchema = z
     prompt: promptSchema,
     // Per-task override of the LLM config's thinkingLevel; omit to inherit.
     thinkingLevel: taskThinkingLevelSchema.optional(),
+    // Explicit LLM config chosen in the composer; omit to inherit (repo → default).
+    llmConfigId: z.string().min(1).optional(),
     // Image attachments sent to the agent as multimodal content (max 3).
     images: taskImagesSchema.optional(),
   })
@@ -62,11 +64,21 @@ function ownedTaskWhere(userId: string, taskId: string) {
   return { id: taskId, repository: { connection: { userId } } };
 }
 
-// Repo-specific config wins; otherwise fall back to the user's default.
+// Explicit composer choice wins; then repo config; then the user's default.
 async function resolveTaskLlmConfigId(
   userId: string,
   repository: { llmConfigId: string | null },
-): Promise<string | null> {
+  explicitId?: string,
+): Promise<string | null | undefined> {
+  if (explicitId) {
+    const owned = await prisma.llmConfig.findFirst({
+      where: { id: explicitId, userId, enabled: true },
+      select: { id: true },
+    });
+    // Undefined signals "explicit id not usable" so the caller can 400.
+    if (!owned) return undefined;
+    return owned.id;
+  }
   if (repository.llmConfigId) return repository.llmConfigId;
   const defaultConfig = await prisma.llmConfig.findFirst({
     where: { userId, isDefault: true },
@@ -110,7 +122,10 @@ async function createTask(request: FastifyRequest, reply: FastifyReply) {
     return reply.code(404).send({ error: 'Repository not found' });
   }
 
-  const llmConfigId = await resolveTaskLlmConfigId(userId, repository);
+  const llmConfigId = await resolveTaskLlmConfigId(userId, repository, data.llmConfigId);
+  if (llmConfigId === undefined) {
+    return reply.code(400).send({ error: 'LLM config not found or disabled' });
+  }
   if (!llmConfigId) {
     return reply.code(400).send({ error: 'no LLM config' });
   }

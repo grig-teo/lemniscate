@@ -88,6 +88,13 @@ describe('resolveContextWindow', () => {
     expect(resolveContextWindow(configs, repos, 'r1')).toBe(32_000);
   });
 
+  it('prefers an explicit composer config over repo and default configs', () => {
+    const repos = [makeRepo('r1', 'cfg-repo')];
+    expect(resolveContextWindow(configs, repos, 'r1', 'cfg-default')).toBe(32_000);
+    expect(resolveContextWindow(configs, repos, 'r1', 'cfg-repo')).toBe(200_000);
+    expect(resolveContextWindow(configs, repos, 'r1', 'cfg-gone')).toBeNull();
+  });
+
   it('uses the default config when the repo is unknown, null when no config resolves', () => {
     expect(resolveContextWindow([], [makeRepo('r1')], 'r1')).toBeNull();
     expect(resolveContextWindow(configs, [], '')).toBe(32_000);
