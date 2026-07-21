@@ -5,7 +5,7 @@ import { cn } from '@/lib/utils';
 type Platform = 'linux' | 'macos';
 
 const INSTALL_BASE =
-  'curl -fsSL https://gitverse.ru/grigorii_fedorov/lemniscate/raw/branch/main/scripts/install-';
+  'curl -fsSL https://raw.githubusercontent.com/grig-teo/lemniscate/main/scripts/install-';
 
 const INSTALL_COMMANDS: Record<Platform, string> = {
   linux: `${INSTALL_BASE}linux.sh | bash`,

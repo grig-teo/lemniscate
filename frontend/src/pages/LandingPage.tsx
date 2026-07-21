@@ -90,10 +90,10 @@ export function LandingPage() {
       </main>
       <footer className="border-t px-6 py-6 text-center font-mono text-sm text-muted-foreground">
         <a
-          href="https://gitverse.ru/grigorii_fedorov/lemniscate"
+          href="https://github.com/grig-teo/lemniscate"
           className="border-b border-border text-foreground hover:border-foreground"
         >
-          gitverse.ru/grigorii_fedorov/lemniscate
+          github.com/grig-teo/lemniscate
         </a>
       </footer>
     </div>

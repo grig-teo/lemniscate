@@ -13,10 +13,10 @@ and starts the full stack via Docker Compose:
 
 ```bash
 # Linux
-curl -fsSL https://gitverse.ru/grigorii_fedorov/lemniscate/raw/branch/main/scripts/install-linux.sh | bash
+curl -fsSL https://raw.githubusercontent.com/grig-teo/lemniscate/main/scripts/install-linux.sh | bash
 
 # macOS
-curl -fsSL https://gitverse.ru/grigorii_fedorov/lemniscate/raw/branch/main/scripts/install-macos.sh | bash
+curl -fsSL https://raw.githubusercontent.com/grig-teo/lemniscate/main/scripts/install-macos.sh | bash
 ```
 
 Both scripts are idempotent (safe to re-run). A landing page with the same

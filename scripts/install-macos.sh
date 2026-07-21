@@ -4,7 +4,7 @@
 # and starts the full stack via Docker Compose. Safe to re-run.
 set -euo pipefail
 
-REPO_URL="https://gitverse.ru/grigorii_fedorov/lemniscate.git"
+REPO_URL="https://github.com/grig-teo/lemniscate.git"
 TARGET_DIR="./lemniscate"
 HEALTH_URL="http://localhost:3000/health"
 
