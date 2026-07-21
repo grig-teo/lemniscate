@@ -5,6 +5,8 @@
  */
 import { GitBranch, Github, Gitlab } from 'lucide-react';
 
+import { GitVerseIcon } from '@/components/icons/GitVerseIcon';
+
 // Official Gitee glyph (lucide has no Gitee icon); currentColor so it
 // inherits the surrounding text color like the lucide icons.
 function GiteeIcon({ className }: { className?: string }) {
@@ -44,5 +46,6 @@ export function ProviderIcon({ provider, className }: { provider: string; classN
   if (name === 'github') return <Github className={className} aria-hidden />;
   if (name === 'gitlab') return <Gitlab className={className} aria-hidden />;
   if (name === 'gitee') return <GiteeIcon className={className} />;
-  return <GitBranch className={className} aria-hidden />; // gitverse + unknown
+  if (name === 'gitverse') return <GitVerseIcon className={className} />;
+  return <GitBranch className={className} aria-hidden />; // unknown
 }
