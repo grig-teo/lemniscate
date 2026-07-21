@@ -5,10 +5,11 @@ import path from 'node:path';
 import { PassThrough } from 'node:stream';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const mocks = vi.hoisted(() => ({ spawn: vi.fn(), logEvent: vi.fn() }));
+const mocks = vi.hoisted(() => ({ spawn: vi.fn(), logEvent: vi.fn(), taskFindUnique: vi.fn() }));
 
 vi.mock('node:child_process', () => ({ spawn: mocks.spawn }));
 vi.mock('../src/lib/agent-git.js', () => ({ logEvent: mocks.logEvent }));
+vi.mock('../src/lib/prisma.js', () => ({ prisma: { task: { findUnique: mocks.taskFindUnique } } }));
 
 import { runHermesTask, type HermesTaskOptions } from '../src/lib/hermes-runner.js';
 
@@ -207,5 +208,20 @@ describe('runHermesTask', () => {
     child.emit('error', Object.assign(new Error('spawn hermes ENOENT'), { code: 'ENOENT' }));
 
     await expect(promise).rejects.toThrow('hermes CLI not installed in the worker image');
+  });
+});
+
+describe('runHermesTask cancellation', () => {
+  it('kills the process and rejects when the task is cancelled mid-run', async () => {
+    const child = fakeChild();
+    mocks.spawn.mockReturnValue(child);
+    mocks.taskFindUnique.mockResolvedValue({ status: 'failed' });
+    const promise = runHermesTask(makeOpts({ pollMs: 20 }));
+    const err = await promise.then(
+      () => null,
+      (e: Error) => e,
+    );
+    expect(err?.message).toBe('cancelled by user');
+    expect(child.kill).toHaveBeenCalledWith('SIGKILL');
   });
 });

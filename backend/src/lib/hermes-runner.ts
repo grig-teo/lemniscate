@@ -3,6 +3,7 @@ import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import readline from 'node:readline';
 import { logEvent } from './agent-git.js';
+import { prisma } from './prisma.js';
 import { redactSecrets } from './utils.js';
 
 // Runs the Hermes Agent CLI non-interactively (`hermes chat -q <prompt>`)
@@ -25,10 +26,22 @@ export interface HermesTaskOptions {
   taskId: string;
   secrets: string[];
   timeoutMs: number;
+  /** Cancel-poll interval; defaults to CANCEL_POLL_MS. */
+  pollMs?: number;
 }
 
 const HERMES_HOME_DIR = '.hermes-home';
 const OUTPUT_TAIL_CHARS = 500;
+const CANCEL_POLL_MS = 5_000;
+
+// The cancel endpoint marks the task failed; the runner notices on the next
+// poll and kills the agent — a real stop, not just a status flip.
+async function taskIsCancelled(taskId: string): Promise<boolean> {
+  const task = await prisma.task
+    .findUnique({ where: { id: taskId }, select: { status: true } })
+    .catch(() => null);
+  return task?.status === 'failed';
+}
 
 // Strips ANSI escape sequences (SGR colors, cursor moves, OSC titles).
 export function stripAnsi(text: string): string {
@@ -113,28 +126,40 @@ function timeoutError(timeoutMs: number): Error {
 function waitForHermes(child: ChildProcess, opts: HermesTaskOptions): Promise<void> {
   return new Promise((resolve, reject) => {
     const tail = makeOutputTail(OUTPUT_TAIL_CHARS);
+    const cancelPoll = setInterval(() => {
+      void taskIsCancelled(opts.taskId).then((cancelled) => {
+        if (!cancelled) return;
+        child.kill('SIGKILL');
+        reject(new Error('cancelled by user'));
+      });
+    }, opts.pollMs ?? CANCEL_POLL_MS);
+    const settle = (fn: () => void) => {
+      clearTimeout(timer);
+      clearInterval(cancelPoll);
+      fn();
+    };
     const timer = setTimeout(() => {
-      child.kill('SIGKILL');
-      reject(timeoutError(opts.timeoutMs));
+      settle(() => {
+        child.kill('SIGKILL');
+        reject(timeoutError(opts.timeoutMs));
+      });
     }, opts.timeoutMs);
     if (child.stdout) streamLines(child.stdout, opts, tail);
     if (child.stderr) streamLines(child.stderr, opts, tail);
     child.on('error', (err) => {
-      clearTimeout(timer);
-      reject(spawnError(err as NodeJS.ErrnoException));
+      settle(() => reject(spawnError(err as NodeJS.ErrnoException)));
     });
 // Hermes prints an init-failure banner but still exits 0 — without this
 // marker check a broken run would look like "no changes produced".
 const INIT_FAILURE_MARKER = 'Failed to initialize agent';
 
     child.on('close', (code) => {
-      clearTimeout(timer);
       if (tail.text().includes(INIT_FAILURE_MARKER)) {
-        reject(new Error(`hermes agent failed to initialize: ${tail.text()}`));
+        settle(() => reject(new Error(`hermes agent failed to initialize: ${tail.text()}`)));
         return;
       }
-      if (code === 0) resolve();
-      else reject(new Error(`hermes agent exited with code ${code}: ${tail.text()}`));
+      if (code === 0) settle(resolve);
+      else settle(() => reject(new Error(`hermes agent exited with code ${code}: ${tail.text()}`)));
     });
   });
 }
