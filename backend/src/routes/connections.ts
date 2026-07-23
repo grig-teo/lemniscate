@@ -131,8 +131,9 @@ async function upsertAuthenticatedConnection(
   return { connection, created: true };
 }
 
-// Unauthenticated path: the PAT is the credential — find or create the user
-// behind this connection and start a session.
+// Unauthenticated path: the PAT is the credential — find the user behind
+// this connection and start a session. No open registration: an unknown PAT
+// identity is rejected with 401 instead of creating an account.
 async function connectByPatIdentity(
   provider: ProviderName,
   username: string,
@@ -144,31 +145,18 @@ async function connectByPatIdentity(
   const existing = await prisma.gitConnection.findFirst({
     where: { provider, username, baseUrl: baseUrl ?? null },
   });
-  if (existing) {
-    const connection = await prisma.gitConnection.update({
-      where: { id: existing.id },
-      // A PAT replaces any OAuth tokens: clear the refresh flow's fields.
-      data: { accessTokenEnc, tokenType: 'pat', refreshTokenEnc: null, tokenExpiresAt: null },
-      select: connectionSelect,
-    });
-    setAuthCookie(reply, existing.userId);
-    await syncConnectionByIdBestEffort(connection.id, request.log);
-    return reply.code(200).send({ connection });
+  if (!existing) {
+    return reply.code(401).send({ error: 'No account matches this token' });
   }
-  const user = await prisma.user.create({
-    data: {
-      gitConnections: {
-        create: { provider, username, baseUrl: baseUrl ?? null, accessTokenEnc },
-      },
-    },
-    include: { gitConnections: { select: connectionSelect } },
+  const connection = await prisma.gitConnection.update({
+    where: { id: existing.id },
+    // A PAT replaces any OAuth tokens: clear the refresh flow's fields.
+    data: { accessTokenEnc, tokenType: 'pat', refreshTokenEnc: null, tokenExpiresAt: null },
+    select: connectionSelect,
   });
-  setAuthCookie(reply, user.id);
-  const connection = user.gitConnections[0];
-  if (connection) {
-    await syncConnectionByIdBestEffort(connection.id, request.log);
-  }
-  return reply.code(201).send({ connection });
+  setAuthCookie(reply, existing.userId);
+  await syncConnectionByIdBestEffort(connection.id, request.log);
+  return reply.code(200).send({ connection });
 }
 
 async function listConnections(request: FastifyRequest) {
@@ -188,8 +176,8 @@ async function listConnections(request: FastifyRequest) {
 // GitHub/GitLab). Validates the token against the provider before storing.
 //
 // Doubles as login when no session exists: without a valid auth cookie the
-// PAT identifies the user — the connection (and, on first use, the user) is
-// found or created and a JWT session cookie is set. With a session it
+// PAT identifies the user — the connection must already exist (this route
+// never creates accounts) and a JWT session cookie is set. With a session it
 // attaches the connection to the authenticated user as before.
 async function connectWithPat(request: FastifyRequest, reply: FastifyReply) {
   const data = parseOrReply(connectBodySchema, request.body, reply, 'Invalid body', {
