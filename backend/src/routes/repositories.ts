@@ -1,7 +1,13 @@
 import type { FastifyPluginAsync } from 'fastify';
+import path from 'node:path';
 import { z } from 'zod';
+import { config } from '../config.js';
+import { cleanupWorkdir, cloneRepository } from '../lib/agent-git.js';
+import { cloneUrlWithToken } from '../lib/git-providers.js';
 import { prisma } from '../lib/prisma.js';
+import { listWorkdirFolders } from '../lib/repo-folders.js';
 import { findUnknownSkillSlugs, isAgentsMdSkill } from '../lib/task-skills.js';
+import { withGitlabRefreshRetry } from '../lib/token-refresh.js';
 import { authenticatedUserId, requireAuth } from '../plugins/auth.js';
 import { parseOrReply } from './helpers.js';
 
@@ -127,6 +133,34 @@ const repositoriesRoutes: FastifyPluginAsync = async (app) => {
       data: buildBulkFlagsUpdate(data),
     });
     return { updated: result.count };
+  });
+
+  // Directory tree of the repository (no files): shallow-cloned on demand
+  // for the AGENTS.md per-folder assignment UI.
+  app.get('/repositories/:id/folders', async (request, reply) => {
+    const userId = authenticatedUserId(request);
+    const params = parseOrReply(idParamsSchema, request.params, reply, 'Invalid repository id');
+    if (params === null) return;
+    const repository = await prisma.repository.findFirst({
+      where: { id: params.id, connection: { userId } },
+      include: { connection: true },
+    });
+    if (!repository) {
+      return reply.code(404).send({ error: 'Repository not found' });
+    }
+    const secrets: string[] = [];
+    const workdir = path.join(config.AGENT_WORKDIR, `folders-${repository.id}`);
+    try {
+      const token = await withGitlabRefreshRetry(repository.connection, async (t) => t);
+      secrets.push(token);
+      const cloneUrl = cloneUrlWithToken(repository.cloneUrl, token);
+      secrets.push(cloneUrl);
+      await cloneRepository(workdir, cloneUrl, repository.defaultBranch, secrets);
+      const folders = await listWorkdirFolders(workdir);
+      return { folders };
+    } finally {
+      await cleanupWorkdir(workdir);
+    }
   });
 
   app.patch('/repositories/:id', async (request, reply) => {

@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { ChevronLeft, ChevronRight, Search } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Search, X } from 'lucide-react';
 
 import { canNextPage, canPrevPage, pageCount, type LibraryItem, type LibraryPage } from '@/lib/library';
 import { Button } from '@/components/ui/button';
@@ -115,8 +115,21 @@ export function LibrarySearchSelect(props: LibrarySearchSelectProps) {
           }}
           placeholder={props.placeholder}
           aria-label={props.label}
-          className="h-9 pl-8"
+          className="h-9 pl-8 pr-8"
         />
+        {props.search !== '' && (
+          <button
+            type="button"
+            aria-label={`Clear ${props.label}`}
+            onClick={() => {
+              props.onSearchChange('');
+              props.onPageChange(1);
+            }}
+            className="absolute right-2 top-2.5 rounded-full p-0.5 text-muted-foreground hover:bg-accent hover:text-foreground"
+          >
+            <X className="h-3.5 w-3.5" aria-hidden />
+          </button>
+        )}
       </div>
       {active && (
         <div className="rounded-md border" role="listbox" aria-label={`${props.label} results`}>

@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Search } from 'lucide-react';
+import { Search, X } from 'lucide-react';
 
 import {
   useSkillCategories,
@@ -185,8 +185,18 @@ export function SkillsDialog({
                 onChange={(event) => draft.setSearch(event.target.value)}
                 placeholder="Search skills by name or content…"
                 aria-label="Search skills"
-                className="pl-8"
+                className="pl-8 pr-8"
               />
+              {draft.search !== '' && (
+                <button
+                  type="button"
+                  aria-label="Clear search"
+                  onClick={() => draft.setSearch('')}
+                  className="absolute right-2 top-2.5 rounded-full p-0.5 text-muted-foreground hover:bg-accent hover:text-foreground"
+                >
+                  <X className="h-3.5 w-3.5" aria-hidden />
+                </button>
+              )}
             </div>
             <Select
               value={draft.category ?? 'all'}

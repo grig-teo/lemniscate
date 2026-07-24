@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { X } from 'lucide-react';
+import { FolderTree, Loader2, X } from 'lucide-react';
 
 import {
   AGENTS_MD_MAX_CHARS,
@@ -12,6 +12,7 @@ import type { LibraryAttachmentsState } from '@/lib/library-attachments';
 import { McpCreateEntry, SkillUploadEntry } from '@/components/library/LibraryCreateEntry';
 import { LibrarySearchSelect } from '@/components/library/LibrarySearchSelect';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 
 /**
  * Reusable library-attachment editor: skills multi-select, MCP servers
@@ -189,16 +190,19 @@ function FolderRow({ folder, state }: { folder: string; state: LibraryAttachment
 export function LibraryAttachments({
   state,
   columns = false,
+  onLoadFolders,
 }: {
   state: LibraryAttachmentsState;
   /** Render the three sections side by side on one line (sm+). */
   columns?: boolean;
+  /** When set, an AGENTS.md section button loads the repository's folder tree. */
+  onLoadFolders?: () => Promise<string[]>;
 }) {
   if (columns) {
     return (
       <div className="grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-3">
         <SkillsSection state={state} />
-        <AgentsMdSection state={state} />
+        <AgentsMdSection state={state} onLoadFolders={onLoadFolders} />
         <McpSection state={state} />
       </div>
     );
@@ -207,18 +211,62 @@ export function LibraryAttachments({
     <div className="flex min-w-0 flex-col gap-3">
       <SkillsSection state={state} />
       <McpSection state={state} />
-      <AgentsMdSection state={state} />
+      <AgentsMdSection state={state} onLoadFolders={onLoadFolders} />
     </div>
   );
 }
 
-function AgentsMdSection({ state }: { state: LibraryAttachmentsState }) {
+function AgentsMdSection({
+  state,
+  onLoadFolders,
+}: {
+  state: LibraryAttachmentsState;
+  onLoadFolders?: () => Promise<string[]>;
+}) {
   return (
     <section className="flex min-w-0 flex-col gap-1.5">
       <SectionLabel>AGENTS.md per folder</SectionLabel>
       {state.agentsMd.folders.map((folder) => (
         <FolderRow key={folder} folder={folder} state={state} />
       ))}
+      {onLoadFolders && (
+        <LoadFoldersButton
+          onLoad={async () => {
+            state.agentsMd.replaceFolders(await onLoadFolders());
+          }}
+        />
+      )}
     </section>
+  );
+}
+
+function LoadFoldersButton({ onLoad }: { onLoad: () => Promise<void> }) {
+  const [loading, setLoading] = React.useState(false);
+  const [error, setError] = React.useState<string | null>(null);
+  return (
+    <div className="flex flex-col gap-1">
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        className="h-8 gap-1.5 self-start"
+        disabled={loading}
+        onClick={() => {
+          setLoading(true);
+          setError(null);
+          onLoad()
+            .catch((err: unknown) => setError(err instanceof Error ? err.message : 'Failed to load'))
+            .finally(() => setLoading(false));
+        }}
+      >
+        {loading ? (
+          <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+        ) : (
+          <FolderTree className="h-3.5 w-3.5" aria-hidden />
+        )}
+        Load repo folders
+      </Button>
+      {error && <p className="text-xs text-destructive">{error}</p>}
+    </div>
   );
 }
