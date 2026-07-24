@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import { ChevronLeft, ChevronRight, Search } from 'lucide-react';
 
 import { canNextPage, canPrevPage, pageCount, type LibraryItem, type LibraryPage } from '@/lib/library';
@@ -22,6 +23,8 @@ export interface LibrarySearchSelectProps {
   isLoading: boolean;
   isSelected: (item: LibraryItem) => boolean;
   onToggle: (item: LibraryItem) => void;
+  /** Rendered instead of "Nothing matches." — e.g. an inline create form. */
+  emptyContent?: ReactNode;
 }
 
 function ResultRow({
@@ -122,7 +125,9 @@ export function LibrarySearchSelect(props: LibrarySearchSelectProps) {
               <p className="px-2 py-3 text-sm text-muted-foreground">Searching…</p>
             )}
             {!props.isLoading && (props.result?.items.length ?? 0) === 0 && (
-              <p className="px-2 py-3 text-sm text-muted-foreground">Nothing matches.</p>
+              props.emptyContent ?? (
+                <p className="px-2 py-3 text-sm text-muted-foreground">Nothing matches.</p>
+              )
             )}
             {props.result?.items.map((item) => (
               <ResultRow

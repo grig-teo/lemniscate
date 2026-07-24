@@ -9,6 +9,7 @@ import {
 } from '@/lib/create-repo';
 import { useMcpLibrary, useSkillLibrary } from '@/lib/library';
 import type { LibraryAttachmentsState } from '@/lib/library-attachments';
+import { McpCreateEntry, SkillUploadEntry } from '@/components/library/LibraryCreateEntry';
 import { LibrarySearchSelect } from '@/components/library/LibrarySearchSelect';
 import { Badge } from '@/components/ui/badge';
 
@@ -67,6 +68,7 @@ function SkillsSection({ state }: { state: LibraryAttachmentsState }) {
         isLoading={result.isFetching}
         isSelected={(item) => state.skills.selected.has(item.slug)}
         onToggle={state.skills.toggle}
+        emptyContent={<SkillUploadEntry onCreated={state.skills.toggle} />}
       />
     </section>
   );
@@ -89,6 +91,7 @@ function McpSection({ state }: { state: LibraryAttachmentsState }) {
         isLoading={result.isFetching}
         isSelected={(item) => state.mcpServers.selected.has(item.slug)}
         onToggle={state.mcpServers.toggle}
+        emptyContent={<McpCreateEntry onCreated={state.mcpServers.toggle} />}
       />
     </section>
   );
