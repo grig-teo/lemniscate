@@ -1,4 +1,5 @@
 import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
+import type { Prisma } from '@prisma/client';
 import { Redis } from 'ioredis';
 import { z } from 'zod';
 import { config } from '../config.js';
@@ -6,7 +7,14 @@ import { enqueueRunTask, getAgentTasksQueue } from '../lib/proposal-scheduler.js
 import { prisma } from '../lib/prisma.js';
 import { attachmentsData, taskImagesSchema, taskThinkingLevelSchema } from '../lib/task-attachments.js';
 import { publishTaskEvent, serializeTaskEvent } from '../lib/task-events.js';
-import { parseSkillSlugs } from '../lib/task-skills.js';
+import {
+  findUnknownMcpServerSlugs,
+  findUnknownSkillSlugs,
+  isAgentsMdSkill,
+  parseSkillSlugs,
+  resolveAgentsMdFileContents,
+  resolveMcpServerConfigs,
+} from '../lib/task-skills.js';
 import { authenticatedUserId, requireAuth } from '../plugins/auth.js';
 import { parseOrReply } from './helpers.js';
 
@@ -48,7 +56,26 @@ const createBodySchema = z
   })
   .strict();
 
-// Optional edits applied when a pending proposal is started. Absent body
+// Per-folder AGENTS.md attachment entry: uploaded content or an agents_md
+// template skill id. Shared by the start and PATCH bodies.
+const agentsMdFileSchema = z.object({
+  folder: z.string().min(1).max(500),
+  skillId: z.string().min(1).optional(),
+  content: z.string().max(100_000).optional(),
+});
+
+// Editable library attachments on a pending task. Undefined = leave the
+// stored value untouched; an explicit empty array clears it.
+const attachmentFieldsSchema = z.object({
+  // Skill slugs injected into the agent's system prompt for this run.
+  skills: z.array(z.string().min(1)).max(20).optional(),
+  // MCP server slugs materialized as .mcp.json in the workdir.
+  mcpServerSlugs: z.array(z.string().min(1)).max(20).optional(),
+  // Per-folder AGENTS.md files written into the workdir.
+  agentsMdFiles: z.array(agentsMdFileSchema).max(50).optional(),
+});
+
+// Optional edits applied when a pending task is started. Absent body
 // (the left-nav play button) parses as {} and changes nothing.
 export const startBodySchema = z
   .object({
@@ -56,9 +83,21 @@ export const startBodySchema = z
     prompt: promptSchema.optional(),
     images: taskImagesSchema.optional(),
   })
+  .merge(attachmentFieldsSchema)
   .strict()
   .default({});
 export type StartBody = z.infer<typeof startBodySchema>;
+
+// PATCH /tasks/:id — save edits on a pending task without starting it.
+export const patchBodySchema = z
+  .object({
+    title: z.string().min(1).max(200).optional(),
+    prompt: promptSchema.optional(),
+    images: taskImagesSchema.optional(),
+  })
+  .merge(attachmentFieldsSchema)
+  .strict();
+export type PatchBody = z.infer<typeof patchBodySchema>;
 
 const idParamsSchema = z.object({ id: z.string().min(1) });
 
@@ -211,15 +250,50 @@ export function startBlocker(task: { kind: string; status: string }): string | n
   return null;
 }
 
-// Update applied when a proposal is started: always queues the task; any
-// edited fields (title/prompt/attachments) are written in the same update.
+// Update applied when a pending task is started: always queues the task; any
+// edited fields (title/prompt/attachments/library selections) are written in
+// the same update. Undefined attachment fields leave the column untouched;
+// an explicit empty array clears it.
 export function buildStartUpdate(body: StartBody) {
   return {
     status: 'queued' as const,
     ...(body.title !== undefined ? { title: body.title } : {}),
     ...(body.prompt !== undefined ? { prompt: body.prompt } : {}),
     ...attachmentsData(body.images),
+    ...(body.skills !== undefined ? { skills: body.skills } : {}),
   };
+}
+
+// Async part of the attachment update: slugs are resolved to the stored
+// configs/contents so a later library edit can't retroactively change the run.
+export async function resolveAttachmentUpdate(body: PatchBody) {
+  return {
+    ...(body.mcpServerSlugs !== undefined
+      ? { mcpServers: (await resolveMcpServerConfigs(body.mcpServerSlugs)) as Prisma.InputJsonValue }
+      : {}),
+    ...(body.agentsMdFiles !== undefined
+      ? { agentsMdFiles: (await resolveAgentsMdFileContents(body.agentsMdFiles)) as Prisma.InputJsonValue }
+      : {}),
+  };
+}
+
+// Validates the attachment fields of a start/PATCH body; returns the 400
+// message or null. Unknown slugs are named in the error.
+export async function attachmentValidationError(body: PatchBody): Promise<string | null> {
+  if (body.skills) {
+    const unknown = await findUnknownSkillSlugs(body.skills);
+    if (unknown.length > 0) return `Unknown skill slug(s): ${unknown.join(', ')}`;
+  }
+  if (body.mcpServerSlugs) {
+    const unknown = await findUnknownMcpServerSlugs(body.mcpServerSlugs);
+    if (unknown.length > 0) return `Unknown MCP server slug(s): ${unknown.join(', ')}`;
+  }
+  for (const entry of body.agentsMdFiles ?? []) {
+    if (entry.skillId && !(await isAgentsMdSkill(entry.skillId))) {
+      return `agentsMdFiles skillId does not reference an AGENTS.md skill: ${entry.skillId}`;
+    }
+  }
+  return null;
 }
 
 // Start a pending proposal task: apply any edits, mark it queued, and
@@ -243,13 +317,55 @@ async function startTask(request: FastifyRequest, reply: FastifyReply) {
   if (blocker) {
     return reply.code(400).send({ error: blocker });
   }
+  const validationError = await attachmentValidationError(body);
+  if (validationError) {
+    return reply.code(400).send({ error: validationError });
+  }
 
   // Enqueue before the status update: a failed enqueue must not strand the
   // task in 'queued' without a job (the worker also sweeps these at boot).
   await enqueueRunTask(task.id);
   const updated = await prisma.task.update({
     where: { id: task.id },
-    data: buildStartUpdate(body),
+    data: { ...buildStartUpdate(body), ...(await resolveAttachmentUpdate(body)) },
+  });
+  return { task: updated };
+}
+
+// Save edits on a pending proposal/prompt without starting it. Same body and
+// validation as start; the task stays pending.
+async function patchTask(request: FastifyRequest, reply: FastifyReply) {
+  const userId = authenticatedUserId(request);
+  const params = parseOrReply(idParamsSchema, request.params, reply, 'Invalid task id');
+  if (params === null) return;
+  const body = parseOrReply(patchBodySchema, request.body ?? {}, reply, 'Invalid request body', {
+    includeIssues: true,
+  });
+  if (body === null) return;
+  const task = await prisma.task.findFirst({
+    where: ownedTaskWhere(userId, params.id),
+    select: { id: true, kind: true, status: true },
+  });
+  if (!task) {
+    return reply.code(404).send({ error: 'Task not found' });
+  }
+  const blocker = startBlocker(task);
+  if (blocker) {
+    return reply.code(400).send({ error: blocker });
+  }
+  const validationError = await attachmentValidationError(body);
+  if (validationError) {
+    return reply.code(400).send({ error: validationError });
+  }
+  const updated = await prisma.task.update({
+    where: { id: task.id },
+    data: {
+      ...(body.title !== undefined ? { title: body.title } : {}),
+      ...(body.prompt !== undefined ? { prompt: body.prompt } : {}),
+      ...attachmentsData(body.images),
+      ...(body.skills !== undefined ? { skills: body.skills } : {}),
+      ...(await resolveAttachmentUpdate(body)),
+    },
   });
   return { task: updated };
 }
@@ -400,6 +516,7 @@ const tasksRoutes: FastifyPluginAsync = async (app) => {
   app.post('/tasks', createTask);
   app.get('/tasks/:id', getTask);
   app.post('/tasks/:id/start', startTask);
+  app.patch('/tasks/:id', patchTask);
   app.post('/tasks/:id/rerun', rerunTask);
   app.post('/tasks/:id/cancel', cancelTask);
   app.post('/tasks/:id/archive', archiveTask);

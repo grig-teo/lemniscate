@@ -1,4 +1,5 @@
 import path from 'node:path';
+import fs from 'node:fs/promises';
 import { config } from '../config.js';
 import {
   applyChanges,
@@ -29,6 +30,7 @@ import { prisma } from './prisma.js';
 import { enqueueReviewTask } from './proposal-scheduler.js';
 import { openPullRequest } from './pull-requests.js';
 import { buildRepoContext } from './repo-context.js';
+import { buildTaskAttachmentFiles } from './repo-init.js';
 import { loadAgentsMdTemplate, loadTaskSkills } from './task-skills.js';
 import { setTaskStatus } from './task-events.js';
 
@@ -56,6 +58,19 @@ async function prepareEmptyRepoBranch(task: TaskWithRepo): Promise<string> {
   await logEvent(task.id, `bootstrapping empty repository on ${branchName}`);
   await prisma.task.update({ where: { id: task.id }, data: { branchName } });
   return branchName;
+}
+
+// Library attachments selected for this run (.mcp.json, per-folder
+// AGENTS.md) are written into the workdir before the agent starts, so they
+// become part of the task's own commit.
+async function writeTaskAttachments(task: TaskWithRepo, workdir: string): Promise<void> {
+  const files = buildTaskAttachmentFiles(task);
+  for (const file of files) {
+    const target = path.join(workdir, file.path);
+    await fs.mkdir(path.dirname(target), { recursive: true });
+    await fs.writeFile(target, file.content, 'utf8');
+    await logEvent(task.id, `attached ${file.path}`);
+  }
 }
 
 async function createTaskBranch(
@@ -238,6 +253,7 @@ async function executeRunTask(
   const branchName = emptyRepo
     ? await prepareEmptyRepoBranch(task)
     : await createTaskBranch(task, rt, workdir);
+  await writeTaskAttachments(task, workdir);
   const summary = await implementTask(task, rt, workdir, secrets);
   if (summary === null) {
     await logEvent(task.id, 'no changes produced; nothing to commit');

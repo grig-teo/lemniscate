@@ -149,6 +149,12 @@ model Task {
   // Slugs of skills (Skill model) injected into the agent's system prompt
   // for this run; string[] stored as JSON. Null = repository default.
   skills       Json?
+  // MCP servers attached to this run: { "<slug>": <config> } — materialized
+  // as .mcp.json in the workdir before the agent starts.
+  mcpServers   Json?
+  // Per-folder AGENTS.md attachments: [{ "folder": "src/api", "content": "..." }]
+  // — written into the workdir before the agent starts.
+  agentsMdFiles Json?
   // Cumulative LLM token usage across run/review/fix jobs; seeds the
   // maxTokensPerRun budget so it spans the whole task, not a single job.
   llmTokensUsed Int        @default(0)

@@ -17,9 +17,12 @@ import {
   syncConnectionRepositories,
 } from '../lib/repo-sync.js';
 import {
+  findUnknownMcpServerSlugs,
   findUnknownSkillSlugs,
   isAgentsMdSkill,
   loadAgentsMdTemplate,
+  resolveAgentsMdFileContents,
+  resolveMcpServerConfigs,
 } from '../lib/task-skills.js';
 import {
   AUTH_COOKIE,
@@ -305,12 +308,7 @@ async function resolveAgentsMdFiles(input: CreateRepoBody) {
     const content = await resolveRootAgentsMd(input);
     return content ? [{ folder: '/', content }] : [];
   }
-  const files: { folder: string; content: string }[] = [];
-  for (const entry of input.agentsMdFiles) {
-    const content = entry.content ?? (entry.skillId ? await loadAgentsMdTemplate({ agentsMdSkillId: entry.skillId }) : null);
-    if (content) files.push({ folder: entry.folder, content });
-  }
-  return files;
+  return resolveAgentsMdFileContents(input.agentsMdFiles);
 }
 
 // Selected skills as commit-ready SKILL.md inputs (kind 'skill' rows only —
@@ -321,16 +319,6 @@ async function resolveSkillFiles(input: CreateRepoBody) {
     where: { slug: { in: input.skillSlugs }, kind: 'skill' },
     select: { slug: true, name: true, description: true, content: true },
   });
-}
-
-// Selected MCP servers as the `.mcp.json` "mcpServers" map (slug → config).
-async function resolveMcpServers(input: CreateRepoBody): Promise<Record<string, unknown>> {
-  if (!input.mcpServerSlugs || input.mcpServerSlugs.length === 0) return {};
-  const rows = await prisma.mcpServer.findMany({
-    where: { slug: { in: input.mcpServerSlugs } },
-    select: { slug: true, config: true },
-  });
-  return Object.fromEntries(rows.map((row) => [row.slug, row.config]));
 }
 
 // Seeds the default branch with README.md / AGENTS.md / .agents/skills /
@@ -345,7 +333,7 @@ async function initializeNewRepo(
     readme: input.readme,
     agentsMdFiles: await resolveAgentsMdFiles(input),
     skillFiles: await resolveSkillFiles(input),
-    mcpServers: await resolveMcpServers(input),
+    mcpServers: await resolveMcpServerConfigs(input.mcpServerSlugs ?? []),
   });
   return initializeRepoFiles(client, repository.fullName, repository.defaultBranch, files);
 }
@@ -404,15 +392,6 @@ async function applyRepoSelections(
         : {}),
     },
   });
-}
-
-async function findUnknownMcpServerSlugs(slugs: string[]): Promise<string[]> {
-  const rows = await prisma.mcpServer.findMany({
-    where: { slug: { in: slugs } },
-    select: { slug: true },
-  });
-  const known = new Set(rows.map((row) => row.slug));
-  return slugs.filter((slug) => !known.has(slug));
 }
 
 async function validateAgentsMdFiles(input: CreateRepoBody): Promise<string | null> {

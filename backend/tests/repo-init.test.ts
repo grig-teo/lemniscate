@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   buildRepoInitFiles,
+  buildTaskAttachmentFiles,
   initializeRepoFiles,
 } from '../src/lib/repo-init.js';
 import type { CreateFileInput } from '../src/lib/git-providers.js';
@@ -101,6 +102,37 @@ describe('buildRepoInitFiles', () => {
     expect(() =>
       buildRepoInitFiles({ repoName: 'demo', readme: false, agentsMdFiles: [{ folder: '../evil', content: '# x\n' }] }),
     ).toThrow();
+  });
+});
+
+describe('buildTaskAttachmentFiles', () => {
+  it('returns no files when the task has no attachments', () => {
+    expect(buildTaskAttachmentFiles({})).toEqual([]);
+    expect(buildTaskAttachmentFiles({ mcpServers: {}, agentsMdFiles: [] })).toEqual([]);
+  });
+
+  it('builds a root .mcp.json from the stored server map', () => {
+    const files = buildTaskAttachmentFiles({ mcpServers: { fetch: { command: 'uvx' } } });
+    expect(files).toEqual([
+      {
+        path: '.mcp.json',
+        content: JSON.stringify({ mcpServers: { fetch: { command: 'uvx' } } }, null, 2) + '\n',
+        message: 'Add .mcp.json',
+      },
+    ]);
+  });
+
+  it('builds per-folder AGENTS.md files and skips malformed entries', () => {
+    const files = buildTaskAttachmentFiles({
+      agentsMdFiles: [
+        { folder: '/', content: '# Root\n' },
+        { folder: 'src/api', content: '# API\n' },
+        { folder: 'src', content: '' },
+        { folder: 42 },
+        'garbage',
+      ],
+    });
+    expect(files.map((file) => file.path)).toEqual(['AGENTS.md', 'src/api/AGENTS.md']);
   });
 });
 

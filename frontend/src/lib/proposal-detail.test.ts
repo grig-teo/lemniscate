@@ -4,6 +4,10 @@ import type { TaskImage } from '@/lib/hooks';
 import {
   appendMarkdownToPrompt,
   buildStartTaskBody,
+  buildTaskEditBody,
+  taskAgentsMdInitial,
+  taskMcpSelections,
+  taskSkillSelections,
 } from '@/lib/proposal-detail';
 import { isPendingProposal } from '@/lib/repo-tasks';
 
@@ -61,5 +65,57 @@ describe('buildStartTaskBody', () => {
     expect(buildStartTaskBody({ task, title: 'Old title', prompt: 'Old prompt', images })).toEqual(
       { images },
     );
+  });
+});
+
+describe('buildTaskEditBody', () => {
+  const task = { title: 'T', prompt: 'P' };
+  const selections = {
+    skillSlugs: ['code-review'],
+    mcpServerSlugs: ['fetch'],
+    agentsMdFiles: [{ folder: '/', skillId: 's1' }],
+  };
+
+  it('always carries the full library selections', () => {
+    const body = buildTaskEditBody({ task, title: 'T', prompt: 'P', images: [], selections });
+    expect(body).toEqual({
+      skills: ['code-review'],
+      mcpServerSlugs: ['fetch'],
+      agentsMdFiles: [{ folder: '/', skillId: 's1' }],
+    });
+  });
+
+  it('includes title/prompt only when edited, images when attached', () => {
+    const images: TaskImage[] = [{ name: 'a.png', dataUrl: 'data:image/png;base64,x' }];
+    const body = buildTaskEditBody({ task, title: 'T2', prompt: 'P2', images, selections });
+    expect(body.title).toBe('T2');
+    expect(body.prompt).toBe('P2');
+    expect(body.images).toEqual(images);
+  });
+});
+
+describe('prefill helpers', () => {
+  it('taskSkillSelections maps slugs to names, falling back to the slug', () => {
+    const map = taskSkillSelections(['a', 'b'], [{ slug: 'a', name: 'Alpha' }]);
+    expect(map.get('a')).toBe('Alpha');
+    expect(map.get('b')).toBe('b');
+    expect(taskSkillSelections(null, []).size).toBe(0);
+  });
+
+  it('taskMcpSelections uses the stored map keys', () => {
+    const map = taskMcpSelections({ fetch: { command: 'uvx' } });
+    expect(map.get('fetch')).toBe('fetch');
+    expect(taskMcpSelections(undefined).size).toBe(0);
+  });
+
+  it('taskAgentsMdInitial turns stored files into saved-file assignments', () => {
+    const initial = taskAgentsMdInitial([
+      { folder: '/src', content: '# API\n' },
+      { folder: 42 },
+      'garbage',
+    ]);
+    expect(initial).toHaveLength(1);
+    expect(initial[0].folder).toBe('/src');
+    expect(initial[0].value.upload?.content).toBe('# API\n');
   });
 });

@@ -48,6 +48,49 @@ export async function findUnknownSkillSlugs(slugs: string[]): Promise<string[]> 
   return slugs.filter((slug) => !known.has(slug));
 }
 
+// MCP-server slugs from a request body that have no McpServer row — same
+// 400-with-names contract as findUnknownSkillSlugs.
+export async function findUnknownMcpServerSlugs(slugs: string[]): Promise<string[]> {
+  const rows = await prisma.mcpServer.findMany({
+    where: { slug: { in: slugs } },
+    select: { slug: true },
+  });
+  const known = new Set(rows.map((row) => row.slug));
+  return slugs.filter((slug) => !known.has(slug));
+}
+
+// MCP server slug → config map for the `.mcp.json` materialization.
+export async function resolveMcpServerConfigs(slugs: string[]): Promise<Record<string, unknown>> {
+  if (slugs.length === 0) return {};
+  const rows = await prisma.mcpServer.findMany({
+    where: { slug: { in: slugs } },
+    select: { slug: true, config: true },
+  });
+  return Object.fromEntries(rows.map((row) => [row.slug, row.config]));
+}
+
+export interface AgentsMdFileInput {
+  folder: string;
+  skillId?: string;
+  content?: string;
+}
+
+// Per-folder AGENTS.md entries with the template content inlined: an uploaded
+// custom text wins over the referenced template skill. Entries with neither
+// are dropped.
+export async function resolveAgentsMdFileContents(
+  entries: AgentsMdFileInput[],
+): Promise<{ folder: string; content: string }[]> {
+  const files: { folder: string; content: string }[] = [];
+  for (const entry of entries) {
+    const content =
+      entry.content ??
+      (entry.skillId ? await loadAgentsMdTemplate({ agentsMdSkillId: entry.skillId }) : null);
+    if (content) files.push({ folder: entry.folder, content });
+  }
+  return files;
+}
+
 export async function isAgentsMdSkill(id: string): Promise<boolean> {
   const skill = await prisma.skill.findUnique({ where: { id }, select: { kind: true } });
   return skill?.kind === 'agents_md';

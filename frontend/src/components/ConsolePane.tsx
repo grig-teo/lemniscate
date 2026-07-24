@@ -1,6 +1,6 @@
 import { Terminal } from 'lucide-react';
 
-import { isPendingProposal } from '@/lib/repo-tasks';
+import { isStartableTask } from '@/lib/repo-tasks';
 import { useWorkspaceSelection } from '@/lib/selection';
 
 import { ConsoleHeader } from '@/components/console/ConsoleHeader';
@@ -36,8 +36,9 @@ function EmptyConsole() {
  * GET /api/tasks/:id/events, then streamed over SSE (same endpoint, which
  * replays history first — replayed events are deduped by id). `status`
  * events update the header badge. See console/useTaskConsole.ts.
- * A pending proposal shows the editable ProposalDetail instead of the log;
- * once started it flips to queued and the log view takes over.
+ * A pending task (proposal or saved-for-later prompt) shows the editable
+ * ProposalDetail instead of the log; once started it flips to queued and
+ * the log view takes over.
  * With no task selected the composer (ComposerCard) renders inline in the
  * empty console; once a task is selected, the floating + button opens the
  * same composer as the TaskComposerDialog modal. When the repo tree's
@@ -54,11 +55,11 @@ export function ConsolePane() {
   if (!selectedTask) return <EmptyConsole />;
 
   const status = liveStatus ?? consoleState.historyStatus ?? selectedTask.status;
-  const showProposalDetail = isPendingProposal(selectedTask) && status === 'pending';
+  const showTaskDetail = isStartableTask(selectedTask) && status === 'pending';
   return (
     <section className="relative flex h-full min-w-0 flex-1 flex-col">
       <ConsoleHeader task={selectedTask} status={status} />
-      {showProposalDetail ? (
+      {showTaskDetail ? (
         <ProposalDetail key={selectedTask.id} taskId={selectedTask.id} />
       ) : (
         <ConsoleLog

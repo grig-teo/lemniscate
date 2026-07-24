@@ -9,14 +9,13 @@ import {
 } from '@/lib/create-repo';
 import { useConnections, type Connection, type Repository } from '@/lib/hooks';
 import { useAgentsMdTemplates } from '@/lib/library';
+import { useLibraryAttachments } from '@/lib/library-attachments';
 import { providerLabel } from '@/lib/providers';
 import { useWorkspaceSelection } from '@/lib/selection';
+import { LibraryAttachments } from '@/components/library/LibraryAttachments';
 import {
-  InitProjectSection,
-  McpSection,
-  SkillsSection,
+  InitPromptSection,
   useInitProject,
-  useLibraryMultiSelect,
 } from '@/components/repo-tree/CreateRepoSections';
 import { Button } from '@/components/ui/button';
 import {
@@ -65,17 +64,23 @@ function useCreateRepository(
 }
 
 /** Form state and the submit handler for the dialog. */
-function useCreateRepoForm(onOpenChange: (open: boolean) => void) {
+function useCreateRepoForm(onOpenChange: (open: boolean) => void, connections: Connection[]) {
   const [connectionId, setConnectionId] = React.useState('');
   const [name, setName] = React.useState('');
   const [isPrivate, setIsPrivate] = React.useState(true);
   const [readme, setReadme] = React.useState(true);
   const [initialized, setInitialized] = React.useState<CreateRepoInitialized | null>(null);
-  const skills = useLibraryMultiSelect();
-  const mcpServers = useLibraryMultiSelect();
-  const init = useInitProject();
+  const attachments = useLibraryAttachments();
+  const init = useInitProject((folders) => attachments.agentsMd.replaceFolders(folders));
   const templates = useAgentsMdTemplates();
   const selection = useWorkspaceSelection();
+
+  // A single connection is preselected — nothing else to pick.
+  React.useEffect(() => {
+    if (connections.length === 1 && !connectionId) {
+      setConnectionId(connections[0].id);
+    }
+  }, [connections, connectionId]);
 
   const defaultTemplateId = React.useMemo(() => {
     const all = templates.data ?? [];
@@ -88,8 +93,7 @@ function useCreateRepoForm(onOpenChange: (open: boolean) => void) {
     setIsPrivate(true);
     setReadme(true);
     setInitialized(null);
-    skills.reset();
-    mcpServers.reset();
+    attachments.reset();
     init.reset();
   }
 
@@ -124,10 +128,10 @@ function useCreateRepoForm(onOpenChange: (open: boolean) => void) {
       name,
       isPrivate,
       readme,
-      skillSlugs: skills.slugs,
-      mcpServerSlugs: mcpServers.slugs,
+      skillSlugs: attachments.skills.slugs,
+      mcpServerSlugs: attachments.mcpServers.slugs,
       initPrompt: init.prompt,
-      agentsMdFiles: init.agentsMdFiles(defaultTemplateId),
+      agentsMdFiles: attachments.agentsMd.toAssignments(defaultTemplateId),
     });
     createRepo.mutate({ connectionId, body });
   }
@@ -141,8 +145,7 @@ function useCreateRepoForm(onOpenChange: (open: boolean) => void) {
     setIsPrivate,
     readme,
     setReadme,
-    skills,
-    mcpServers,
+    attachments,
     init,
     initialized,
     createRepo,
@@ -236,7 +239,7 @@ export function CreateRepoDialog({
   onOpenChange: (open: boolean) => void;
 }) {
   const connections = useConnections();
-  const form = useCreateRepoForm(onOpenChange);
+  const form = useCreateRepoForm(onOpenChange, connections.data ?? []);
   const canSubmit = Boolean(form.connectionId && form.name.trim()) && !form.createRepo.isPending;
 
   return (
@@ -284,11 +287,9 @@ export function CreateRepoDialog({
               onCheckedChange={form.setIsPrivate}
             />
 
-            <InitProjectSection init={form.init} />
+            <InitPromptSection init={form.init} />
 
-            <SkillsSection selection={form.skills} />
-
-            <McpSection selection={form.mcpServers} />
+            <LibraryAttachments state={form.attachments} />
 
             <ToggleRow
               label="Create README.md"

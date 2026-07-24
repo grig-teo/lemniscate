@@ -56,6 +56,40 @@ function mcpJsonContent(servers: Record<string, unknown>): string {
   return `${JSON.stringify({ mcpServers: servers }, null, 2)}\n`;
 }
 
+// Attachment files written into the cloned workdir before a task run:
+// `.mcp.json` from the task's stored MCP map and per-folder AGENTS.md files.
+export function buildTaskAttachmentFiles(task: {
+  mcpServers?: unknown;
+  agentsMdFiles?: unknown;
+}): RepoInitFile[] {
+  const files: RepoInitFile[] = [];
+  if (
+    typeof task.mcpServers === 'object' &&
+    task.mcpServers !== null &&
+    Object.keys(task.mcpServers).length > 0
+  ) {
+    files.push({
+      path: '.mcp.json',
+      content: mcpJsonContent(task.mcpServers as Record<string, unknown>),
+      message: 'Add .mcp.json',
+    });
+  }
+  if (Array.isArray(task.agentsMdFiles)) {
+    for (const entry of task.agentsMdFiles) {
+      if (typeof entry !== 'object' || entry === null) continue;
+      const { folder, content } = entry as { folder?: unknown; content?: unknown };
+      if (typeof folder !== 'string' || typeof content !== 'string' || content === '') continue;
+      const prefix = sanitizeFolder(folder);
+      files.push({
+        path: prefix === '' ? 'AGENTS.md' : `${prefix}/AGENTS.md`,
+        content,
+        message: prefix === '' ? 'Add AGENTS.md' : `Add ${prefix}/AGENTS.md`,
+      });
+    }
+  }
+  return files;
+}
+
 // Pure decision: which files the new repo gets. README first so the very
 // first commit of an empty repo is the README.
 export function buildRepoInitFiles(input: RepoInitPlanInput): RepoInitFile[] {
