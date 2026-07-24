@@ -121,6 +121,16 @@ function choiceSummary(choice: { skillId?: string; label?: string; upload?: Uplo
   return isRoot ? 'Default template' : 'None';
 }
 
+function OrDivider() {
+  return (
+    <div className="flex items-center gap-2 py-1" aria-hidden>
+      <span className="h-px flex-1 bg-border" />
+      <span className="text-[10px] font-medium uppercase text-muted-foreground">or</span>
+      <span className="h-px flex-1 bg-border" />
+    </div>
+  );
+}
+
 function FolderRow({ folder, state }: { folder: string; state: LibraryAttachmentsState }) {
   const { agentsMd } = state;
   const isRoot = folder === '/';
@@ -133,7 +143,7 @@ function FolderRow({ folder, state }: { folder: string; state: LibraryAttachment
         type="button"
         onClick={() => agentsMd.openPicker(isOpen ? null : folder)}
         aria-expanded={isOpen}
-        className="flex w-full min-w-0 items-center gap-2 px-2 py-1.5 text-left text-sm hover:bg-accent"
+        className="flex h-9 w-full min-w-0 items-center gap-2 px-2 text-left text-sm hover:bg-accent"
       >
         <span className="min-w-0 flex-1 truncate font-mono text-xs">{folder}</span>
         <span className="max-w-[45%] truncate text-xs text-muted-foreground">
@@ -159,6 +169,7 @@ function FolderRow({ folder, state }: { folder: string; state: LibraryAttachment
               )
             }
           />
+          <OrDivider />
           <FolderUploadInput
             onUpload={(upload) => agentsMd.assign(folder, { upload, label: upload.name })}
           />

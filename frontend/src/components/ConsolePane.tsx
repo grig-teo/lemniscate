@@ -62,14 +62,16 @@ export function ConsolePane() {
       {showTaskDetail ? (
         <ProposalDetail key={selectedTask.id} taskId={selectedTask.id} />
       ) : (
-        <ConsoleLog
-          historyQuery={consoleState.historyQuery}
-          historyLogs={consoleState.historyLogs}
-          liveLogs={consoleState.liveLogs}
-          streamError={consoleState.streamError}
-        />
+        <>
+          <ConsoleLog
+            historyQuery={consoleState.historyQuery}
+            historyLogs={consoleState.historyLogs}
+            liveLogs={consoleState.liveLogs}
+            streamError={consoleState.streamError}
+          />
+          <TaskComposerFab />
+        </>
       )}
-      <TaskComposerFab />
     </section>
   );
 }
