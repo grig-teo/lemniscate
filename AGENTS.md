@@ -98,7 +98,7 @@ production line is deleted or rewritten.
 ## Project layout
 
 ```
-docker-compose.yml    # postgres, redis, backend, worker, frontend
+docker-compose.yml    # postgres, redis, minio, backend, worker, frontend
 backend/              # Fastify API + BullMQ worker (npm run build / npm test)
 frontend/             # Vite/React app (npm run build = tsc --noEmit && vite build)
 android/              # native Android app, Kotlin + Compose Material 3 (gradle assembleDebug)

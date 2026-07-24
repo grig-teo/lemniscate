@@ -33,3 +33,22 @@ export function parseOrReply<S extends z.ZodTypeAny>(
   void reply.code(400).send(body);
   return null;
 }
+
+const DEFAULT_PAGE_SIZE = 5;
+
+export interface PageQuery {
+  skip: number;
+  take: number;
+  page: number;
+  pageSize: number;
+}
+
+// Shared list-pagination parsing: null when the caller sent no pagination
+// params (endpoint then keeps its legacy unpaginated shape), otherwise the
+// skip/take pair for Prisma plus the normalized page metadata.
+export function parsePageQuery(query: { page?: number; pageSize?: number }): PageQuery | null {
+  if (query.page === undefined && query.pageSize === undefined) return null;
+  const page = query.page ?? 1;
+  const pageSize = query.pageSize ?? DEFAULT_PAGE_SIZE;
+  return { skip: (page - 1) * pageSize, take: pageSize, page, pageSize };
+}

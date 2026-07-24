@@ -7,14 +7,22 @@
 /** Maximum characters kept from an uploaded AGENTS.md file. */
 export const AGENTS_MD_MAX_CHARS = 100_000;
 
+/** One AGENTS.md assignment: `skillId` (template) or `content` (upload). */
+export interface AgentsMdAssignment {
+  folder: string;
+  skillId?: string;
+  content?: string;
+}
+
 /** Form state slice relevant to the POST body. */
 export interface CreateRepoFormState {
   name: string;
   isPrivate: boolean;
   readme: boolean;
   skillSlugs: string[];
-  agentsMdSkillId: string | null;
-  agentsMdContent: string | null;
+  mcpServerSlugs: string[];
+  initPrompt: string;
+  agentsMdFiles: AgentsMdAssignment[];
 }
 
 /** POST /api/connections/:id/repositories body; optional fields omitted when unset. */
@@ -23,8 +31,9 @@ export interface CreateRepoBody {
   private: boolean;
   readme: boolean;
   skillSlugs?: string[];
-  agentsMdSkillId?: string;
-  agentsMdContent?: string;
+  mcpServerSlugs?: string[];
+  initPrompt?: string;
+  agentsMdFiles?: AgentsMdAssignment[];
 }
 
 /** `initialized` block of the 201 create-repository response. */
@@ -36,7 +45,8 @@ export interface CreateRepoInitialized {
 
 /**
  * Assemble the POST body from form state, omitting unset optional fields.
- * An uploaded custom AGENTS.md wins over a picked template when both are set.
+ * An uploaded custom AGENTS.md (content) wins over a picked template
+ * (skillId) within the same folder assignment.
  */
 export function buildCreateRepoBody(state: CreateRepoFormState): CreateRepoBody {
   const body: CreateRepoBody = {
@@ -45,11 +55,14 @@ export function buildCreateRepoBody(state: CreateRepoFormState): CreateRepoBody 
     readme: state.readme,
   };
   if (state.skillSlugs.length > 0) body.skillSlugs = state.skillSlugs;
-  if (state.agentsMdContent) {
-    body.agentsMdContent = state.agentsMdContent;
-    return body;
+  if (state.mcpServerSlugs.length > 0) body.mcpServerSlugs = state.mcpServerSlugs;
+  if (state.initPrompt.trim()) body.initPrompt = state.initPrompt.trim();
+  const agentsMdFiles = state.agentsMdFiles.filter((entry) => entry.skillId || entry.content);
+  if (agentsMdFiles.length > 0) {
+    body.agentsMdFiles = agentsMdFiles.map((entry) =>
+      entry.content ? { folder: entry.folder, content: entry.content } : { folder: entry.folder, skillId: entry.skillId },
+    );
   }
-  if (state.agentsMdSkillId) body.agentsMdSkillId = state.agentsMdSkillId;
   return body;
 }
 

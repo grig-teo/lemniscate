@@ -111,13 +111,87 @@ async function upsertAll(rows: SkillRow[]): Promise<void> {
   }
 }
 
+// Well-known MCP servers seeded into the library; `config` is the
+// `.mcp.json` server fragment (see routes/mcp-servers.ts).
+const MCP_SEEDS: { slug: string; name: string; description: string; config: object; tags: string[] }[] = [
+  {
+    slug: 'filesystem',
+    name: 'Filesystem',
+    description: 'Read/write access to the repository workspace.',
+    config: { command: 'npx', args: ['-y', '@modelcontextprotocol/server-filesystem', '.'] },
+    tags: ['files'],
+  },
+  {
+    slug: 'fetch',
+    name: 'Fetch',
+    description: 'Fetch and convert web pages to markdown.',
+    config: { command: 'uvx', args: ['mcp-server-fetch'] },
+    tags: ['web'],
+  },
+  {
+    slug: 'memory',
+    name: 'Memory',
+    description: 'Knowledge-graph memory for the agent between runs.',
+    config: { command: 'npx', args: ['-y', '@modelcontextprotocol/server-memory'] },
+    tags: ['memory'],
+  },
+  {
+    slug: 'github',
+    name: 'GitHub',
+    description: 'GitHub issues, PRs and code search (needs GITHUB_TOKEN).',
+    config: {
+      command: 'npx',
+      args: ['-y', '@modelcontextprotocol/server-github'],
+      env: { GITHUB_TOKEN: '${GITHUB_TOKEN}' },
+    },
+    tags: ['git', 'github'],
+  },
+  {
+    slug: 'postgres',
+    name: 'Postgres',
+    description: 'Read-only SQL against a Postgres database (needs DATABASE_URL).',
+    config: {
+      command: 'npx',
+      args: ['-y', '@modelcontextprotocol/server-postgres', '${DATABASE_URL}'],
+    },
+    tags: ['database'],
+  },
+];
+
+async function seedMcpServers(): Promise<number> {
+  for (const seed of MCP_SEEDS) {
+    await prisma.mcpServer.upsert({
+      where: { slug: seed.slug },
+      create: { ...seed, config: seed.config as never },
+      update: { name: seed.name, description: seed.description, config: seed.config as never, tags: seed.tags },
+    });
+  }
+  return MCP_SEEDS.length;
+}
+
+// Mirrors the whole library into the MinIO bucket; no-op when MinIO is not
+// configured. Failures warn but never fail the seed.
+async function mirrorAll(log: { warn: (msg: string) => void }): Promise<void> {
+  const { mirrorLibraryObject } = await import('../dist/lib/library-storage.js');
+  const skills = await prisma.skill.findMany();
+  for (const skill of skills) {
+    await mirrorLibraryObject(skill.kind === 'agents_md' ? 'agents_md' : 'skill', skill.slug, skill.content, log);
+  }
+  const servers = await prisma.mcpServer.findMany();
+  for (const server of servers) {
+    await mirrorLibraryObject('mcp_server', server.slug, JSON.stringify(server.config, null, 2), log);
+  }
+}
+
 async function main(): Promise<void> {
   const repoDir = cloneRepo();
   try {
     const skills = collectSkills(repoDir);
     const templates = collectAgentsMdTemplates(repoDir);
     await upsertAll([...skills, ...templates]);
-    console.log(`seeded ${skills.length} skills and ${templates.length} agents_md templates`);
+    const mcpCount = await seedMcpServers();
+    await mirrorAll(console);
+    console.log(`seeded ${skills.length} skills, ${templates.length} agents_md templates, ${mcpCount} mcp servers`);
   } finally {
     rmSync(repoDir, { recursive: true, force: true });
     await prisma.$disconnect();

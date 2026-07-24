@@ -8,12 +8,15 @@ import {
   type CreateRepoInitialized,
 } from '@/lib/create-repo';
 import { useConnections, type Connection, type Repository } from '@/lib/hooks';
+import { useAgentsMdTemplates } from '@/lib/library';
 import { providerLabel } from '@/lib/providers';
+import { useWorkspaceSelection } from '@/lib/selection';
 import {
-  AgentsMdField,
+  InitProjectSection,
+  McpSection,
   SkillsSection,
-  useAgentsMdChoice,
-  useSkillsSelection,
+  useInitProject,
+  useLibraryMultiSelect,
 } from '@/components/repo-tree/CreateRepoSections';
 import { Button } from '@/components/ui/button';
 import {
@@ -40,20 +43,23 @@ interface CreateRepoResponse {
   repository: Repository;
   sync: unknown;
   initialized: CreateRepoInitialized;
+  initTask?: { id: string } | null;
 }
 
 /**
  * Create-repo mutation kept here because lib/hooks.ts is owned elsewhere.
  * POST /api/connections/:id/repositories with the body from buildCreateRepoBody.
  */
-function useCreateRepository(onCreated: (initialized: CreateRepoInitialized) => void) {
+function useCreateRepository(
+  onCreated: (initialized: CreateRepoInitialized, initTask: { id: string } | null) => void,
+) {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: ({ connectionId, body }: { connectionId: string; body: CreateRepoBody }) =>
       api.post<CreateRepoResponse>(`/api/connections/${connectionId}/repositories`, { ...body }),
     onSuccess: (data) => {
       void queryClient.invalidateQueries({ queryKey: ['repositories'] });
-      onCreated(data.initialized);
+      onCreated(data.initialized, data.initTask ?? null);
     },
   });
 }
@@ -65,8 +71,16 @@ function useCreateRepoForm(onOpenChange: (open: boolean) => void) {
   const [isPrivate, setIsPrivate] = React.useState(true);
   const [readme, setReadme] = React.useState(true);
   const [initialized, setInitialized] = React.useState<CreateRepoInitialized | null>(null);
-  const skills = useSkillsSelection();
-  const agentsMd = useAgentsMdChoice();
+  const skills = useLibraryMultiSelect();
+  const mcpServers = useLibraryMultiSelect();
+  const init = useInitProject();
+  const templates = useAgentsMdTemplates();
+  const selection = useWorkspaceSelection();
+
+  const defaultTemplateId = React.useMemo(() => {
+    const all = templates.data ?? [];
+    return (all.find((t) => t.slug === 'default-lemniscate-agents-md') ?? all[0])?.id ?? null;
+  }, [templates.data]);
 
   function reset() {
     setConnectionId('');
@@ -75,7 +89,8 @@ function useCreateRepoForm(onOpenChange: (open: boolean) => void) {
     setReadme(true);
     setInitialized(null);
     skills.reset();
-    agentsMd.reset();
+    mcpServers.reset();
+    init.reset();
   }
 
   function handleOpenChange(next: boolean) {
@@ -86,7 +101,15 @@ function useCreateRepoForm(onOpenChange: (open: boolean) => void) {
     onOpenChange(next);
   }
 
-  const createRepo = useCreateRepository((info) => {
+  const createRepo = useCreateRepository((info, initTask) => {
+    if (initTask) {
+      selection.selectTask({
+        id: initTask.id,
+        title: init.prompt.trim().slice(0, 80) || 'Init project',
+        status: 'queued',
+        kind: 'prompt',
+      });
+    }
     if (info.warnings.length === 0) {
       handleOpenChange(false);
       return;
@@ -101,9 +124,10 @@ function useCreateRepoForm(onOpenChange: (open: boolean) => void) {
       name,
       isPrivate,
       readme,
-      skillSlugs: skills.selectedSlugs,
-      agentsMdSkillId: agentsMd.skillId,
-      agentsMdContent: agentsMd.content,
+      skillSlugs: skills.slugs,
+      mcpServerSlugs: mcpServers.slugs,
+      initPrompt: init.prompt,
+      agentsMdFiles: init.agentsMdFiles(defaultTemplateId),
     });
     createRepo.mutate({ connectionId, body });
   }
@@ -118,7 +142,8 @@ function useCreateRepoForm(onOpenChange: (open: boolean) => void) {
     readme,
     setReadme,
     skills,
-    agentsMd,
+    mcpServers,
+    init,
     initialized,
     createRepo,
     handleOpenChange,
@@ -162,11 +187,13 @@ function InitializedWarnings({
   onDone: () => void;
 }) {
   return (
-    <div className="flex flex-col gap-3">
+    <div className="flex min-w-0 flex-col gap-3">
       <p className="text-sm">Repository created, with initialization warnings:</p>
       <ul className="list-disc rounded-md border border-amber-500/40 bg-amber-500/10 p-3 pl-7 text-sm">
         {initialized.warnings.map((warning) => (
-          <li key={warning}>{warning}</li>
+          <li key={warning} className="break-words">
+            {warning}
+          </li>
         ))}
       </ul>
       <DialogFooter>
@@ -197,9 +224,9 @@ function ToggleRow({
 
 /**
  * "New repository" dialog opened from the RepoTree header + button: creates
- * a repo on a connected git host — optionally seeded with skills, an
- * AGENTS.md (template or uploaded file) and a README — and refreshes the
- * sidebar repository list.
+ * a repo on a connected git host — seeded with a README, per-folder
+ * AGENTS.md files, selected skills (.agents/skills/) and MCP servers
+ * (.mcp.json) — and starts the optional first init-prompt task on it.
  */
 export function CreateRepoDialog({
   open,
@@ -214,7 +241,7 @@ export function CreateRepoDialog({
 
   return (
     <Dialog open={open} onOpenChange={form.handleOpenChange}>
-      <DialogContent className="max-h-[85vh] overflow-y-auto">
+      <DialogContent className="max-h-[85vh] w-full max-w-xl overflow-y-auto overflow-x-hidden">
         <DialogHeader>
           <DialogTitle>New repository</DialogTitle>
           <DialogDescription>
@@ -228,7 +255,7 @@ export function CreateRepoDialog({
             onDone={() => form.handleOpenChange(false)}
           />
         ) : (
-          <form onSubmit={form.submit} className="flex flex-col gap-3">
+          <form onSubmit={form.submit} className="flex min-w-0 flex-col gap-3">
             {connections.data?.length === 0 ? (
               <p className="text-sm text-muted-foreground">
                 Connect a git host in settings first.
@@ -257,9 +284,11 @@ export function CreateRepoDialog({
               onCheckedChange={form.setIsPrivate}
             />
 
+            <InitProjectSection init={form.init} />
+
             <SkillsSection selection={form.skills} />
 
-            <AgentsMdField agentsMd={form.agentsMd} />
+            <McpSection selection={form.mcpServers} />
 
             <ToggleRow
               label="Create README.md"
@@ -268,7 +297,9 @@ export function CreateRepoDialog({
             />
 
             {form.createRepo.isError && (
-              <p className="text-sm text-destructive">{describeApiError(form.createRepo.error)}</p>
+              <p className="break-words text-sm text-destructive">
+                {describeApiError(form.createRepo.error)}
+              </p>
             )}
 
             <DialogFooter>

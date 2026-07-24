@@ -2,21 +2,58 @@ import type { CreateFileInput } from './git-providers.js';
 import { errorMessage } from './utils.js';
 
 // Initialization of freshly created repositories: which files to seed
-// (README.md, AGENTS.md) and the best-effort loop that commits them through
-// the provider client. Used by POST /connections/:id/repositories.
+// (README.md, per-folder AGENTS.md, .agents/skills/<slug>/SKILL.md,
+// .mcp.json) and the best-effort loop that commits them through the
+// provider client. Used by POST /connections/:id/repositories.
+
+export interface RepoInitSkillFile {
+  slug: string;
+  name: string;
+  description: string;
+  content: string;
+}
+
+export interface RepoInitAgentsMdFile {
+  // '/' or a nested folder like 'src/api' (leading/trailing slashes tolerated).
+  folder: string;
+  content: string;
+}
 
 export interface RepoInitPlanInput {
   repoName: string;
   readme: boolean;
-  // Resolved AGENTS.md text (uploaded content or template skill content);
-  // undefined/empty means no AGENTS.md file.
-  agentsMdContent?: string | null;
+  // AGENTS.md files per folder; empty content entries are skipped.
+  agentsMdFiles?: RepoInitAgentsMdFile[];
+  // Selected skills materialized under .agents/skills/<slug>/SKILL.md.
+  skillFiles?: RepoInitSkillFile[];
+  // MCP server slug → config fragment; written as root .mcp.json.
+  mcpServers?: Record<string, unknown>;
 }
 
 export interface RepoInitFile {
   path: string;
   content: string;
   message: string;
+}
+
+// Normalizes a folder selection to a repo-relative prefix ('' = root).
+// Throws on traversal attempts — the value becomes a git path.
+export function sanitizeFolder(folder: string): string {
+  const trimmed = folder.replace(/^\/+|\/+$/g, '');
+  if (trimmed === '' || trimmed === '.') return '';
+  if (trimmed.split('/').some((part) => part === '..' || part === '')) {
+    throw new Error(`Invalid folder: ${folder}`);
+  }
+  return trimmed;
+}
+
+// SKILL.md with the hermes-style YAML frontmatter the seed parser produces.
+function skillFileContent(skill: RepoInitSkillFile): string {
+  return `---\nname: ${skill.name}\ndescription: ${skill.description}\n---\n\n${skill.content}`;
+}
+
+function mcpJsonContent(servers: Record<string, unknown>): string {
+  return `${JSON.stringify({ mcpServers: servers }, null, 2)}\n`;
 }
 
 // Pure decision: which files the new repo gets. README first so the very
@@ -30,12 +67,24 @@ export function buildRepoInitFiles(input: RepoInitPlanInput): RepoInitFile[] {
       message: 'Add README.md',
     });
   }
-  if (input.agentsMdContent) {
+  for (const agentsMd of input.agentsMdFiles ?? []) {
+    if (!agentsMd.content) continue;
+    const prefix = sanitizeFolder(agentsMd.folder);
     files.push({
-      path: 'AGENTS.md',
-      content: input.agentsMdContent,
-      message: 'Add AGENTS.md',
+      path: prefix === '' ? 'AGENTS.md' : `${prefix}/AGENTS.md`,
+      content: agentsMd.content,
+      message: prefix === '' ? 'Add AGENTS.md' : `Add ${prefix}/AGENTS.md`,
     });
+  }
+  for (const skill of input.skillFiles ?? []) {
+    files.push({
+      path: `.agents/skills/${skill.slug}/SKILL.md`,
+      content: skillFileContent(skill),
+      message: `Add skill ${skill.slug}`,
+    });
+  }
+  if (input.mcpServers && Object.keys(input.mcpServers).length > 0) {
+    files.push({ path: '.mcp.json', content: mcpJsonContent(input.mcpServers), message: 'Add .mcp.json' });
   }
   return files;
 }

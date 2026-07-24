@@ -180,6 +180,19 @@ model Skill {
   kind        String   @default("skill")
 }
 
+// MCP server library entry: `config` holds the server fragment that is
+// materialized into `.mcp.json` ("mcpServers": { "<slug>": <config> }) when
+// selected during repository creation.
+model McpServer {
+  id          String   @id @default(cuid())
+  slug        String   @unique
+  name        String
+  description String
+  config      Json
+  tags        String[]
+  source      String   @default("lemniscate")
+}
+
 model TaskEvent {
   id        String        @id @default(cuid())
   taskId    String

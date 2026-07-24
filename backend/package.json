@@ -27,6 +27,7 @@
     "fastify": "^5.0.0",
     "ioredis": "^5.4.0",
     "jsonwebtoken": "^9.0.2",
+    "minio": "^8.0.7",
     "zod": "^3.24.0"
   },
   "devDependencies": {

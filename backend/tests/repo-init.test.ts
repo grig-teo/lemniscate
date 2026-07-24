@@ -28,7 +28,7 @@ describe('buildRepoInitFiles', () => {
     const files = buildRepoInitFiles({
       repoName: 'demo',
       readme: false,
-      agentsMdContent: '# Rules\n',
+      agentsMdFiles: [{ folder: '/', content: '# Rules\n' }],
     });
     expect(files).toEqual([
       { path: 'AGENTS.md', content: '# Rules\n', message: 'Add AGENTS.md' },
@@ -39,15 +39,68 @@ describe('buildRepoInitFiles', () => {
     const files = buildRepoInitFiles({
       repoName: 'demo',
       readme: true,
-      agentsMdContent: '# Rules\n',
+      agentsMdFiles: [{ folder: '/', content: '# Rules\n' }],
     });
     expect(files.map((file) => file.path)).toEqual(['README.md', 'AGENTS.md']);
   });
 
   it('treats empty AGENTS.md content as no file', () => {
     expect(
-      buildRepoInitFiles({ repoName: 'demo', readme: false, agentsMdContent: '' }),
+      buildRepoInitFiles({ repoName: 'demo', readme: false, agentsMdFiles: [{ folder: '/', content: '' }] }),
     ).toEqual([]);
+  });
+
+  it('plans selected skills as .agents/skills/<slug>/SKILL.md with frontmatter', () => {
+    const files = buildRepoInitFiles({
+      repoName: 'demo',
+      readme: false,
+      skillFiles: [{ slug: 'code-review', name: 'Code Review', description: 'Reviews code.', content: 'Do the review.\n' }],
+    });
+    expect(files).toEqual([
+      {
+        path: '.agents/skills/code-review/SKILL.md',
+        content: '---\nname: Code Review\ndescription: Reviews code.\n---\n\nDo the review.\n',
+        message: 'Add skill code-review',
+      },
+    ]);
+  });
+
+  it('plans selected MCP servers as a root .mcp.json', () => {
+    const files = buildRepoInitFiles({
+      repoName: 'demo',
+      readme: false,
+      mcpServers: { filesystem: { command: 'npx', args: ['-y', 'server-filesystem', '.'] } },
+    });
+    expect(files).toEqual([
+      {
+        path: '.mcp.json',
+        content: JSON.stringify({ mcpServers: { filesystem: { command: 'npx', args: ['-y', 'server-filesystem', '.'] } } }, null, 2) + '\n',
+        message: 'Add .mcp.json',
+      },
+    ]);
+  });
+
+  it('plans AGENTS.md per folder, nested folders keep their path', () => {
+    const files = buildRepoInitFiles({
+      repoName: 'demo',
+      readme: false,
+      agentsMdFiles: [
+        { folder: '/', content: '# Root\n' },
+        { folder: 'src/api', content: '# API\n' },
+      ],
+    });
+    expect(files.map((file) => file.path)).toEqual(['AGENTS.md', 'src/api/AGENTS.md']);
+  });
+
+  it('sanitizes folder input: slashes trimmed, dot-dot rejected', () => {
+    expect(() =>
+      buildRepoInitFiles({ repoName: 'demo', readme: false, agentsMdFiles: [{ folder: '/src/', content: '# x\n' }] }),
+    ).not.toThrow();
+    const files = buildRepoInitFiles({ repoName: 'demo', readme: false, agentsMdFiles: [{ folder: '/src/', content: '# x\n' }] });
+    expect(files[0]?.path).toBe('src/AGENTS.md');
+    expect(() =>
+      buildRepoInitFiles({ repoName: 'demo', readme: false, agentsMdFiles: [{ folder: '../evil', content: '# x\n' }] }),
+    ).toThrow();
   });
 });
 

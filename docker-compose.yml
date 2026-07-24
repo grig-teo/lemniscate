@@ -29,6 +29,24 @@ services:
       timeout: 5s
       retries: 5
 
+  minio:
+    image: minio/minio:latest
+    restart: unless-stopped
+    command: ["server", "/data", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-lemniscate}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-lemniscate-minio}
+    ports:
+      - "${MINIO_BIND:-9000}:9000"
+      - "${MINIO_CONSOLE_BIND:-9001}:9001"
+    volumes:
+      - miniodata:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   backend:
     build:
       context: ./backend
@@ -39,12 +57,18 @@ services:
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:-lemniscate}:${POSTGRES_PASSWORD:-lemniscate}@postgres:5432/${POSTGRES_DB:-lemniscate}
       REDIS_URL: redis://redis:6379
+      MINIO_ENDPOINT: minio
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-lemniscate}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-lemniscate-minio}
+      MINIO_BUCKET: ${MINIO_BUCKET:-lemniscate-library}
     ports:
       - "${BACKEND_BIND:-3000}:3000"
     depends_on:
       postgres:
         condition: service_healthy
       redis:
+        condition: service_healthy
+      minio:
         condition: service_healthy
 
   worker:
@@ -58,10 +82,16 @@ services:
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:-lemniscate}:${POSTGRES_PASSWORD:-lemniscate}@postgres:5432/${POSTGRES_DB:-lemniscate}
       REDIS_URL: redis://redis:6379
+      MINIO_ENDPOINT: minio
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-lemniscate}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-lemniscate-minio}
+      MINIO_BUCKET: ${MINIO_BUCKET:-lemniscate-library}
     depends_on:
       postgres:
         condition: service_healthy
       redis:
+        condition: service_healthy
+      minio:
         condition: service_healthy
 
   frontend:
@@ -81,3 +111,4 @@ services:
 volumes:
   pgdata:
   redisdata:
+  miniodata:

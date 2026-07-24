@@ -53,6 +53,14 @@ const envSchema = z.object({
   GITEE_CLIENT_ID: optionalString,
   GITEE_CLIENT_SECRET: optionalString,
 
+  // --- MinIO (library object storage: skills / agents-md / mcp-servers) ---
+  // Optional: when unset, library mirroring is a no-op (local dev without MinIO).
+  MINIO_ENDPOINT: optionalString,
+  MINIO_PORT: z.coerce.number().int().positive().default(9000),
+  MINIO_ROOT_USER: optionalString,
+  MINIO_ROOT_PASSWORD: optionalString,
+  MINIO_BUCKET: z.string().min(1).default('lemniscate-library'),
+
   // --- Agent loop ---
   AGENT_WORKDIR: z.string().min(1).default('/tmp/lemniscate-repos'),
   AGENT_BRANCH_PREFIX: z.string().min(1).default('lemniscate/'),

@@ -14,8 +14,9 @@ function makeState(overrides: Partial<CreateRepoFormState> = {}): CreateRepoForm
     isPrivate: true,
     readme: true,
     skillSlugs: [],
-    agentsMdSkillId: null,
-    agentsMdContent: null,
+    mcpServerSlugs: [],
+    initPrompt: '',
+    agentsMdFiles: [],
     ...overrides,
   };
 }
@@ -44,26 +45,55 @@ describe('buildCreateRepoBody', () => {
     ]);
   });
 
-  it('omits agentsMdSkillId when no template is picked', () => {
-    expect(buildCreateRepoBody(makeState())).not.toHaveProperty('agentsMdSkillId');
+  it('omits mcpServerSlugs when none are selected', () => {
+    expect(buildCreateRepoBody(makeState())).not.toHaveProperty('mcpServerSlugs');
   });
 
-  it('includes agentsMdSkillId when a template is picked', () => {
-    expect(buildCreateRepoBody(makeState({ agentsMdSkillId: 'skill-1' })).agentsMdSkillId).toBe(
-      'skill-1',
+  it('includes mcpServerSlugs when at least one is selected', () => {
+    expect(buildCreateRepoBody(makeState({ mcpServerSlugs: ['filesystem'] })).mcpServerSlugs).toEqual([
+      'filesystem',
+    ]);
+  });
+
+  it('omits initPrompt when blank and trims it otherwise', () => {
+    expect(buildCreateRepoBody(makeState())).not.toHaveProperty('initPrompt');
+    expect(buildCreateRepoBody(makeState({ initPrompt: '  scaffold it  ' })).initPrompt).toBe(
+      'scaffold it',
     );
   });
 
-  it('omits agentsMdContent when nothing was uploaded', () => {
-    expect(buildCreateRepoBody(makeState())).not.toHaveProperty('agentsMdContent');
+  it('omits agentsMdFiles when nothing is assigned', () => {
+    expect(buildCreateRepoBody(makeState())).not.toHaveProperty('agentsMdFiles');
   });
 
-  it('lets an uploaded file win over a picked template', () => {
+  it('drops assignments with neither skillId nor content', () => {
+    expect(
+      buildCreateRepoBody(makeState({ agentsMdFiles: [{ folder: '/src' }] })),
+    ).not.toHaveProperty('agentsMdFiles');
+  });
+
+  it('lets an uploaded file win over a picked template within one folder', () => {
     const body = buildCreateRepoBody(
-      makeState({ agentsMdSkillId: 'skill-1', agentsMdContent: '# Custom' }),
+      makeState({
+        agentsMdFiles: [{ folder: '/', skillId: 'skill-1', content: '# Custom' }],
+      }),
     );
-    expect(body.agentsMdContent).toBe('# Custom');
-    expect(body).not.toHaveProperty('agentsMdSkillId');
+    expect(body.agentsMdFiles).toEqual([{ folder: '/', content: '# Custom' }]);
+  });
+
+  it('keeps per-folder template assignments', () => {
+    const body = buildCreateRepoBody(
+      makeState({
+        agentsMdFiles: [
+          { folder: '/', skillId: 'skill-1' },
+          { folder: '/src/api', skillId: 'skill-2' },
+        ],
+      }),
+    );
+    expect(body.agentsMdFiles).toEqual([
+      { folder: '/', skillId: 'skill-1' },
+      { folder: '/src/api', skillId: 'skill-2' },
+    ]);
   });
 
   it('forwards readme=false when the checkbox is unchecked', () => {
