@@ -271,7 +271,7 @@ function FolderBrowser({
           </button>
         )}
       </div>
-      <div className="max-h-44 overflow-y-auto p-1" onScroll={onScroll}>
+      <div className="max-h-44 overflow-y-auto overflow-x-auto p-1" onScroll={onScroll}>
         {foldersQuery.isLoading && (
           <p className="flex items-center gap-1.5 px-2 py-2 text-xs text-muted-foreground">
             <Loader2 className="h-3 w-3 animate-spin" aria-hidden />
@@ -287,7 +287,7 @@ function FolderBrowser({
         {folders.slice(0, visible).map((folder) => (
           <label
             key={folder}
-            className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1 text-xs hover:bg-accent"
+            className="flex w-max min-w-full cursor-pointer items-center gap-2 rounded-md px-2 py-1 text-xs hover:bg-accent"
           >
             <input
               type="checkbox"
@@ -295,7 +295,7 @@ function FolderBrowser({
               onChange={() => onToggle(folder)}
               className="h-3.5 w-3.5 shrink-0 accent-primary"
             />
-            <span className="min-w-0 truncate font-mono">{folder}</span>
+            <span className="whitespace-nowrap font-mono">{folder}</span>
           </label>
         ))}
         {visible < folders.length && (
