@@ -179,6 +179,12 @@ export type CreateTaskBody = {
   images?: TaskImage[];
   /** Save for later: create the task as pending without enqueueing it. */
   later?: boolean;
+  /** Explicit skill slugs; omitted = inherit the repository's selection. */
+  skills?: string[];
+  /** MCP server slugs materialized as .mcp.json for this run. */
+  mcpServerSlugs?: string[];
+  /** Per-folder AGENTS.md assignments (template skillId or uploaded content). */
+  agentsMdFiles?: { folder: string; skillId?: string; content?: string }[];
 };
 
 /** POST /api/tasks/:id/start body — proposal edits applied before queueing. */

@@ -41,6 +41,26 @@ const listQuerySchema = z.object({
 
 const promptSchema = z.string().min(1).max(8000);
 
+// Per-folder AGENTS.md attachment entry: uploaded content or an agents_md
+// template skill id. Shared by the create, start and PATCH bodies.
+const agentsMdFileSchema = z.object({
+  folder: z.string().min(1).max(500),
+  skillId: z.string().min(1).optional(),
+  content: z.string().max(100_000).optional(),
+});
+
+// Library attachment fields on a task. Create: undefined = inherit the
+// repository defaults; start/PATCH: undefined = leave the stored value
+// untouched; an explicit empty array clears it.
+const attachmentFieldsSchema = z.object({
+  // Skill slugs injected into the agent's system prompt for this run.
+  skills: z.array(z.string().min(1)).max(20).optional(),
+  // MCP server slugs materialized as .mcp.json in the workdir.
+  mcpServerSlugs: z.array(z.string().min(1)).max(20).optional(),
+  // Per-folder AGENTS.md files written into the workdir.
+  agentsMdFiles: z.array(agentsMdFileSchema).max(50).optional(),
+});
+
 const createBodySchema = z
   .object({
     repositoryId: z.string().min(1),
@@ -54,26 +74,8 @@ const createBodySchema = z
     // Save-for-later: create the task as pending without enqueueing it.
     later: z.boolean().optional(),
   })
+  .merge(attachmentFieldsSchema)
   .strict();
-
-// Per-folder AGENTS.md attachment entry: uploaded content or an agents_md
-// template skill id. Shared by the start and PATCH bodies.
-const agentsMdFileSchema = z.object({
-  folder: z.string().min(1).max(500),
-  skillId: z.string().min(1).optional(),
-  content: z.string().max(100_000).optional(),
-});
-
-// Editable library attachments on a pending task. Undefined = leave the
-// stored value untouched; an explicit empty array clears it.
-const attachmentFieldsSchema = z.object({
-  // Skill slugs injected into the agent's system prompt for this run.
-  skills: z.array(z.string().min(1)).max(20).optional(),
-  // MCP server slugs materialized as .mcp.json in the workdir.
-  mcpServerSlugs: z.array(z.string().min(1)).max(20).optional(),
-  // Per-folder AGENTS.md files written into the workdir.
-  agentsMdFiles: z.array(agentsMdFileSchema).max(50).optional(),
-});
 
 // Optional edits applied when a pending task is started. Absent body
 // (the left-nav play button) parses as {} and changes nothing.
@@ -195,6 +197,10 @@ async function createTask(request: FastifyRequest, reply: FastifyReply) {
   if (!llmConfigId) {
     return reply.code(400).send({ error: 'no LLM config' });
   }
+  const validationError = await attachmentValidationError(data);
+  if (validationError) {
+    return reply.code(400).send({ error: validationError });
+  }
 
   const task = await prisma.task.create({
     data: {
@@ -205,10 +211,11 @@ async function createTask(request: FastifyRequest, reply: FastifyReply) {
       status: initialTaskStatus(data.later),
       llmConfigId,
       thinkingLevel: data.thinkingLevel ?? null,
-      // Snapshot the repository's skills so later edits don't retroactively
-      // change this task; empty array when the repo has none selected.
-      skills: parseSkillSlugs(repository.skillSlugs),
+      // Explicit composer selections win; otherwise snapshot the repository's
+      // skills so later edits don't retroactively change this task.
+      skills: data.skills ?? parseSkillSlugs(repository.skillSlugs),
       ...attachmentsData(data.images),
+      ...(await resolveAttachmentUpdate(data)),
     },
   });
 

@@ -1,16 +1,19 @@
 import * as React from 'react';
-import { Loader2, Paperclip, Plus, Send, Sparkles, X } from 'lucide-react';
+import { Loader2, Paperclip, Plus, Send, X } from 'lucide-react';
 
+import { api } from '@/lib/api';
 import { defaultRepositoryId } from '@/lib/default-repository';
 import {
   useCreateTask,
   useLlmConfigs,
   useRepositories,
+  type CreateTaskBody,
   type LlmConfig,
   type Repository,
   type TaskImage,
   type TaskThinkingLevel,
 } from '@/lib/hooks';
+import { useLibraryAttachments } from '@/lib/library-attachments';
 import {
   clampTextareaHeight,
   estimateTokens,
@@ -23,8 +26,7 @@ import {
 } from '@/lib/prompt-composer';
 import { ProviderIcon } from '@/lib/providers';
 import { useWorkspaceSelection } from '@/lib/selection';
-import { SkillsDialog } from '@/components/skills/SkillsDialog';
-import { Badge } from '@/components/ui/badge';
+import { LibraryAttachments } from '@/components/library/LibraryAttachments';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -109,6 +111,7 @@ function useTaskComposer(onSubmitted?: () => void) {
   const [thinkingLevel, setThinkingLevel] = React.useState<TaskThinkingLevel | null>(null);
   const [llmConfigId, setLlmConfigId] = React.useState<string | null>(null);
   const [images, setImages] = React.useState<TaskImage[]>([]);
+  const attachments = useLibraryAttachments();
 
   const manualChoiceValid = repositories.some((repo) => repo.id === manualRepositoryId);
   const repositoryId = manualChoiceValid
@@ -137,14 +140,23 @@ function useTaskComposer(onSubmitted?: () => void) {
     setImages([]);
   };
 
-  const buildBody = (later?: boolean) => ({
-    repositoryId,
-    prompt: prompt.trim(),
-    ...(thinkingLevel ? { thinkingLevel } : {}),
-    ...(llmConfigId ? { llmConfigId } : {}),
-    ...(images.length > 0 ? { images } : {}),
-    ...(later ? { later: true } : {}),
-  });
+  const buildBody = (later?: boolean): CreateTaskBody => {
+    const agentsMdFiles = attachments.agentsMd.toAssignments();
+    return {
+      repositoryId,
+      prompt: prompt.trim(),
+      ...(thinkingLevel ? { thinkingLevel } : {}),
+      ...(llmConfigId ? { llmConfigId } : {}),
+      ...(images.length > 0 ? { images } : {}),
+      // Empty selections are omitted so the task inherits the repo defaults.
+      ...(attachments.skills.slugs.length > 0 ? { skills: attachments.skills.slugs } : {}),
+      ...(attachments.mcpServers.slugs.length > 0
+        ? { mcpServerSlugs: attachments.mcpServers.slugs }
+        : {}),
+      ...(agentsMdFiles.length > 0 ? { agentsMdFiles } : {}),
+      ...(later ? { later: true } : {}),
+    };
+  };
 
   const selectCreatedTask = (task: {
     id: string;
@@ -201,6 +213,7 @@ function useTaskComposer(onSubmitted?: () => void) {
     createTask,
     submit,
     saveLater,
+    attachments,
   };
 }
 
@@ -405,34 +418,6 @@ export function ImageThumbnails({
   );
 }
 
-/** Opens the repository-level skills picker; badge shows the selected skill count. */
-function SkillsButton({ repository }: { repository: Repository | null }) {
-  const [open, setOpen] = React.useState(false);
-  const count = repository?.skillSlugs?.length ?? 0;
-  return (
-    <>
-      <Button
-        type="button"
-        variant="ghost"
-        size="sm"
-        onClick={() => setOpen(true)}
-        disabled={!repository}
-        aria-label="Skills"
-        className="shrink-0 gap-1.5 px-2"
-      >
-        <Sparkles className="h-4 w-4" aria-hidden />
-        Skills
-        {count > 0 && (
-          <Badge variant="secondary" className="px-1.5">
-            {count}
-          </Badge>
-        )}
-      </Button>
-      <SkillsDialog open={open} onOpenChange={setOpen} repository={repository} />
-    </>
-  );
-}
-
 function SendButton({ canSend, pending, onClick }: { canSend: boolean; pending: boolean; onClick: () => void }) {
   return (
     <Button size="icon" onClick={onClick} disabled={!canSend} aria-label="Send prompt">
@@ -478,35 +463,47 @@ function submitOnCmdEnter(event: React.KeyboardEvent<HTMLTextAreaElement>, submi
 
 function ComposerToolbar({ composer }: { composer: ReturnType<typeof useTaskComposer> }) {
   return (
-    <div className="flex flex-wrap items-center gap-2 px-2 pb-2">
-      <ComposerRepoSelect
-        repositories={composer.repositories}
-        repositoryId={composer.repositoryId}
-        onChange={composer.setManualRepositoryId}
+    <div className="flex flex-col gap-2 px-2 pb-2">
+      <div className="flex flex-wrap items-center gap-2">
+        <ComposerRepoSelect
+          repositories={composer.repositories}
+          repositoryId={composer.repositoryId}
+          onChange={composer.setManualRepositoryId}
+        />
+        <LlmConfigSelect
+          configs={composer.enabledConfigs}
+          value={composer.llmConfigId}
+          onChange={composer.setLlmConfigId}
+        />
+        <ThinkingLevelSelect value={composer.thinkingLevel} onChange={composer.setThinkingLevel} />
+        <div className="flex-1" />
+        <ContextRing tokens={composer.estimatedTokens} contextWindow={composer.contextWindow} />
+      </div>
+      <LibraryAttachments
+        state={composer.attachments}
+        columns
+        onLoadFolders={() =>
+          api
+            .get<{ folders: string[] }>(`/api/repositories/${composer.repositoryId}/folders`)
+            .then((res) => res.folders)
+        }
       />
-      <SkillsButton repository={composer.repository} />
-      <LlmConfigSelect
-        configs={composer.enabledConfigs}
-        value={composer.llmConfigId}
-        onChange={composer.setLlmConfigId}
-      />
-      <ThinkingLevelSelect value={composer.thinkingLevel} onChange={composer.setThinkingLevel} />
-      <div className="flex-1" />
-      <ContextRing tokens={composer.estimatedTokens} contextWindow={composer.contextWindow} />
-      <AttachImagesButton
-        disabled={composer.images.length >= MAX_IMAGES}
-        onFiles={composer.addImageFiles}
-      />
-      <SaveLaterButton
-        canSave={composer.canSend}
-        pending={composer.createTask.isPending}
-        onClick={composer.saveLater}
-      />
-      <SendButton
-        canSend={composer.canSend}
-        pending={composer.createTask.isPending}
-        onClick={composer.submit}
-      />
+      <div className="flex items-center justify-end gap-2">
+        <AttachImagesButton
+          disabled={composer.images.length >= MAX_IMAGES}
+          onFiles={composer.addImageFiles}
+        />
+        <SaveLaterButton
+          canSave={composer.canSend}
+          pending={composer.createTask.isPending}
+          onClick={composer.saveLater}
+        />
+        <SendButton
+          canSend={composer.canSend}
+          pending={composer.createTask.isPending}
+          onClick={composer.submit}
+        />
+      </div>
     </div>
   );
 }
