@@ -11,7 +11,6 @@ import { useMcpLibrary, useSkillLibrary } from '@/lib/library';
 import type { LibraryAttachmentsState } from '@/lib/library-attachments';
 import { LibrarySearchSelect } from '@/components/library/LibrarySearchSelect';
 import { Badge } from '@/components/ui/badge';
-import { Input } from '@/components/ui/input';
 
 /**
  * Reusable library-attachment editor: skills multi-select, MCP servers
@@ -173,34 +172,11 @@ function FolderRow({ folder, state }: { folder: string; state: LibraryAttachment
   );
 }
 
-function AddFolderInput({ onAdd }: { onAdd: (folder: string) => void }) {
-  const [value, setValue] = React.useState('');
-  return (
-    <Input
-      value={value}
-      onChange={(event) => setValue(event.target.value)}
-      onKeyDown={(event) => {
-        if (event.key === 'Enter') {
-          event.preventDefault();
-          onAdd(value);
-          setValue('');
-        }
-      }}
-      placeholder="Add folder, e.g. src/api — press Enter"
-      aria-label="Add folder"
-      className="h-8 text-xs"
-    />
-  );
-}
-
 export function LibraryAttachments({
   state,
-  allowAddFolder = false,
   columns = false,
 }: {
   state: LibraryAttachmentsState;
-  /** Show an add-folder input (task editor); otherwise the folder list is fixed. */
-  allowAddFolder?: boolean;
   /** Render the three sections side by side on one line (sm+). */
   columns?: boolean;
 }) {
@@ -208,7 +184,7 @@ export function LibraryAttachments({
     return (
       <div className="grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-3">
         <SkillsSection state={state} />
-        <AgentsMdSection state={state} allowAddFolder={allowAddFolder} />
+        <AgentsMdSection state={state} />
         <McpSection state={state} />
       </div>
     );
@@ -217,25 +193,18 @@ export function LibraryAttachments({
     <div className="flex min-w-0 flex-col gap-3">
       <SkillsSection state={state} />
       <McpSection state={state} />
-      <AgentsMdSection state={state} allowAddFolder={allowAddFolder} />
+      <AgentsMdSection state={state} />
     </div>
   );
 }
 
-function AgentsMdSection({
-  state,
-  allowAddFolder,
-}: {
-  state: LibraryAttachmentsState;
-  allowAddFolder: boolean;
-}) {
+function AgentsMdSection({ state }: { state: LibraryAttachmentsState }) {
   return (
     <section className="flex min-w-0 flex-col gap-1.5">
       <SectionLabel>AGENTS.md per folder</SectionLabel>
       {state.agentsMd.folders.map((folder) => (
         <FolderRow key={folder} folder={folder} state={state} />
       ))}
-      {allowAddFolder && <AddFolderInput onAdd={state.agentsMd.addFolder} />}
     </section>
   );
 }

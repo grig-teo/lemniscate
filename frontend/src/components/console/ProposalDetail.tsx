@@ -124,7 +124,7 @@ function TaskEditorInner({
   const [prompt, setPrompt] = React.useState(task.prompt ?? '');
   const [images, setImages] = React.useState<TaskImage[]>([]);
   const [saved, setSaved] = React.useState(false);
-  const textareaRef = useAutoResizeTextarea(prompt);
+  const textareaRef = useAutoResizeTextarea(prompt, 14);
   const attachments = useLibraryAttachments({
     skills: initialSkills,
     mcpServers: taskMcpSelections(task.mcpServers),
@@ -156,15 +156,15 @@ function TaskEditorInner({
   const actionError = startTask.error ?? patchTask.error;
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-4">
+    <div className="flex h-full min-h-0 flex-1 flex-col gap-3 overflow-hidden p-4">
       <Input
         value={title}
         onChange={(event) => setTitle(event.target.value)}
         aria-label="Task title"
-        className="border-0 px-0 text-base font-medium shadow-none focus-visible:ring-0"
+        className="shrink-0 border-0 px-0 text-base font-medium shadow-none focus-visible:ring-0"
       />
-      {actionError && <p className="text-xs text-destructive">{actionError.message}</p>}
-      <div className="rounded-lg border bg-background shadow-sm focus-within:ring-1 focus-within:ring-ring">
+      {actionError && <p className="shrink-0 text-xs text-destructive">{actionError.message}</p>}
+      <div className="max-h-[38%] shrink-0 overflow-y-auto rounded-lg border bg-background shadow-sm focus-within:ring-1 focus-within:ring-ring">
         <ImageThumbnails images={images} onRemove={removeImage} />
         <Textarea
           ref={textareaRef}
@@ -175,8 +175,11 @@ function TaskEditorInner({
           className="resize-none overflow-y-auto border-0 shadow-none focus-visible:ring-0"
         />
       </div>
-      <LibraryAttachments state={attachments} allowAddFolder columns />
-      <div className="flex items-center gap-2">
+      <div className="min-h-0 flex-1 overflow-y-auto">
+        <LibraryAttachments state={attachments} columns />
+      </div>
+      <div className="flex shrink-0 items-center gap-2">
+        <div className="flex-1" />
         <AttachFileButton
           accept={IMAGE_ACCEPT}
           label="Attach file"
@@ -184,7 +187,6 @@ function TaskEditorInner({
           disabled={images.length >= MAX_IMAGES}
           onFiles={addImageFiles}
         />
-        <div className="flex-1" />
         {saved && !patchTask.isPending && <span className="text-xs text-muted-foreground">Saved</span>}
         <Button size="sm" variant="outline" onClick={save} disabled={patchTask.isPending}>
           {patchTask.isPending ? (

@@ -93,13 +93,6 @@ export function useAgentsMdAssignments(initial?: AgentsMdInitial[], initialFolde
     });
   };
 
-  const addFolder = (folder: string) => {
-    const normalized = folder.trim().replace(/^\/+|\/+$/g, '');
-    if (normalized === '') return;
-    const path = `/${normalized}`;
-    setFolders((prev) => (prev.includes(path) ? prev : [...prev, path]));
-  };
-
   // Replace the folder list (e.g. after a structure preview), keeping any
   // folder that already has an assignment so a choice is never dropped.
   const replaceFolders = (next: string[]) => {
@@ -140,7 +133,6 @@ export function useAgentsMdAssignments(initial?: AgentsMdInitial[], initialFolde
     folders,
     assignments,
     assign,
-    addFolder,
     replaceFolders,
     openFolder,
     openPicker,

@@ -51,8 +51,6 @@ const TEXTAREA_MIN_ROWS = 3;
 const TEXTAREA_MAX_ROWS = 5;
 const TEXTAREA_MIN_HEIGHT =
   TEXTAREA_MIN_ROWS * TEXTAREA_LINE_HEIGHT_PX + TEXTAREA_VERTICAL_PADDING_PX;
-const TEXTAREA_MAX_HEIGHT =
-  TEXTAREA_MAX_ROWS * TEXTAREA_LINE_HEIGHT_PX + TEXTAREA_VERTICAL_PADDING_PX;
 
 const DEFAULT_PLACEHOLDER = 'Describe a task for the agent… (⌘/Ctrl+Enter to send)';
 const BARE_PLACEHOLDER = 'Describe your app idea… (⌘/Ctrl+Enter to send)';
@@ -61,14 +59,15 @@ const BARE_REPO_MESSAGE =
   'This repository is almost empty — describe the app you want to build and the agent will create the first implementation.';
 
 /** Grows the textarea with its content, clamped to the min/max row bounds. */
-export function useAutoResizeTextarea(value: string) {
+export function useAutoResizeTextarea(value: string, maxRows = TEXTAREA_MAX_ROWS) {
   const ref = React.useRef<HTMLTextAreaElement | null>(null);
   React.useLayoutEffect(() => {
     const el = ref.current;
     if (!el) return;
+    const maxHeight = maxRows * TEXTAREA_LINE_HEIGHT_PX + TEXTAREA_VERTICAL_PADDING_PX;
     el.style.height = 'auto';
-    el.style.height = `${clampTextareaHeight(el.scrollHeight, TEXTAREA_MIN_HEIGHT, TEXTAREA_MAX_HEIGHT)}px`;
-  }, [value]);
+    el.style.height = `${clampTextareaHeight(el.scrollHeight, TEXTAREA_MIN_HEIGHT, maxHeight)}px`;
+  }, [value, maxRows]);
   return ref;
 }
 
