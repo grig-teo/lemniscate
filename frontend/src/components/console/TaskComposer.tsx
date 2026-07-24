@@ -556,7 +556,7 @@ export function TaskComposerDialog({
 }) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-3xl">
+      <DialogContent className="max-h-[85vh] overflow-y-auto overflow-x-hidden sm:max-w-3xl">
         <DialogHeader>
           <DialogTitle>New task</DialogTitle>
           <DialogDescription>
