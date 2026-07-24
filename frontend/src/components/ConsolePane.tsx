@@ -18,11 +18,13 @@ function EmptyConsole() {
           Agent console
         </span>
       </div>
-      <div className="flex flex-1 flex-col items-center justify-center gap-4 px-6 py-16 text-center">
-        <Terminal className="h-8 w-8 text-muted-foreground/50" aria-hidden />
-        <p className="text-sm text-muted-foreground">Agent output will stream here.</p>
-        <div className="w-full max-w-2xl text-left">
-          <ComposerCard />
+      <div className="min-h-0 flex-1 overflow-y-auto">
+        <div className="flex flex-col items-center gap-4 px-4 py-8">
+          <Terminal className="h-8 w-8 text-muted-foreground/50" aria-hidden />
+          <p className="text-sm text-muted-foreground">Agent output will stream here.</p>
+          <div className="w-full text-left">
+            <ComposerCard />
+          </div>
         </div>
       </div>
     </section>

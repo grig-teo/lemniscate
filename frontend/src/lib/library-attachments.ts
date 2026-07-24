@@ -99,6 +99,19 @@ export function useAgentsMdAssignments(initial?: AgentsMdInitial[], initialFolde
     setFolders(mergeFolders(next, Object.keys(assignments)));
   };
 
+  // Browse-tree toggle: adds the folder when absent; otherwise removes it
+  // and its assignment. Root ('/') can never be removed.
+  const toggleFolder = (folder: string) => {
+    if (folder === '/') return;
+    setFolders((prev) => (prev.includes(folder) ? prev.filter((f) => f !== folder) : [...prev, folder]));
+    setAssignments((prev) => {
+      if (!(folder in prev)) return prev;
+      const next = { ...prev };
+      delete next[folder];
+      return next;
+    });
+  };
+
   const openPicker = (folder: string | null) => {
     setOpenFolder(folder);
     setPickerSearch('');
@@ -134,6 +147,7 @@ export function useAgentsMdAssignments(initial?: AgentsMdInitial[], initialFolde
     assignments,
     assign,
     replaceFolders,
+    toggleFolder,
     openFolder,
     openPicker,
     pickerSearch,

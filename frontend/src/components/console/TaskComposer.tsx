@@ -1,7 +1,6 @@
 import * as React from 'react';
 import { Loader2, Paperclip, Plus, Send, X } from 'lucide-react';
 
-import { api } from '@/lib/api';
 import { defaultRepositoryId } from '@/lib/default-repository';
 import {
   useCreateTask,
@@ -482,11 +481,7 @@ function ComposerToolbar({ composer }: { composer: ReturnType<typeof useTaskComp
       <LibraryAttachments
         state={composer.attachments}
         columns
-        onLoadFolders={() =>
-          api
-            .get<{ folders: string[] }>(`/api/repositories/${composer.repositoryId}/folders`)
-            .then((res) => res.folders)
-        }
+        repositoryId={composer.repositoryId || undefined}
       />
       <div className="flex items-center justify-end gap-2">
         <AttachImagesButton

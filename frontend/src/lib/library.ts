@@ -124,3 +124,24 @@ export async function previewStructure(prompt: string): Promise<string[]> {
   const res = await api.post<{ folders: string[] }>('/api/library/structure-preview', { prompt });
   return res.folders;
 }
+
+/**
+ * Debounced directory-tree query for GET /api/repositories/:id/folders:
+ * one shallow clone per search term, folders only. Disabled without a repo id.
+ */
+export function useRepoFolders(repositoryId: string | null | undefined, search: string) {
+  const debouncedSearch = useDebounced(search);
+  return useQuery({
+    queryKey: ['repo-folders', repositoryId ?? null, debouncedSearch],
+    queryFn: () => {
+      const params = new URLSearchParams();
+      if (debouncedSearch.trim()) params.set('search', debouncedSearch.trim());
+      const suffix = params.size > 0 ? `?${params.toString()}` : '';
+      return api
+        .get<{ folders: string[] }>(`/api/repositories/${repositoryId}/folders${suffix}`)
+        .then((res) => res.folders);
+    },
+    enabled: Boolean(repositoryId),
+    placeholderData: (previous) => previous,
+  });
+}

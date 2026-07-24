@@ -7,7 +7,14 @@ import path from 'node:path';
 
 const SKIPPED_DIRS = new Set(['.git', 'node_modules']);
 const MAX_DEPTH = 6;
-export const FOLDER_LIST_CAP = 300;
+export const FOLDER_LIST_CAP = 1000;
+
+/** Case-insensitive substring filter over a normalized folder list ('/' always kept). */
+export function filterFoldersBySearch(folders: string[], search: string): string[] {
+  const needle = search.trim().toLowerCase();
+  if (needle === '') return folders;
+  return folders.filter((folder) => folder === '/' || folder.toLowerCase().includes(needle));
+}
 
 // Normalizes raw relative dir paths: '/'-prefixed, sorted, git/module
 // internals dropped, root always first, capped at `cap` folders.

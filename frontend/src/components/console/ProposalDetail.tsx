@@ -176,15 +176,7 @@ function TaskEditorInner({
         />
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto">
-        <LibraryAttachments
-          state={attachments}
-          columns
-          onLoadFolders={() =>
-            api
-              .get<{ folders: string[] }>(`/api/repositories/${task.repositoryId}/folders`)
-              .then((res) => res.folders)
-          }
-        />
+        <LibraryAttachments state={attachments} columns repositoryId={task.repositoryId} />
       </div>
       <div className="flex shrink-0 items-center gap-2">
         <div className="flex-1" />

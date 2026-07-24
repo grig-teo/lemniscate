@@ -6,13 +6,15 @@ import { config } from '../config.js';
 import { cleanupWorkdir, cloneRepository } from '../lib/agent-git.js';
 import { GIT_HTTP_AUTH_USERNAME, tokenlessCloneUrl } from '../lib/git-providers.js';
 import { prisma } from '../lib/prisma.js';
-import { listWorkdirFolders } from '../lib/repo-folders.js';
+import { listWorkdirFolders, filterFoldersBySearch } from '../lib/repo-folders.js';
 import { findUnknownSkillSlugs, isAgentsMdSkill } from '../lib/task-skills.js';
 import { withGitlabRefreshRetry } from '../lib/token-refresh.js';
 import { authenticatedUserId, requireAuth } from '../plugins/auth.js';
 import { parseOrReply } from './helpers.js';
 
 const idParamsSchema = z.object({ id: z.string().min(1) });
+
+const foldersQuerySchema = z.object({ search: z.string().max(200).optional() });
 
 const patchBodySchema = z
   .object({
@@ -144,11 +146,13 @@ const repositoriesRoutes: FastifyPluginAsync = async (app) => {
   });
 
   // Directory tree of the repository (no files): shallow-cloned on demand
-  // for the AGENTS.md per-folder assignment UI.
+  // for the AGENTS.md per-folder assignment UI. ?search= filters folders.
   app.get('/repositories/:id/folders', async (request, reply) => {
     const userId = authenticatedUserId(request);
     const params = parseOrReply(idParamsSchema, request.params, reply, 'Invalid repository id');
     if (params === null) return;
+    const query = parseOrReply(foldersQuerySchema, request.query, reply, 'Invalid query');
+    if (query === null) return;
     const repository = await prisma.repository.findFirst({
       where: { id: params.id, connection: { userId } },
       include: { connection: true },
@@ -168,7 +172,7 @@ const repositoriesRoutes: FastifyPluginAsync = async (app) => {
       await cloneRepository(workdir, cloneUrl, repository.defaultBranch, secrets, {
         auth: { username: GIT_HTTP_AUTH_USERNAME, token },
       });
-      const folders = await listWorkdirFolders(workdir);
+      const folders = filterFoldersBySearch(await listWorkdirFolders(workdir), query.search ?? '');
       return { folders };
     } finally {
       await cleanupWorkdir(workdir);
