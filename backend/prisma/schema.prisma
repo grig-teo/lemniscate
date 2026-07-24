@@ -44,8 +44,13 @@ enum TaskEventKind {
 model User {
   id             String          @id @default(cuid())
   createdAt      DateTime        @default(now())
+  // Session revocation: JWTs embed the sessionVersion they were issued at
+  // (`sv` claim); a mismatch (logout, last git connection removed) 401s.
+  sessionVersion Int             @default(0)
   gitConnections GitConnection[]
   llmConfigs     LlmConfig[]
+  skills         Skill[]
+  mcpServers     McpServer[]
 }
 
 model GitConnection {
@@ -66,6 +71,9 @@ model GitConnection {
   user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
   repositories   Repository[]
 
+  // One row per PAT/OAuth identity; NULLS NOT DISTINCT enforced in the
+  // migration SQL so github/gitlab rows (baseUrl NULL) cannot duplicate.
+  @@unique([provider, username, baseUrl])
   @@index([userId])
 }
 
@@ -184,6 +192,11 @@ model Skill {
   source      String   @default("hermes")
   // 'skill' = injectable instruction pack; 'agents_md' = AGENTS.md template.
   kind        String   @default("skill")
+  // Owner for user-created rows; NULL = global seeded entry readable by all.
+  userId      String?
+  user        User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
 }
 
 // MCP server library entry: `config` holds the server fragment that is
@@ -197,6 +210,11 @@ model McpServer {
   config      Json
   tags        String[]
   source      String   @default("lemniscate")
+  // Owner for user-created rows; NULL = global seeded entry readable by all.
+  userId      String?
+  user        User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
 }
 
 model TaskEvent {

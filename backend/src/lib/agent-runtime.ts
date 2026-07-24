@@ -1,8 +1,13 @@
 import type { GitConnection, LlmConfig, Repository, Task } from '@prisma/client';
 import { z } from 'zod';
-import { logEvent } from './agent-git.js';
+import { logEvent, type GitAuth } from './agent-git.js';
 import { decrypt } from './crypto.js';
-import { assertRepoPushAccess, cloneUrlWithToken, type ProviderName } from './git-providers.js';
+import {
+  assertRepoPushAccess,
+  GIT_HTTP_AUTH_USERNAME,
+  tokenlessCloneUrl,
+  type ProviderName,
+} from './git-providers.js';
 import {
   chatCompletions,
   type ChatCompletionsParams,
@@ -12,6 +17,7 @@ import {
 import { parseTaskThinkingLevel } from './task-attachments.js';
 import { prisma } from './prisma.js';
 import { withGitlabRefreshRetry } from './token-refresh.js';
+import { assertPublicHttpUrl } from './url-safety.js';
 import { sleep } from './utils.js';
 
 // LLM runtime for the agent loop: per-run state (token usage + throttle
@@ -222,8 +228,29 @@ export async function loadTaskWithRepo(taskId: string): Promise<TaskWithRepo | n
 }
 
 export interface AgentRunContext {
+  /** Tokenless https clone URL — credentials travel via gitAuth instead. */
   cloneUrl: string;
+  /** Per-invocation credentials for the worker's own git child processes. */
+  gitAuth: GitAuth;
   rt: LlmRuntime;
+}
+
+// Clone URL gate: https-only and publicly routable, checked before any token
+// is decrypted or any clone runs — a stored cloneUrl must never turn the
+// worker into an SSRF client (or read local services via file/http).
+async function assertSafeCloneUrl(cloneUrl: string): Promise<void> {
+  const url = await assertPublicHttpUrl(cloneUrl);
+  if (url.protocol !== 'https:') {
+    throw new Error(`repository cloneUrl must use https (got ${url.protocol})`);
+  }
+}
+
+// LLM endpoint gate: the saved-config baseUrl is asserted once here, at
+// runtime construction — not on the per-request hot path in llm-client.ts.
+async function assertSafeLlmBaseUrl(baseUrl: string): Promise<void> {
+  await assertPublicHttpUrl(baseUrl).catch((err: unknown) => {
+    throw new Error(`LLM baseUrl is not allowed: ${(err as Error).message}`);
+  });
 }
 
 // Decrypts the connection token + LLM key (recording both as secrets to
@@ -236,6 +263,7 @@ export async function prepareAgentRuntime(
   usedTokens = 0,
 ): Promise<AgentRunContext> {
   const connection = repository.connection;
+  await assertSafeCloneUrl(repository.cloneUrl);
   // Resolve a valid token (refreshing an expired GitLab OAuth token first,
   // with one refresh+retry on a 401) and fail fast when it cannot push,
   // before cloning and LLM spend.
@@ -250,9 +278,10 @@ export async function prepareAgentRuntime(
     return t;
   });
   secrets.push(token);
-  const cloneUrl = cloneUrlWithToken(repository.cloneUrl, token);
-  secrets.push(cloneUrl);
+  const cloneUrl = tokenlessCloneUrl(repository.cloneUrl);
+  const gitAuth: GitAuth = { username: GIT_HTTP_AUTH_USERNAME, token };
   const llmConfig = await resolveLlmConfig(task, repository, repository.connection.userId);
+  await assertSafeLlmBaseUrl(llmConfig.baseUrl);
   const apiKey = decrypt(llmConfig.apiKeyEnc);
   secrets.push(apiKey);
   const rt = makeLlmRuntime(llmConfig, apiKey);
@@ -260,5 +289,5 @@ export async function prepareAgentRuntime(
   rt.taskId = task?.id;
   const thinkingLevelOverride = parseTaskThinkingLevel(task?.thinkingLevel);
   if (thinkingLevelOverride) rt.thinkingLevelOverride = thinkingLevelOverride;
-  return { cloneUrl, rt };
+  return { cloneUrl, gitAuth, rt };
 }

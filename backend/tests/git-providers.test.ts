@@ -2,10 +2,10 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { encrypt } from '../src/lib/crypto.js';
 import {
   assertRepoPushAccess,
-  cloneUrlWithToken,
   fetchProviderProfile,
   getProviderClient,
   giteeHeaders,
+  GIT_HTTP_AUTH_USERNAME,
   githubHeaders,
   gitlabApiBase,
   gitlabHeaders,
@@ -17,6 +17,7 @@ import {
   normalizeGiteeRepo,
   normalizeGitverseRepo,
   ProviderError,
+  tokenlessCloneUrl,
 } from '../src/lib/git-providers.js';
 
 // Locking tests for the provider header/base-URL helpers. These were
@@ -45,17 +46,21 @@ function stubFetch(handler: (url: string) => Response): ReturnType<typeof vi.fn>
   return fn;
 }
 
-describe('cloneUrlWithToken', () => {
-  it('embeds the token as oauth2 credentials', () => {
-    expect(cloneUrlWithToken('https://github.com/acme/repo.git', 's3cret')).toBe(
-      'https://oauth2:s3cret@github.com/acme/repo.git',
+describe('tokenlessCloneUrl', () => {
+  it('returns the URL unchanged when it carries no credentials', () => {
+    expect(tokenlessCloneUrl('https://github.com/acme/repo.git')).toBe(
+      'https://github.com/acme/repo.git',
     );
   });
 
-  it('embeds the token for gitverse HTTPS clone URLs', () => {
-    expect(cloneUrlWithToken('https://gitverse.ru/acme/repo.git', 's3cret')).toBe(
-      'https://oauth2:s3cret@gitverse.ru/acme/repo.git',
+  it('strips embedded credentials so nothing secrets reaches .git/config', () => {
+    expect(tokenlessCloneUrl('https://oauth2:s3cret@gitverse.ru/acme/repo.git')).toBe(
+      'https://gitverse.ru/acme/repo.git',
     );
+  });
+
+  it('keeps oauth2 as the HTTP auth username (GitLab PAT/OAuth convention)', () => {
+    expect(GIT_HTTP_AUTH_USERNAME).toBe('oauth2');
   });
 });
 

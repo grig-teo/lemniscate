@@ -3,12 +3,14 @@ import type { Prisma, Skill } from '@prisma/client';
 import { z } from 'zod';
 import { prisma } from '../lib/prisma.js';
 import { mirrorLibraryObject, removeLibraryObject } from '../lib/library-storage.js';
-import { requireAuth } from '../plugins/auth.js';
+import { libraryMutationBlocker, libraryScopeWhere } from '../lib/task-skills.js';
+import { authenticatedUserId, requireAuth } from '../plugins/auth.js';
 import { parseOrReply, parsePageQuery } from './helpers.js';
 
 // Skills library: instruction packs (kind 'skill') and AGENTS.md templates
-// (kind 'agents_md'). Seeded from external sources (e.g. hermes-agent) and
-// editable through the CRUD endpoints below; every write is mirrored to
+// (kind 'agents_md'). Seeded rows are global (userId NULL, readable by all,
+// not editable); rows created through the API belong to their creator.
+// Reads return global + the requester's rows. Every write is mirrored to
 // MinIO (see lib/library-storage.ts).
 // Register with prefix `/api/skills` (done in main.ts).
 
@@ -85,7 +87,7 @@ export function buildSkillWhere(query: {
 async function listSkills(request: FastifyRequest, reply: FastifyReply) {
   const query = parseOrReply(listQuerySchema, request.query, reply, 'Invalid query');
   if (query === null) return;
-  const where = buildSkillWhere(query);
+  const where = { AND: [buildSkillWhere(query), libraryScopeWhere(authenticatedUserId(request))] };
   const pageQuery = parsePageQuery(query);
   if (pageQuery === null) {
     const skills: SkillSummary[] = await prisma.skill.findMany({
@@ -109,9 +111,10 @@ async function listSkills(request: FastifyRequest, reply: FastifyReply) {
   return { skills, total, page: pageQuery.page, pageSize: pageQuery.pageSize };
 }
 
-async function listCategories() {
+async function listCategories(request: FastifyRequest) {
   const grouped = await prisma.skill.groupBy({
     by: ['category'],
+    where: libraryScopeWhere(authenticatedUserId(request)),
     _count: { _all: true },
     orderBy: { category: 'asc' },
   });
@@ -124,7 +127,8 @@ async function getSkill(request: FastifyRequest, reply: FastifyReply) {
   const params = parseOrReply(slugParamSchema, request.params, reply, 'Invalid skill slug');
   if (params === null) return;
   const skill = await prisma.skill.findUnique({ where: { slug: params.slug } });
-  if (!skill) {
+  // Another user's row is hidden as 404 — its existence must not leak.
+  if (!skill || (skill.userId !== null && skill.userId !== request.userId)) {
     return reply.code(404).send({ error: 'Skill not found' });
   }
   return skill;
@@ -137,9 +141,31 @@ async function createSkill(request: FastifyRequest, reply: FastifyReply) {
   if (existing) {
     return reply.code(409).send({ error: `Skill slug already exists: ${body.slug}` });
   }
-  const skill = await prisma.skill.create({ data: body });
+  const skill = await prisma.skill.create({
+    data: { ...body, userId: authenticatedUserId(request) },
+  });
   await mirrorLibraryObject(skill.kind === 'agents_md' ? 'agents_md' : 'skill', skill.slug, skill.content, request.log);
   return reply.code(201).send({ skill });
+}
+
+// Resolves the row the requester may mutate: the skill, or null after
+// sending 404/403.
+async function mutableSkill(
+  request: FastifyRequest,
+  reply: FastifyReply,
+  slug: string,
+): Promise<Skill | null> {
+  const existing = await prisma.skill.findUnique({ where: { slug } });
+  if (!existing) {
+    await reply.code(404).send({ error: 'Skill not found' });
+    return null;
+  }
+  const blocker = libraryMutationBlocker(existing.userId, authenticatedUserId(request));
+  if (blocker) {
+    await reply.code(403).send({ error: blocker });
+    return null;
+  }
+  return existing;
 }
 
 async function updateSkill(request: FastifyRequest, reply: FastifyReply) {
@@ -147,10 +173,7 @@ async function updateSkill(request: FastifyRequest, reply: FastifyReply) {
   if (params === null) return;
   const body = parseOrReply(upsertBodySchema.partial(), request.body, reply, 'Invalid body');
   if (body === null) return;
-  const existing = await prisma.skill.findUnique({ where: { slug: params.slug } });
-  if (!existing) {
-    return reply.code(404).send({ error: 'Skill not found' });
-  }
+  if (!(await mutableSkill(request, reply, params.slug))) return;
   const skill = await prisma.skill.update({
     where: { slug: params.slug },
     data: { ...body, slug: undefined },
@@ -162,10 +185,8 @@ async function updateSkill(request: FastifyRequest, reply: FastifyReply) {
 async function deleteSkill(request: FastifyRequest, reply: FastifyReply) {
   const params = parseOrReply(slugParamSchema, request.params, reply, 'Invalid skill slug');
   if (params === null) return;
-  const existing = await prisma.skill.findUnique({ where: { slug: params.slug } });
-  if (!existing) {
-    return reply.code(404).send({ error: 'Skill not found' });
-  }
+  const existing = await mutableSkill(request, reply, params.slug);
+  if (!existing) return;
   await prisma.skill.delete({ where: { slug: params.slug } });
   await removeLibraryObject(existing.kind === 'agents_md' ? 'agents_md' : 'skill', existing.slug, request.log);
   return { deleted: true };

@@ -4,6 +4,8 @@ import { z } from 'zod';
 import { encrypt, decrypt } from '../lib/crypto.js';
 import { chatCompletions, LlmError, type ChatCompletionsParams } from '../lib/llm-client.js';
 import { prisma } from '../lib/prisma.js';
+import { assertPublicHttpUrl } from '../lib/url-safety.js';
+import { errorMessage } from '../lib/utils.js';
 import { requireAuth } from '../plugins/auth.js';
 import { parseOrReply } from './helpers.js';
 import type { LlmConfig } from '@prisma/client';
@@ -12,6 +14,10 @@ import type { LlmConfig } from '@prisma/client';
 // Register with prefix `/api/llm-configs` (done in main.ts).
 // Auth comes from the shared plugin (src/plugins/auth.ts): JWT in the
 // httpOnly cookie `lemniscate_token`, payload { userId }.
+
+// The test endpoints dial arbitrary URLs with the decrypted API key — keep
+// the bucket tight.
+const TEST_RATE_LIMIT = { max: 10, timeWindow: '1 minute' } as const;
 
 // --- Validation schemas (fields per docs/llm-config.md) ---
 
@@ -159,6 +165,7 @@ async function createConfig(request: FastifyRequest, reply: FastifyReply) {
   });
   if (data === null) return;
   const { apiKey, ...fields } = data;
+  if (!(await assertPublicBaseUrl(fields.baseUrl, reply))) return;
   const created = await prisma.$transaction(async (tx) => {
     if (fields.isDefault) {
       await clearOtherDefaults(tx, request.userId!);
@@ -197,6 +204,7 @@ async function updateConfig(request: FastifyRequest, reply: FastifyReply) {
   });
   if (data === null) return;
   const { apiKey, ...fields } = data;
+  if (fields.baseUrl && !(await assertPublicBaseUrl(fields.baseUrl, reply))) return;
   const updated = await prisma.$transaction(async (tx) => {
     if (fields.isDefault) {
       await clearOtherDefaults(tx, request.userId!, params.id);
@@ -222,6 +230,19 @@ async function deleteConfig(request: FastifyRequest, reply: FastifyReply) {
   return reply.code(204).send();
 }
 
+// SSRF guard: the backend (and the agent worker) calls baseUrl with the
+// user's API key, so it must be publicly routable. Local-dev escape hatch:
+// ALLOW_PRIVATE_URLS=true (see lib/url-safety.ts).
+async function assertPublicBaseUrl(rawUrl: string, reply: FastifyReply): Promise<boolean> {
+  try {
+    await assertPublicHttpUrl(rawUrl);
+    return true;
+  } catch (err) {
+    await reply.code(400).send({ error: `baseUrl rejected: ${errorMessage(err)}` });
+    return false;
+  }
+}
+
 // Test an unsaved config payload (test-before-save from the form).
 async function testUnsavedConfig(request: FastifyRequest, reply: FastifyReply) {
   const data = parseOrReply(testSchema, request.body, reply, 'Invalid request body', {
@@ -229,6 +250,7 @@ async function testUnsavedConfig(request: FastifyRequest, reply: FastifyReply) {
     request,
   });
   if (data === null) return;
+  if (!(await assertPublicBaseUrl(data.baseUrl, reply))) return;
   const { apiKey, thinkingLevel, customHeaders, ...fields } = data;
   return runConnectionTest({
     ...fields,
@@ -238,7 +260,9 @@ async function testUnsavedConfig(request: FastifyRequest, reply: FastifyReply) {
   });
 }
 
-// Test a saved config (key decrypted server-side only).
+// Test a saved config (key decrypted server-side only). The stored baseUrl
+// is re-validated: rows saved before the SSRF guard must not dial private
+// addresses either.
 async function testSavedConfig(request: FastifyRequest, reply: FastifyReply) {
   const params = parseOrReply(idParamSchema, request.params, reply, 'Invalid config id');
   if (params === null) return;
@@ -248,6 +272,7 @@ async function testSavedConfig(request: FastifyRequest, reply: FastifyReply) {
   if (!record) {
     return reply.code(404).send({ error: 'LLM config not found' });
   }
+  if (!(await assertPublicBaseUrl(record.baseUrl, reply))) return;
   return runConnectionTest(toClientParams(record));
 }
 
@@ -258,6 +283,6 @@ export default async function llmConfigRoutes(app: FastifyInstance) {
   app.get('/:id', getConfig);
   app.patch('/:id', updateConfig);
   app.delete('/:id', deleteConfig);
-  app.post('/test', testUnsavedConfig);
-  app.post('/:id/test', testSavedConfig);
+  app.post('/test', { config: { rateLimit: TEST_RATE_LIMIT } }, testUnsavedConfig);
+  app.post('/:id/test', { config: { rateLimit: TEST_RATE_LIMIT } }, testSavedConfig);
 }

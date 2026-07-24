@@ -29,10 +29,17 @@ RUN apk add --no-cache git openssl bash curl xz ripgrep \
 # the app user), uv-managed Python under /usr/local/share/uv (world-readable).
 # --skip-browser avoids the Playwright/Chromium download; --skip-setup avoids
 # the interactive wizard. Data/config land in the invoking user's ~/.hermes.
+#
+# Supply chain: there is no versioned installer URL, but install.sh accepts
+# --commit to pin the checked-out hermes-agent revision. HERMES_COMMIT pins
+# that revision (override with --build-arg to upgrade deliberately). The
+# install.sh script itself is still fetched unpinned — a residual risk that
+# only a vendored installer or checksum verification would fully close.
 # Cleanup: browser-tool node_modules are unused with --skip-browser; the
 # installer caches and root's seeded data dir are dead weight for the app user.
+ARG HERMES_COMMIT=d48d6fadff6a2135110925a807a9d076c7ae958c
 RUN curl -fsSL https://hermes-agent.nousresearch.com/install.sh \
-  | bash -s -- --skip-browser --skip-setup \
+  | bash -s -- --skip-browser --skip-setup --commit "$HERMES_COMMIT" \
   && rm -rf /usr/local/lib/hermes-agent/node_modules \
     /root/.cache /root/.hermes
 COPY --from=build --chown=app:app /app/node_modules ./node_modules

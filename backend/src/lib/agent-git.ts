@@ -13,38 +13,62 @@ import { errorMessage, redactSecrets } from './utils.js';
 // Shared git/workdir/event plumbing for the agent-loop jobs (run-task,
 // review-pr, generate-proposals). Extracted from agent-loop.ts.
 //
-// Security: decrypted tokens/keys live only in memory (and in the local git
-// remote URL inside the throwaway workdir). Everything written to logs, task
-// events, or the task.error field is passed through redactSecrets.
+// Security: decrypted tokens/keys live only in memory and in the env of the
+// worker's own git child processes (LEMNISCATE_GIT_TOKEN, read by the inline
+// credential helper below). Remote URLs stay tokenless — the workdir's
+// .git/config is readable by the YOLO agent. Everything written to logs,
+// task events, or the task.error field is passed through redactSecrets.
 
 const execFileAsync = promisify(execFile);
 
 const GIT_USER_NAME = 'lemniscate-agent';
 const GIT_USER_EMAIL = 'agent@lemniscate.local';
 
+// Env var carrying the provider token to the git child process. It is set
+// ONLY here (worker's own git children); the hermes child env is an allowlist
+// that excludes it (buildHermesEnv in hermes-runner.ts).
+const GIT_TOKEN_ENV = 'LEMNISCATE_GIT_TOKEN';
+
+export interface GitAuth {
+  username: string;
+  token: string;
+}
+
+// Per-invocation credential auth: an inline credential helper that echoes the
+// username and reads the token from the child env. The token never appears in
+// remote URLs (.git/config), never in argv (`ps`), never in log events.
+function credentialArgs(auth: GitAuth): string[] {
+  const helper = `!f() { echo "username=${auth.username}"; echo "password=$${GIT_TOKEN_ENV}"; }; f`;
+  return ['-c', 'credential.helper=', '-c', `credential.helper=${helper}`];
+}
+
 export interface GitOptions {
   cwd?: string;
   secrets?: string[];
   /** When set, every command echoes a redacted `$ git ...` log event. */
   taskId?: string;
+  /** Per-invocation HTTP(S) credentials for clone/fetch/push. */
+  auth?: GitAuth;
 }
 
-// Best-effort console echo of the command line; secrets (credentialed URLs)
-// are scrubbed before anything reaches the event stream, and logging never
-// breaks the git operation itself.
+// Best-effort console echo of the command line; secrets are scrubbed before
+// anything reaches the event stream, and logging never breaks the git op.
 async function logGitCommand(args: string[], options: GitOptions): Promise<void> {
   if (!options.taskId) return;
   const line = redactSecrets(`$ git ${args.join(' ')}`, options.secrets ?? []);
   await logEvent(options.taskId, line).catch(() => {});
 }
 
-// Runs git; never echoes full args (clone/push args may carry credentialed
-// URLs) into the thrown error.
+// Runs git; never echoes full args into the thrown error.
 export async function git(args: string[], options: GitOptions = {}): Promise<string> {
-  await logGitCommand(args, options);
+  const argv = options.auth ? [...credentialArgs(options.auth), ...args] : args;
+  await logGitCommand(argv, options);
   try {
-    const { stdout } = await execFileAsync('git', args, {
+    const { stdout } = await execFileAsync('git', argv, {
       ...(options.cwd ? { cwd: options.cwd } : {}),
+      ...(options.auth
+        ? { env: { ...process.env, [GIT_TOKEN_ENV]: options.auth.token } }
+        : {}),
       maxBuffer: 64 * 1024 * 1024,
     });
     return stdout;
@@ -109,7 +133,7 @@ export async function cloneRepository(
   cloneUrl: string,
   defaultBranch: string,
   secrets: string[],
-  options: { shallow?: boolean; taskId?: string } = {},
+  options: { shallow?: boolean; taskId?: string; auth?: GitAuth } = {},
 ): Promise<CloneResult> {
   await fs.rm(workdir, { recursive: true, force: true });
   await fs.mkdir(path.dirname(workdir), { recursive: true });
@@ -118,6 +142,7 @@ export async function cloneRepository(
     await git(['clone', ...depthArgs, '--branch', defaultBranch, cloneUrl, workdir], {
       secrets,
       taskId: options.taskId,
+      ...(options.auth ? { auth: options.auth } : {}),
     });
   } catch (err) {
     if (!isEmptyRepoCloneError(err)) throw err;
@@ -154,6 +179,29 @@ export async function cleanupWorkdir(workdir: string, taskId?: string): Promise<
   if (taskId) await logEvent(taskId, 'cleaned up workdir').catch(() => {});
 }
 
+// ---------------------------------------------------------------------------
+// Orphaned-workdir sweep (worker boot)
+// ---------------------------------------------------------------------------
+
+// A workdir is worth keeping only while its owning task is queued/running:
+// run-task uses the bare taskId, review-pr uses `review-<taskId>-<attempt>`.
+// proposals-*/folders-* workdirs belong to stateless jobs and are always
+// safe to sweep at boot.
+function isActiveWorkdir(dirName: string, activeTaskIds: ReadonlySet<string>): boolean {
+  if (activeTaskIds.has(dirName)) return true;
+  const reviewMatch = /^review-(.+)-\d+$/.exec(dirName);
+  return reviewMatch !== null && activeTaskIds.has(reviewMatch[1] ?? '');
+}
+
+// Directories under AGENT_WORKDIR that no queued/running task owns — stale
+// leftovers (with readable .git dirs) after a SIGKILLed worker.
+export function planWorkdirSweep(
+  dirNames: string[],
+  activeTaskIds: ReadonlySet<string>,
+): string[] {
+  return dirNames.filter((name) => !isActiveWorkdir(name, activeTaskIds));
+}
+
 // Logs a job failure to the console and the task's event stream (both
 // best-effort scrubbed). Returns the sanitized message for status updates.
 export async function recordJobFailure(
@@ -177,12 +225,13 @@ export async function commitAndPush(
   summary: string,
   pushArgs: string[],
   secrets: string[],
+  auth?: GitAuth,
 ): Promise<void> {
   const commitMessage = await generateCommitMessage(rt, task, summary);
   await git(['add', '-A'], { cwd: workdir, taskId: task.id });
   await git(['commit', '-m', commitMessage], { cwd: workdir, taskId: task.id });
   await logEvent(task.id, `committed: ${commitMessage}`);
-  await git(pushArgs, { cwd: workdir, secrets, taskId: task.id });
+  await git(pushArgs, { cwd: workdir, secrets, taskId: task.id, ...(auth ? { auth } : {}) });
 }
 
 // ---------------------------------------------------------------------------

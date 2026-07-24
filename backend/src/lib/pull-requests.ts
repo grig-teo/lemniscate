@@ -60,6 +60,13 @@ export interface MergePullRequestResult {
   prUrl: string;
 }
 
+export interface PrChecksStatus {
+  /** False when the provider exposes no check-status API (e.g. GitVerse). */
+  supported: boolean;
+  /** True when every check is green — or none exist to block the merge. */
+  green: boolean;
+}
+
 // Maps a provider "not mergeable" status to a conflict result; rethrows
 // anything else so real API failures are not mistaken for conflicts.
 function conflictOrThrow(err: unknown, statuses: number[], prUrl: string): MergePullRequestResult {
@@ -179,6 +186,13 @@ export async function createOrFindExistingPr(
   }
 }
 
+// Each repoFullName path segment is encoded separately: '/' keeps separating
+// owner/repo, but special characters in either segment cannot break out of
+// the URL path or smuggle in query strings.
+function encodeRepoPath(repoFullName: string): string {
+  return repoFullName.split('/').map(encodeURIComponent).join('/');
+}
+
 // ---------------------------------------------------------------------------
 // GitHub
 // ---------------------------------------------------------------------------
@@ -196,7 +210,7 @@ const githubPullLookupSchema = z.array(
 );
 
 function githubPullsUrl(repoFullName: string): string {
-  return `${GITHUB_API}/repos/${repoFullName}/pulls`;
+  return `${GITHUB_API}/repos/${encodeRepoPath(repoFullName)}/pulls`;
 }
 
 function githubOpenPullsQueryUrl(input: PullRequestRefInput): string {
@@ -290,6 +304,22 @@ async function githubOpenPullRequest(
     alreadyExistsStatuses: [422],
     findExisting: () => githubFindExistingPrUrl(token, input),
   });
+}
+
+const githubCombinedStatusSchema = z.object({ state: z.string(), total_count: z.number() });
+
+// Combined commit status of the PR head. A commit with zero checks cannot be
+// blocked by checks, so total_count 0 counts as green.
+async function githubChecksStatus(
+  token: string,
+  input: PullRequestRefInput,
+): Promise<PrChecksStatus> {
+  const url =
+    `${GITHUB_API}/repos/${encodeRepoPath(input.repoFullName)}` +
+    `/commits/${encodeURIComponent(input.headBranch)}/status`;
+  const { body } = await apiRequest('github', 'GET', url, githubHeaders(token), token);
+  const status = githubCombinedStatusSchema.parse(body);
+  return { supported: true, green: status.total_count === 0 || status.state === 'success' };
 }
 
 // ---------------------------------------------------------------------------
@@ -425,6 +455,23 @@ async function gitlabOpenPullRequest(
   });
 }
 
+const gitlabMrPipelineSchema = z.object({
+  head_pipeline: z.object({ status: z.string() }).nullish(),
+});
+
+// Head pipeline of the MR. No pipeline at all means nothing can block.
+async function gitlabChecksStatus(
+  connection: PrConnectionInput,
+  token: string,
+  input: PullRequestRefInput,
+): Promise<PrChecksStatus> {
+  const { iid } = await gitlabLookupMrIid(connection, token, input);
+  const url = `${gitlabMrsUrl(connection, input.repoFullName)}/${iid}`;
+  const { body } = await gitlabGet(connection, token, url);
+  const pipeline = gitlabMrPipelineSchema.parse(body).head_pipeline;
+  return { supported: true, green: !pipeline || pipeline.status === 'success' };
+}
+
 // ---------------------------------------------------------------------------
 // GitVerse (public API: api.<host>, GitHub-shaped pulls)
 // ---------------------------------------------------------------------------
@@ -482,7 +529,7 @@ function indicatesUnmergeable(body: unknown): boolean {
 }
 
 function gitversePullsUrl(connection: PrConnectionInput, repoFullName: string): string {
-  return `${gitverseApiBase(connection.baseUrl)}/repos/${repoFullName}/pulls`;
+  return `${gitverseApiBase(connection.baseUrl)}/repos/${encodeRepoPath(repoFullName)}/pulls`;
 }
 
 function gitverseOpenPullsQueryUrl(
@@ -594,7 +641,7 @@ async function gitverseCompareDiff(
   input: PullRequestRefInput,
 ): Promise<string> {
   const url =
-    `${gitverseApiBase(connection.baseUrl)}/repos/${input.repoFullName}` +
+    `${gitverseApiBase(connection.baseUrl)}/repos/${encodeRepoPath(input.repoFullName)}` +
     `/compare/${input.baseBranch}...${input.headBranch}`;
   const { body } = await apiRequest('gitverse', 'GET', url, gitverseHeaders(token), token);
   return assembleUnifiedDiff(gitverseCompareSchema.parse(body).files);
@@ -655,7 +702,7 @@ const giteePullListSchema = z.array(
 const giteeFilesSchema = z.array(gitverseDiffFileSchema);
 
 function giteePullsUrl(repoFullName: string): string {
-  return `${GITEE_API}/repos/${repoFullName}/pulls`;
+  return `${GITEE_API}/repos/${encodeRepoPath(repoFullName)}/pulls`;
 }
 
 function giteeOpenPullsQueryUrl(input: PullRequestRefInput): string {
@@ -752,6 +799,8 @@ interface ProviderPrApi {
   open(input: OpenPullRequestInput): Promise<OpenPullRequestResult>;
   merge(input: PullRequestRefInput): Promise<MergePullRequestResult>;
   diff(input: PullRequestRefInput): Promise<string>;
+  /** Commit/PR check statuses; absent when the provider has no checks API. */
+  checks?(input: PullRequestRefInput): Promise<PrChecksStatus>;
 }
 
 // The ONE place the provider is selected for PR operations (AGENTS.md §4).
@@ -763,12 +812,14 @@ function providerPrApi(connection: PrConnectionInput, token: string): ProviderPr
         open: (input) => githubOpenPullRequest(token, input),
         merge: (input) => githubMergePullRequest(token, input),
         diff: (input) => githubPullRequestDiff(token, input),
+        checks: (input) => githubChecksStatus(token, input),
       };
     case 'gitlab':
       return {
         open: (input) => gitlabOpenPullRequest(connection, token, input),
         merge: (input) => gitlabMergePullRequest(connection, token, input),
         diff: (input) => gitlabPullRequestDiff(connection, token, input),
+        checks: (input) => gitlabChecksStatus(connection, token, input),
       };
     case 'gitverse':
       return {
@@ -814,4 +865,17 @@ export async function getPullRequestDiff(
   return withGitlabRefreshRetry(connection, (token) =>
     providerPrApi(connection, token).diff(input),
   );
+}
+
+// Check statuses of the PR head, for the auto-merge gate. Providers without
+// a checks API report { supported: false } so the caller can log and decide.
+export async function pullRequestChecksStatus(
+  connection: PrConnectionInput,
+  input: PullRequestRefInput,
+): Promise<PrChecksStatus> {
+  return withGitlabRefreshRetry(connection, (token) => {
+    const checks = providerPrApi(connection, token).checks;
+    if (!checks) return Promise.resolve({ supported: false, green: true });
+    return checks(input);
+  });
 }

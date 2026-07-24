@@ -236,6 +236,79 @@ describe('runHermesTask without a taskId', () => {
   });
 });
 
+describe('buildHermesEnv', () => {
+  it('builds an allowlisted env: no secrets even when set in process.env', async () => {
+    const saved = {
+      DATABASE_URL: process.env.DATABASE_URL,
+      ENCRYPTION_KEY: process.env.ENCRYPTION_KEY,
+      JWT_SECRET: process.env.JWT_SECRET,
+      HTTP_PROXY: process.env.HTTP_PROXY,
+    };
+    process.env.DATABASE_URL = 'postgres://u:p@db/app';
+    process.env.ENCRYPTION_KEY = 'enc-key';
+    process.env.JWT_SECRET = 'jwt-secret';
+    process.env.HTTP_PROXY = 'http://proxy:3128';
+    try {
+      const { buildHermesEnv } = await import('../src/lib/hermes-runner.js');
+      const env = buildHermesEnv('/tmp/hermes-home');
+      expect(env.DATABASE_URL).toBeUndefined();
+      expect(env.ENCRYPTION_KEY).toBeUndefined();
+      expect(env.JWT_SECRET).toBeUndefined();
+      expect(env.HERMES_HOME).toBe('/tmp/hermes-home');
+      expect(env.HERMES_YOLO_MODE).toBe('1');
+      expect(env.PATH).toBe(process.env.PATH);
+      expect(env.HOME).toBe(process.env.HOME);
+      expect(env.HTTP_PROXY).toBe('http://proxy:3128');
+      expect(Object.keys(env).sort()).toEqual(
+        ['HERMES_HOME', 'HERMES_YOLO_MODE', 'HOME', 'HTTP_PROXY', 'LANG', 'LC_ALL', 'PATH', 'TERM'].filter(
+          (key) => key.startsWith('HERMES') || process.env[key] !== undefined,
+        ),
+      );
+    } finally {
+      for (const [key, value] of Object.entries(saved)) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+    }
+  });
+
+  it('omits proxy vars when they are not set', async () => {
+    const saved = { HTTP_PROXY: process.env.HTTP_PROXY, HTTPS_PROXY: process.env.HTTPS_PROXY, NO_PROXY: process.env.NO_PROXY };
+    delete process.env.HTTP_PROXY;
+    delete process.env.HTTPS_PROXY;
+    delete process.env.NO_PROXY;
+    try {
+      const { buildHermesEnv } = await import('../src/lib/hermes-runner.js');
+      const env = buildHermesEnv('/tmp/hermes-home');
+      expect(env.HTTP_PROXY).toBeUndefined();
+      expect(env.HTTPS_PROXY).toBeUndefined();
+      expect(env.NO_PROXY).toBeUndefined();
+    } finally {
+      for (const [key, value] of Object.entries(saved)) {
+        if (value !== undefined) process.env[key] = value;
+      }
+    }
+  });
+
+  it('spawned hermes child receives the scrubbed env, not process.env', async () => {
+    const child = fakeChild();
+    mocks.spawn.mockReturnValue(child);
+    const saved = process.env.DATABASE_URL;
+    process.env.DATABASE_URL = 'postgres://u:p@db/app';
+    try {
+      const promise = runHermesTask(makeOpts());
+      await closeWith(child, 0);
+      await promise;
+      const env = mocks.spawn.mock.calls[0]?.[2].env as Record<string, string>;
+      expect(env.DATABASE_URL).toBeUndefined();
+      expect(env.HERMES_YOLO_MODE).toBe('1');
+    } finally {
+      if (saved === undefined) delete process.env.DATABASE_URL;
+      else process.env.DATABASE_URL = saved;
+    }
+  });
+});
+
 describe('runHermesTask cancellation', () => {
   it('kills the process and rejects when the task is cancelled mid-run', async () => {
     const child = fakeChild();

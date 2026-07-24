@@ -31,10 +31,19 @@ const envSchema = z.object({
   REDIS_URL: z.string().min(1),
 
   // --- Security ---
-  JWT_SECRET: z.string().min(1),
+  // Long enough to resist brute force, and never the shipped placeholder.
+  JWT_SECRET: z
+    .string()
+    .min(32, 'JWT_SECRET must be at least 32 characters')
+    .refine((value) => value !== 'change-me-to-a-long-random-string', {
+      message: 'JWT_SECRET is still the shipped default — generate a random one',
+    }),
   ENCRYPTION_KEY: z
     .string()
     .regex(/^[0-9a-fA-F]{64}$/, 'ENCRYPTION_KEY must be 64 hex chars (32 bytes)'),
+  // Escape hatch for local dev: allow private/loopback URLs for LLM baseUrl
+  // and git connections (SSRF guard in lib/url-safety.ts). Unset = blocked.
+  ALLOW_PRIVATE_URLS: z.enum(['true', 'false']).optional(),
 
   // --- GitHub OAuth ---
   GITHUB_CLIENT_ID: optionalString,
@@ -72,6 +81,11 @@ const envSchema = z.object({
   AGENT_EXECUTOR: z.enum(['hermes', 'internal']).default('hermes'),
   // Hard kill for one `hermes chat` run; the job then fails the task.
   AGENT_HERMES_TIMEOUT_MINUTES: z.coerce.number().int().positive().default(45),
+
+  // --- API limits ---
+  // Queued+running tasks a single user may have at once; the 6th concurrent
+  // create is rejected with 429.
+  TASK_MAX_ACTIVE_PER_USER: z.coerce.number().int().positive().default(5),
 });
 
 const parsed = envSchema.safeParse(process.env);

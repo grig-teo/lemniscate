@@ -2,6 +2,7 @@ import { ExternalLink, GitBranch, Loader2, Play, Square, X } from 'lucide-react'
 
 import { useCancelTask, useStartTask } from '@/lib/hooks';
 import { useWorkspaceSelection, type SelectedTask } from '@/lib/selection';
+import { isSafeHttpUrl } from '@/lib/url';
 import { StatusBadge } from '@/components/StatusBadge';
 import { Button } from '@/components/ui/button';
 
@@ -24,7 +25,7 @@ export function ConsoleHeader({ task, status }: { task: SelectedTask; status: st
           <span className="max-w-40 truncate font-mono">{task.branchName}</span>
         </span>
       )}
-      {task.prUrl && (
+      {task.prUrl && isSafeHttpUrl(task.prUrl) && (
         <a
           href={task.prUrl}
           target="_blank"

@@ -1,9 +1,10 @@
 import type { FastifyPluginAsync } from 'fastify';
+import crypto from 'node:crypto';
 import path from 'node:path';
 import { z } from 'zod';
 import { config } from '../config.js';
 import { cleanupWorkdir, cloneRepository } from '../lib/agent-git.js';
-import { cloneUrlWithToken } from '../lib/git-providers.js';
+import { GIT_HTTP_AUTH_USERNAME, tokenlessCloneUrl } from '../lib/git-providers.js';
 import { prisma } from '../lib/prisma.js';
 import { listWorkdirFolders } from '../lib/repo-folders.js';
 import { findUnknownSkillSlugs, isAgentsMdSkill } from '../lib/task-skills.js';
@@ -101,6 +102,13 @@ async function ownedLlmConfigExists(userId: string, llmConfigId: string): Promis
 // offending names instead of silently storing dead references. Lives in
 // lib/task-skills.ts (single home, shared with the repo-creation route).
 
+// Workdir name for the folders-endpoint clone. The random per-request suffix
+// keeps concurrent requests for the same repository from sharing (and racing
+// on) a single workdir.
+export function foldersWorkdirName(repositoryId: string, requestId: string): string {
+  return `folders-${repositoryId}-${requestId}`;
+}
+
 const repositoriesRoutes: FastifyPluginAsync = async (app) => {
   app.addHook('preHandler', requireAuth);
 
@@ -149,13 +157,17 @@ const repositoriesRoutes: FastifyPluginAsync = async (app) => {
       return reply.code(404).send({ error: 'Repository not found' });
     }
     const secrets: string[] = [];
-    const workdir = path.join(config.AGENT_WORKDIR, `folders-${repository.id}`);
+    const workdir = path.join(
+      config.AGENT_WORKDIR,
+      foldersWorkdirName(repository.id, crypto.randomUUID()),
+    );
     try {
       const token = await withGitlabRefreshRetry(repository.connection, async (t) => t);
       secrets.push(token);
-      const cloneUrl = cloneUrlWithToken(repository.cloneUrl, token);
-      secrets.push(cloneUrl);
-      await cloneRepository(workdir, cloneUrl, repository.defaultBranch, secrets);
+      const cloneUrl = tokenlessCloneUrl(repository.cloneUrl);
+      await cloneRepository(workdir, cloneUrl, repository.defaultBranch, secrets, {
+        auth: { username: GIT_HTTP_AUTH_USERNAME, token },
+      });
       const folders = await listWorkdirFolders(workdir);
       return { folders };
     } finally {

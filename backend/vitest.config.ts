@@ -12,8 +12,10 @@ export default defineConfig({
       OAUTH_CALLBACK_URL: 'http://localhost:3000/api/auth',
       DATABASE_URL: 'postgresql://test:test@localhost:5432/test',
       REDIS_URL: 'redis://localhost:6379',
-      JWT_SECRET: 'test-jwt-secret',
+      JWT_SECRET: 'test-jwt-secret-padded-to-32-chars!',
       ENCRYPTION_KEY: '0'.repeat(64),
+      GITHUB_CLIENT_ID: 'Ov23liAbCdEf123456',
+      GITHUB_CLIENT_SECRET: 'test-github-client-secret',
     },
   },
 });

@@ -13,6 +13,7 @@ import {
   persistTokenUsage,
   recordJobFailure,
   sanitizeRelativePath,
+  type GitAuth,
 } from './agent-git.js';
 import { buildSkillsSection, requestChanges, type LlmChangesResponse } from './agent-prompts.js';
 import {
@@ -23,7 +24,11 @@ import {
   type TaskWithRepo,
 } from './agent-runtime.js';
 import { enqueueReviewTask } from './proposal-scheduler.js';
-import { getPullRequestDiff, mergePullRequest } from './pull-requests.js';
+import {
+  getPullRequestDiff,
+  mergePullRequest,
+  pullRequestChecksStatus,
+} from './pull-requests.js';
 import {
   buildConflictResolutionMessages,
   buildFixUserPrompt,
@@ -87,9 +92,10 @@ async function checkoutTaskBranch(
   cloneUrl: string,
   headBranch: string,
   secrets: string[],
+  auth: GitAuth,
 ): Promise<void> {
-  await cloneRepository(workdir, cloneUrl, task.repository.defaultBranch, secrets);
-  await git(['fetch', '--depth', '1', 'origin', headBranch], { cwd: workdir, secrets });
+  await cloneRepository(workdir, cloneUrl, task.repository.defaultBranch, secrets, { auth });
+  await git(['fetch', '--depth', '1', 'origin', headBranch], { cwd: workdir, secrets, auth });
   await git(['checkout', '-b', headBranch, 'FETCH_HEAD'], { cwd: workdir });
 }
 
@@ -125,16 +131,17 @@ async function runReviewFixIteration(
   workdir: string,
   cloneUrl: string,
   secrets: string[],
+  auth: GitAuth,
 ): Promise<void> {
   await logEvent(task.id, 'applying review fixes');
-  await checkoutTaskBranch(task, workdir, cloneUrl, headBranch, secrets);
+  await checkoutTaskBranch(task, workdir, cloneUrl, headBranch, secrets, auth);
   const { summary, changes } = await proposeFixes(task, rt, review, workdir);
   const applied = await applyChanges(task.id, workdir, changes, secrets);
   if (applied === 0 || !(await hasDirtyWorkdir(workdir))) {
     await logEvent(task.id, 'no fix changes produced; re-reviewing the existing branch');
     return;
   }
-  await commitAndPush(task, rt, workdir, summary, ['push', 'origin', headBranch], secrets);
+  await commitAndPush(task, rt, workdir, summary, ['push', 'origin', headBranch], secrets, auth);
   await logEvent(task.id, `pushed review fixes to ${headBranch}`);
 }
 
@@ -198,12 +205,14 @@ async function resolveMergeConflictsOnce(
   workdir: string,
   cloneUrl: string,
   secrets: string[],
+  auth: GitAuth,
 ): Promise<void> {
   // Full clone: a shallow one lacks the common ancestor a real merge needs.
   await cloneRepository(workdir, cloneUrl, task.repository.defaultBranch, secrets, {
     shallow: false,
+    auth,
   });
-  await git(['fetch', 'origin', headBranch], { cwd: workdir, secrets });
+  await git(['fetch', 'origin', headBranch], { cwd: workdir, secrets, auth });
   const conflicted = await mergeHeadBranch(workdir);
   for (const rel of conflicted) {
     await resolveConflictedFile(task, rt, headBranch, workdir, rel);
@@ -213,7 +222,7 @@ async function resolveMergeConflictsOnce(
   } else {
     await logEvent(task.id, 'merge applied cleanly locally; publishing the merge');
   }
-  await git(['push', 'origin', `HEAD:${headBranch}`], { cwd: workdir, secrets });
+  await git(['push', 'origin', `HEAD:${headBranch}`], { cwd: workdir, secrets, auth });
 }
 
 // Tries to merge the PR; on conflict, hands resolution to the LLM and retries
@@ -226,6 +235,7 @@ async function mergeWithConflictResolution(
   workdir: string,
   cloneUrl: string,
   secrets: string[],
+  auth: GitAuth,
 ): Promise<void> {
   for (let conflictAttempt = 0; ; conflictAttempt += 1) {
     const result = await mergePullRequest(task.repository.connection, {
@@ -246,7 +256,7 @@ async function mergeWithConflictResolution(
       task.id,
       `merge conflict — resolving with the LLM (attempt ${conflictAttempt + 1}/${MAX_CONFLICT_RESOLUTIONS})`,
     );
-    await resolveMergeConflictsOnce(task, rt, headBranch, workdir, cloneUrl, secrets);
+    await resolveMergeConflictsOnce(task, rt, headBranch, workdir, cloneUrl, secrets, auth);
     await logEvent(task.id, 'pushed conflict resolution; retrying merge');
   }
 }
@@ -254,6 +264,24 @@ async function mergeWithConflictResolution(
 // ---------------------------------------------------------------------------
 // The job
 // ---------------------------------------------------------------------------
+
+// Auto-merge gate: a single LLM 'approve' is not enough when the provider
+// reports failing checks. Providers without a checks API (e.g. GitVerse)
+// proceed — the merge is logged as unverified instead of blocked.
+async function assertMergeChecksGreen(task: TaskWithRepo, headBranch: string): Promise<boolean> {
+  const checks = await pullRequestChecksStatus(task.repository.connection, {
+    repoFullName: task.repository.fullName,
+    headBranch,
+    baseBranch: task.repository.defaultBranch,
+  });
+  if (!checks.supported) {
+    await logEvent(task.id, 'provider check statuses unavailable; merging on the LLM verdict alone');
+    return true;
+  }
+  if (checks.green) return true;
+  await logEvent(task.id, 'approved by LLM, but provider checks are not green — awaiting manual merge');
+  return false;
+}
 
 async function finishReview(
   task: TaskWithRepo,
@@ -263,6 +291,7 @@ async function finishReview(
   workdir: string,
   cloneUrl: string,
   secrets: string[],
+  auth: GitAuth,
 ): Promise<void> {
   if (review.verdict === 'changes_requested') {
     await logEvent(
@@ -279,7 +308,8 @@ async function finishReview(
     );
     return;
   }
-  await mergeWithConflictResolution(task, rt, headBranch, workdir, cloneUrl, secrets);
+  if (!(await assertMergeChecksGreen(task, headBranch))) return;
+  await mergeWithConflictResolution(task, rt, headBranch, workdir, cloneUrl, secrets, auth);
 }
 
 // Returns the runtime so the caller can persist cumulative token usage.
@@ -290,7 +320,7 @@ async function executeReviewTask(
   workdir: string,
   secrets: string[],
 ): Promise<LlmRuntime> {
-  const { cloneUrl, rt } = await prepareAgentRuntime(
+  const { cloneUrl, gitAuth, rt } = await prepareAgentRuntime(
     task,
     task.repository,
     secrets,
@@ -301,13 +331,13 @@ async function executeReviewTask(
   const review = await requestReview(rt, task, diff);
   await logReview(task.id, review, rt.usedTokens);
   if (review.verdict === 'changes_requested' && attempt < MAX_REVIEW_FIX_ATTEMPTS) {
-    await runReviewFixIteration(task, rt, review, headBranch, workdir, cloneUrl, secrets);
+    await runReviewFixIteration(task, rt, review, headBranch, workdir, cloneUrl, secrets, gitAuth);
     await persistTokenUsage(task.id, rt.usedTokens);
     await enqueueReviewTask(task.id, attempt + 1);
     await logEvent(task.id, 'queued re-review of the updated pull request');
     return rt;
   }
-  await finishReview(task, rt, review, headBranch, workdir, cloneUrl, secrets);
+  await finishReview(task, rt, review, headBranch, workdir, cloneUrl, secrets, gitAuth);
   return rt;
 }
 

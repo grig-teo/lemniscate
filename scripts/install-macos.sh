@@ -116,6 +116,21 @@ ensure_secret() {
 ensure_secret JWT_SECRET backend/.env
 ensure_secret ENCRYPTION_KEY backend/.env
 
+# Generate random DB / MinIO passwords into the root .env that
+# docker-compose.yml reads; existing values are kept, values are never
+# printed. Idempotent — safe to re-run.
+ensure_env_secret() {
+  local key="$1" file="$2"
+  if [ ! -f "$file" ] || ! grep -qE "^${key}=" "$file"; then
+    printf '%s=%s\n' "$key" "$(openssl rand -hex 32)" >> "$file"
+    note "Generated a random ${key} in ${file}."
+  else
+    note "${key} already set in ${file} — keeping it."
+  fi
+}
+ensure_env_secret POSTGRES_PASSWORD .env
+ensure_env_secret MINIO_ROOT_PASSWORD .env
+
 note ""
 note "ACTION REQUIRED: edit backend/.env and fill in the OAuth app credentials"
 note "(GITHUB_CLIENT_ID/SECRET, GITLAB_CLIENT_ID/SECRET) — see README.md,"

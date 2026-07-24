@@ -1,4 +1,4 @@
-import { createHmac, randomBytes } from 'node:crypto';
+import { createHash, createHmac, randomBytes } from 'node:crypto';
 import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { config } from '../config.js';
@@ -7,10 +7,10 @@ import { fetchProviderProfile, hasAnyScope, ProviderError, type ProviderName } f
 import { prisma } from '../lib/prisma.js';
 import { syncConnectionByIdBestEffort } from '../lib/repo-sync.js';
 import { tokenExpiryFromNow } from '../lib/token-refresh.js';
-import { errorMessage } from '../lib/utils.js';
 import {
   AUTH_COOKIE,
   authenticatedUserId,
+  bumpSessionVersion,
   clearAuthCookie,
   requireAuth,
   setAuthCookie,
@@ -22,10 +22,16 @@ import {
 //
 // The OAuth `state` nonce is stored in a short-lived cookie, signed with an
 // HMAC derived from JWT_SECRET (@fastify/cookie is registered without a
-// signing secret, so we sign the value ourselves).
+// signing secret, so we sign the value ourselves). GitHub and GitLab flows
+// additionally use PKCE (S256): the verifier lives in a second short-lived
+// cookie and is sent on the token exchange.
 
 const STATE_COOKIE = 'lemniscate_oauth_state';
+const PKCE_COOKIE = 'lemniscate_oauth_pkce';
 const STATE_COOKIE_MAX_AGE_SECONDS = 10 * 60;
+
+// Login endpoints are the most attacked surface — keep the bucket tight.
+const AUTH_RATE_LIMIT = { max: 30, timeWindow: '1 minute' } as const;
 
 type OAuthProviderName = Extract<ProviderName, 'github' | 'gitlab' | 'gitee'>;
 
@@ -69,12 +75,12 @@ function callbackUrl(provider: OAuthProviderName): string {
   return `${config.OAUTH_CALLBACK_URL.replace(/\/+$/, '')}/${provider}/callback`;
 }
 
-function signState(nonce: string): string {
+export function signState(nonce: string): string {
   const signature = createHmac('sha256', config.JWT_SECRET).update(nonce).digest('base64url');
   return `${nonce}.${signature}`;
 }
 
-function verifyState(value: string): boolean {
+export function verifyState(value: string): boolean {
   const dot = value.lastIndexOf('.');
   if (dot <= 0) return false;
   const nonce = value.slice(0, dot);
@@ -109,10 +115,24 @@ export function githubAppClientIdError(clientId: string | undefined): string | n
   );
 }
 
-function buildAuthorizeUrl(
+// GitHub and GitLab support PKCE; Gitee's OAuth does not document it.
+function supportsPkce(provider: OAuthProviderName): boolean {
+  return provider === 'github' || provider === 'gitlab';
+}
+
+// PKCE pair for the S256 flow: the verifier is stored in a cookie and sent
+// on the token exchange; only its SHA-256 challenge leaves the backend.
+export function generatePkce(): { verifier: string; challenge: string } {
+  const verifier = randomBytes(32).toString('base64url');
+  const challenge = createHash('sha256').update(verifier).digest('base64url');
+  return { verifier, challenge };
+}
+
+export function buildAuthorizeUrl(
   provider: OAuthProviderName,
   providerConfig: OAuthProviderConfig,
   state: string,
+  codeChallenge?: string,
 ): string {
   const url = new URL(providerConfig.authorizeUrl);
   url.searchParams.set('client_id', providerConfig.clientId as string);
@@ -122,11 +142,17 @@ function buildAuthorizeUrl(
   if (provider !== 'github') {
     url.searchParams.set('response_type', 'code');
   }
+  if (codeChallenge) {
+    url.searchParams.set('code_challenge', codeChallenge);
+    url.searchParams.set('code_challenge_method', 'S256');
+  }
   return url.toString();
 }
 
-function setStateCookie(reply: FastifyReply, state: string): void {
-  reply.setCookie(STATE_COOKIE, state, {
+// Short-lived httpOnly cookie shared by the OAuth state nonce and the PKCE
+// verifier.
+function setOAuthCookie(reply: FastifyReply, name: string, value: string): void {
+  reply.setCookie(name, value, {
     path: '/',
     httpOnly: true,
     sameSite: 'lax',
@@ -135,10 +161,11 @@ function setStateCookie(reply: FastifyReply, state: string): void {
   });
 }
 
-function tokenRequestBody(
+export function tokenRequestBody(
   provider: OAuthProviderName,
   providerConfig: OAuthProviderConfig,
   code: string,
+  codeVerifier?: string,
 ): Record<string, string> {
   return {
     client_id: providerConfig.clientId as string,
@@ -148,6 +175,8 @@ function tokenRequestBody(
     // GitLab and Gitee require the authorization_code grant type; GitHub
     // rejects unknown parameters on the token endpoint.
     ...(provider !== 'github' ? { grant_type: 'authorization_code' } : {}),
+    // PKCE verifier (GitHub/GitLab authorize URLs carried the challenge).
+    ...(codeVerifier ? { code_verifier: codeVerifier } : {}),
   };
 }
 
@@ -165,11 +194,12 @@ async function exchangeCode(
   provider: OAuthProviderName,
   providerConfig: OAuthProviderConfig,
   code: string,
+  codeVerifier?: string,
 ): Promise<OAuthTokens> {
   const response = await fetch(providerConfig.tokenUrl, {
     method: 'POST',
     headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
-    body: JSON.stringify(tokenRequestBody(provider, providerConfig, code)),
+    body: JSON.stringify(tokenRequestBody(provider, providerConfig, code, codeVerifier)),
   });
   const data = (await response.json().catch(() => null)) as {
     access_token?: string;
@@ -258,16 +288,17 @@ async function upsertOAuthConnection(
 }
 
 // Returns the logged-in user id from the session cookie, or null when the
-// request carries no valid session (missing/invalid/expired token, or the
-// user was deleted). Used to attach new OAuth connections to the current
-// user instead of creating a new identity.
+// request carries no valid session (missing/invalid/expired/revoked token,
+// or the user was deleted). Used to attach new OAuth connections to the
+// current user instead of creating a new identity.
 async function sessionUserId(request: FastifyRequest): Promise<string | null> {
   const token = request.cookies[AUTH_COOKIE];
   if (!token) return null;
-  const userId = verifyAuthToken(token);
-  if (!userId) return null;
-  const user = await prisma.user.findUnique({ where: { id: userId } });
-  return user?.id ?? null;
+  const payload = verifyAuthToken(token);
+  if (!payload) return null;
+  const user = await prisma.user.findUnique({ where: { id: payload.userId } });
+  if (!user || user.sessionVersion !== payload.sv) return null;
+  return user.id;
 }
 
 // Attaches an OAuth connection to the given (logged-in) user. Reconnecting a
@@ -320,7 +351,7 @@ async function finishOAuthLogin(
   request: FastifyRequest,
   reply: FastifyReply,
 ): Promise<FastifyReply> {
-  setAuthCookie(reply, userId);
+  await setAuthCookie(reply, userId);
   // Pull repos right away so the landing/dashboard are populated on first
   // visit; a failed sync must not break the login.
   await syncConnectionByIdBestEffort(connectionId, request.log);
@@ -352,11 +383,12 @@ async function handleOAuthCallback(
   provider: OAuthProviderName,
   providerConfig: OAuthProviderConfig,
   code: string,
+  codeVerifier: string | undefined,
   request: FastifyRequest,
   reply: FastifyReply,
 ): Promise<FastifyReply> {
   try {
-    const tokens = await exchangeCode(provider, providerConfig, code);
+    const tokens = await exchangeCode(provider, providerConfig, code, codeVerifier);
     assertGrantedScopes(provider, tokens.scope, request.log);
     // OAuth access tokens authenticate as Bearer (matters for GitLab).
     const profile = await fetchProviderProfile(provider, tokens.accessToken, null, 'oauth');
@@ -368,15 +400,15 @@ async function handleOAuthCallback(
     );
     return finishOAuthLogin(userId, connectionId, request, reply);
   } catch (err) {
+    // Provider error details (error_description & co.) go to the log only —
+    // the client gets a generic message.
     request.log.error(err, 'oauth callback failed');
-    return reply.code(502).send({
-      error: `OAuth login via ${provider} failed: ${errorMessage(err)}`,
-    });
+    return reply.code(502).send({ error: `OAuth login via ${provider} failed` });
   }
 }
 
 const authRoutes: FastifyPluginAsync = async (app) => {
-  app.get('/auth/me', { preHandler: requireAuth }, async (request) => {
+  app.get('/auth/me', { preHandler: requireAuth, config: { rateLimit: AUTH_RATE_LIMIT } }, async (request) => {
     const userId = authenticatedUserId(request);
     const user = await prisma.user.findUniqueOrThrow({
       where: { id: userId },
@@ -389,13 +421,20 @@ const authRoutes: FastifyPluginAsync = async (app) => {
     return { user };
   });
 
-  app.post('/auth/logout', async (_request, reply) => {
+  // Logout revokes the session server-side (sv bump kills every token
+  // issued so far) before clearing the cookie.
+  app.post('/auth/logout', { config: { rateLimit: AUTH_RATE_LIMIT } }, async (request, reply) => {
+    const token = request.cookies[AUTH_COOKIE];
+    const payload = token ? verifyAuthToken(token) : null;
+    if (payload) {
+      await bumpSessionVersion(payload.userId).catch(() => undefined);
+    }
     clearAuthCookie(reply);
     return reply.code(204).send();
   });
 
   for (const provider of ['github', 'gitlab', 'gitee'] as const) {
-    app.get(`/auth/${provider}`, async (_request, reply) => {
+    app.get(`/auth/${provider}`, { config: { rateLimit: AUTH_RATE_LIMIT } }, async (_request, reply) => {
       const providerConfig = oauthProviders()[provider];
       if (!isOAuthConfigured(providerConfig)) {
         return reply.code(501).send({
@@ -408,11 +447,18 @@ const authRoutes: FastifyPluginAsync = async (app) => {
         return reply.code(400).send({ error: appKindError });
       }
       const state = signState(randomBytes(16).toString('base64url'));
-      setStateCookie(reply, state);
-      return reply.redirect(buildAuthorizeUrl(provider, providerConfig, state), 302);
+      setOAuthCookie(reply, STATE_COOKIE, state);
+      const pkce = supportsPkce(provider) ? generatePkce() : null;
+      if (pkce) {
+        setOAuthCookie(reply, PKCE_COOKIE, pkce.verifier);
+      }
+      return reply.redirect(
+        buildAuthorizeUrl(provider, providerConfig, state, pkce?.challenge),
+        302,
+      );
     });
 
-    app.get(`/auth/${provider}/callback`, async (request, reply) => {
+    app.get(`/auth/${provider}/callback`, { config: { rateLimit: AUTH_RATE_LIMIT } }, async (request, reply) => {
       const providerConfig = oauthProviders()[provider];
       if (!isOAuthConfigured(providerConfig)) {
         return reply.code(501).send({
@@ -421,7 +467,9 @@ const authRoutes: FastifyPluginAsync = async (app) => {
       }
       const code = validCallbackCode(request, reply);
       if (code === null) return;
-      return handleOAuthCallback(provider, providerConfig, code, request, reply);
+      const codeVerifier = request.cookies[PKCE_COOKIE];
+      reply.clearCookie(PKCE_COOKIE, { path: '/' });
+      return handleOAuthCallback(provider, providerConfig, code, codeVerifier, request, reply);
     });
   }
 };

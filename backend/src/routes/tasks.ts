@@ -33,6 +33,10 @@ const RUN_TASK_JOB = 'run-task';
 const TASK_LIST_LIMIT = 100;
 const SSE_HEARTBEAT_MS = 15_000;
 
+// Queue-flooding guard: task creation is throttled per route (the per-user
+// active-task cap is enforced in createTask via TASK_MAX_ACTIVE_PER_USER).
+const CREATE_RATE_LIMIT = { max: 30, timeWindow: '1 minute' } as const;
+
 const listQuerySchema = z.object({
   repositoryId: z.string().min(1).optional(),
   // ?archived=true returns ONLY archived tasks; anything else excludes them.
@@ -190,6 +194,20 @@ async function createTask(request: FastifyRequest, reply: FastifyReply) {
     return reply.code(404).send({ error: 'Repository not found' });
   }
 
+  // Per-user cap on concurrent work: queued + running tasks across all of
+  // the user's repositories.
+  const activeCount = await prisma.task.count({
+    where: {
+      status: { in: ['queued', 'running'] },
+      repository: { connection: { userId } },
+    },
+  });
+  if (activeCount >= config.TASK_MAX_ACTIVE_PER_USER) {
+    return reply.code(429).send({
+      error: `Active task limit reached (${config.TASK_MAX_ACTIVE_PER_USER}) — wait for a running task to finish`,
+    });
+  }
+
   const llmConfigId = await resolveTaskLlmConfigId(userId, repository, data.llmConfigId);
   if (llmConfigId === undefined) {
     return reply.code(400).send({ error: 'LLM config not found or disabled' });
@@ -197,7 +215,7 @@ async function createTask(request: FastifyRequest, reply: FastifyReply) {
   if (!llmConfigId) {
     return reply.code(400).send({ error: 'no LLM config' });
   }
-  const validationError = await attachmentValidationError(data);
+  const validationError = await attachmentValidationError(data, userId);
   if (validationError) {
     return reply.code(400).send({ error: validationError });
   }
@@ -215,7 +233,7 @@ async function createTask(request: FastifyRequest, reply: FastifyReply) {
       // skills so later edits don't retroactively change this task.
       skills: data.skills ?? parseSkillSlugs(repository.skillSlugs),
       ...attachmentsData(data.images),
-      ...(await resolveAttachmentUpdate(data)),
+      ...(await resolveAttachmentUpdate(data, userId)),
     },
   });
 
@@ -273,30 +291,33 @@ export function buildStartUpdate(body: StartBody) {
 
 // Async part of the attachment update: slugs are resolved to the stored
 // configs/contents so a later library edit can't retroactively change the run.
-export async function resolveAttachmentUpdate(body: PatchBody) {
+export async function resolveAttachmentUpdate(body: PatchBody, userId?: string) {
   return {
     ...(body.mcpServerSlugs !== undefined
-      ? { mcpServers: (await resolveMcpServerConfigs(body.mcpServerSlugs)) as Prisma.InputJsonValue }
+      ? { mcpServers: (await resolveMcpServerConfigs(body.mcpServerSlugs, userId)) as Prisma.InputJsonValue }
       : {}),
     ...(body.agentsMdFiles !== undefined
-      ? { agentsMdFiles: (await resolveAgentsMdFileContents(body.agentsMdFiles)) as Prisma.InputJsonValue }
+      ? { agentsMdFiles: (await resolveAgentsMdFileContents(body.agentsMdFiles, userId)) as Prisma.InputJsonValue }
       : {}),
   };
 }
 
 // Validates the attachment fields of a start/PATCH body; returns the 400
 // message or null. Unknown slugs are named in the error.
-export async function attachmentValidationError(body: PatchBody): Promise<string | null> {
+export async function attachmentValidationError(
+  body: PatchBody,
+  userId?: string,
+): Promise<string | null> {
   if (body.skills) {
-    const unknown = await findUnknownSkillSlugs(body.skills);
+    const unknown = await findUnknownSkillSlugs(body.skills, userId);
     if (unknown.length > 0) return `Unknown skill slug(s): ${unknown.join(', ')}`;
   }
   if (body.mcpServerSlugs) {
-    const unknown = await findUnknownMcpServerSlugs(body.mcpServerSlugs);
+    const unknown = await findUnknownMcpServerSlugs(body.mcpServerSlugs, userId);
     if (unknown.length > 0) return `Unknown MCP server slug(s): ${unknown.join(', ')}`;
   }
   for (const entry of body.agentsMdFiles ?? []) {
-    if (entry.skillId && !(await isAgentsMdSkill(entry.skillId))) {
+    if (entry.skillId && !(await isAgentsMdSkill(entry.skillId, userId))) {
       return `agentsMdFiles skillId does not reference an AGENTS.md skill: ${entry.skillId}`;
     }
   }
@@ -324,7 +345,7 @@ async function startTask(request: FastifyRequest, reply: FastifyReply) {
   if (blocker) {
     return reply.code(400).send({ error: blocker });
   }
-  const validationError = await attachmentValidationError(body);
+  const validationError = await attachmentValidationError(body, userId);
   if (validationError) {
     return reply.code(400).send({ error: validationError });
   }
@@ -334,7 +355,7 @@ async function startTask(request: FastifyRequest, reply: FastifyReply) {
   await enqueueRunTask(task.id);
   const updated = await prisma.task.update({
     where: { id: task.id },
-    data: { ...buildStartUpdate(body), ...(await resolveAttachmentUpdate(body)) },
+    data: { ...buildStartUpdate(body), ...(await resolveAttachmentUpdate(body, userId)) },
   });
   return { task: updated };
 }
@@ -360,7 +381,7 @@ async function patchTask(request: FastifyRequest, reply: FastifyReply) {
   if (blocker) {
     return reply.code(400).send({ error: blocker });
   }
-  const validationError = await attachmentValidationError(body);
+  const validationError = await attachmentValidationError(body, userId);
   if (validationError) {
     return reply.code(400).send({ error: validationError });
   }
@@ -371,7 +392,7 @@ async function patchTask(request: FastifyRequest, reply: FastifyReply) {
       ...(body.prompt !== undefined ? { prompt: body.prompt } : {}),
       ...attachmentsData(body.images),
       ...(body.skills !== undefined ? { skills: body.skills } : {}),
-      ...(await resolveAttachmentUpdate(body)),
+      ...(await resolveAttachmentUpdate(body, userId)),
     },
   });
   return { task: updated };
@@ -520,7 +541,7 @@ async function getTaskEvents(request: FastifyRequest, reply: FastifyReply) {
 const tasksRoutes: FastifyPluginAsync = async (app) => {
   app.addHook('preHandler', requireAuth);
   app.get('/tasks', listTasks);
-  app.post('/tasks', createTask);
+  app.post('/tasks', { config: { rateLimit: CREATE_RATE_LIMIT } }, createTask);
   app.get('/tasks/:id', getTask);
   app.post('/tasks/:id/start', startTask);
   app.patch('/tasks/:id', patchTask);

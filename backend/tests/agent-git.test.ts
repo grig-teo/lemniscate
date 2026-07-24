@@ -6,7 +6,7 @@ vi.mock('../src/lib/task-events.js', () => ({
   publishTaskEvent: mocks.publishTaskEvent,
 }));
 
-import { cloneRepository, git, sanitizeRelativePath } from '../src/lib/agent-git.js';
+import { cloneRepository, git, planWorkdirSweep, sanitizeRelativePath } from '../src/lib/agent-git.js';
 
 // Locking tests for the LLM-path safety check extracted from agent-loop.ts,
 // plus the git() console logging: every command echoes a redacted
@@ -59,6 +59,34 @@ describe('git() console logging', () => {
   });
 });
 
+describe('planWorkdirSweep', () => {
+  it('keeps the workdirs of queued/running tasks', () => {
+    const active = new Set(['task-1']);
+    expect(planWorkdirSweep(['task-1', 'task-2'], active)).toEqual(['task-2']);
+  });
+
+  it('keeps review workdirs whose task is active', () => {
+    const active = new Set(['task-1']);
+    expect(planWorkdirSweep(['review-task-1-0', 'review-task-2-1'], active)).toEqual([
+      'review-task-2-1',
+    ]);
+  });
+
+  it('sweeps proposals/folders leftovers and unknown directories', () => {
+    const active = new Set(['task-1']);
+    expect(
+      planWorkdirSweep(['proposals-repo-1', 'folders-repo-1-abc', 'stray'], active),
+    ).toEqual(['proposals-repo-1', 'folders-repo-1-abc', 'stray']);
+  });
+
+  it('sweeps everything when no task is active', () => {
+    expect(planWorkdirSweep(['task-9', 'review-task-9-0'], new Set())).toEqual([
+      'task-9',
+      'review-task-9-0',
+    ]);
+  });
+});
+
 describe('cloneRepository empty-repo fallback', () => {
   it('inits a fresh repo when the remote has no branches', async () => {
     const fs = await import('node:fs/promises');
@@ -95,6 +123,29 @@ describe('cloneRepository empty-repo fallback', () => {
       await git(['commit', '-m', 'init'], { cwd: seed });
       const result = await cloneRepository(path.join(tmp, 'work'), seed, 'main', []);
       expect(result.emptyRepo).toBe(false);
+    } finally {
+      await fs.rm(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it('keeps the origin URL tokenless when auth is supplied', async () => {
+    const fs = await import('node:fs/promises');
+    const os = await import('node:os');
+    const path = await import('node:path');
+    const tmp = await fs.mkdtemp(path.join(os.tmpdir(), 'clone-tokenless-'));
+    try {
+      const remote = path.join(tmp, 'remote.git');
+      await git(['init', '--bare', remote]);
+      const workdir = path.join(tmp, 'work');
+      const result = await cloneRepository(workdir, remote, 'master', ['s3cret-token'], {
+        auth: { username: 'oauth2', token: 's3cret-token' },
+      });
+      expect(result.emptyRepo).toBe(true);
+      const origin = await git(['remote', 'get-url', 'origin'], { cwd: workdir });
+      expect(origin.trim()).toBe(remote);
+      expect(origin).not.toContain('s3cret-token');
+      const gitConfig = await fs.readFile(path.join(workdir, '.git', 'config'), 'utf8');
+      expect(gitConfig).not.toContain('s3cret-token');
     } finally {
       await fs.rm(tmp, { recursive: true, force: true });
     }

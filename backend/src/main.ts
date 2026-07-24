@@ -1,6 +1,7 @@
 import Fastify from 'fastify';
 import cookie from '@fastify/cookie';
 import cors from '@fastify/cors';
+import rateLimit from '@fastify/rate-limit';
 import { config } from './config.js';
 import apiRoutes from './routes/index.js';
 import llmConfigRoutes from './routes/llm-configs.js';
@@ -20,6 +21,10 @@ await app.register(cors, {
   origin: config.FRONTEND_URL,
   credentials: true,
 });
+
+// Global throttle; stricter per-route buckets live in `config.rateLimit` on
+// the sensitive routes (auth, PAT connect, LLM test, task create).
+await app.register(rateLimit, { max: 300, timeWindow: '1 minute' });
 
 // Auth, git connections, repositories (prefixed /api inside the plugin).
 await app.register(apiRoutes);

@@ -173,9 +173,24 @@ const INIT_FAILURE_MARKER = 'Failed to initialize agent';
   });
 }
 
+// Env allowlist for the hermes child. The agent runs in YOLO mode with the
+// user's prompt, so it must NOT inherit worker secrets (DATABASE_URL,
+// ENCRYPTION_KEY, JWT_SECRET, OAuth tokens). Only the variables hermes needs
+// to run plus optional proxy settings pass through.
+const HERMES_ENV_PASSTHROUGH = ['PATH', 'HOME', 'LANG', 'LC_ALL', 'TERM'] as const;
+const HERMES_ENV_PROXY = ['HTTP_PROXY', 'HTTPS_PROXY', 'NO_PROXY'] as const;
+
+export function buildHermesEnv(hermesHome: string): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = { HERMES_HOME: hermesHome, HERMES_YOLO_MODE: '1' };
+  for (const key of [...HERMES_ENV_PASSTHROUGH, ...HERMES_ENV_PROXY]) {
+    if (process.env[key] !== undefined) env[key] = process.env[key];
+  }
+  return env;
+}
+
 export async function runHermesTask(opts: HermesTaskOptions): Promise<void> {
   const hermesHome = await writeHermesHome(opts.workdir, opts.llm);
-  const env = { ...process.env, HERMES_HOME: hermesHome, HERMES_YOLO_MODE: '1' };
+  const env = buildHermesEnv(hermesHome);
   // spawn (never a shell): the prompt travels as a single argv element, so
   // quotes, backticks, or $(...) in it cannot be interpreted by a shell.
   const child = spawn('hermes', ['chat', '-q', opts.prompt], { cwd: opts.workdir, env });

@@ -1,5 +1,5 @@
 import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
-import type { GitConnection, Prisma } from '@prisma/client';
+import { Prisma, type GitConnection } from '@prisma/client';
 import { z } from 'zod';
 import { encrypt } from '../lib/crypto.js';
 import {
@@ -20,18 +20,25 @@ import {
   findUnknownMcpServerSlugs,
   findUnknownSkillSlugs,
   isAgentsMdSkill,
+  libraryScopeWhere,
   loadAgentsMdTemplate,
   resolveAgentsMdFileContents,
   resolveMcpServerConfigs,
 } from '../lib/task-skills.js';
+import { assertPublicHttpUrl } from '../lib/url-safety.js';
+import { errorMessage } from '../lib/utils.js';
 import {
   AUTH_COOKIE,
   authenticatedUserId,
+  bumpSessionVersion,
   requireAuth,
   setAuthCookie,
   verifyAuthToken,
 } from '../plugins/auth.js';
 import { parseOrReply } from './helpers.js';
+
+// PAT connect doubles as first-time login — keep the bucket tight.
+const CONNECT_RATE_LIMIT = { max: 20, timeWindow: '1 minute' } as const;
 
 // Never leak the encrypted (or decrypted) token to clients.
 const connectionSelect = {
@@ -86,23 +93,38 @@ export const createRepoBodySchema = z.object({
 const idParamsSchema = z.object({ id: z.string().min(1) });
 
 // Like requireAuth but never rejects: sets request.userId when the session
-// cookie is present and valid, leaves it undefined otherwise. Used by
-// POST /connections, which doubles as GitVerse-first login.
+// cookie is present, valid and unrevoked; leaves it undefined otherwise.
+// Used by POST /connections, which doubles as GitVerse-first login.
 async function optionalAuth(
   request: FastifyRequest,
   _reply: FastifyReply,
 ): Promise<void> {
   const token = request.cookies[AUTH_COOKIE];
   if (!token) return;
+  const payload = verifyAuthToken(token);
+  if (!payload) return;
+  const user = await prisma.user.findUnique({ where: { id: payload.userId } });
+  if (user && user.sessionVersion === payload.sv) {
+    request.userId = user.id;
+  }
+}
+
+// Self-hosted GitVerse instances must be https and publicly routable — the
+// backend will call this URL with the user's PAT (SSRF guard).
+async function validGitverseBaseUrl(
+  baseUrl: string,
+  reply: FastifyReply,
+): Promise<boolean> {
+  if (!baseUrl.startsWith('https://')) {
+    await reply.code(400).send({ error: 'gitverse baseUrl must use https' });
+    return false;
+  }
   try {
-    const userId = verifyAuthToken(token);
-    if (!userId) return;
-    const user = await prisma.user.findUnique({ where: { id: userId } });
-    if (user) {
-      request.userId = user.id;
-    }
-  } catch {
-    // Invalid/expired token: treat as unauthenticated.
+    await assertPublicHttpUrl(baseUrl);
+    return true;
+  } catch (err) {
+    await reply.code(400).send({ error: `gitverse baseUrl rejected: ${errorMessage(err)}` });
+    return false;
   }
 }
 
@@ -128,31 +150,76 @@ async function validatedUsername(
 
 type ConnectionView = Prisma.GitConnectionGetPayload<{ select: typeof connectionSelect }>;
 
-// Authenticated path: the connection belongs to the session user.
+function isUniqueViolation(err: unknown): boolean {
+  return err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002';
+}
+
+// The PAT identity behind a (provider, username, baseUrl) triple, regardless
+// of owner — the triple is unique across the whole table.
+async function findPatIdentity(
+  provider: ProviderName,
+  username: string,
+  baseUrl: string | undefined,
+) {
+  return prisma.gitConnection.findFirst({
+    where: { provider, username, baseUrl: baseUrl ?? null },
+  });
+}
+
+// A PAT replaces any OAuth tokens: clear the refresh flow's fields.
+const PAT_TOKEN_FIELDS = { tokenType: 'pat', refreshTokenEnc: null, tokenExpiresAt: null } as const;
+
+// Authenticated path: the connection belongs to the session user. Returns
+// null when the PAT identity is already owned by a DIFFERENT user (the
+// caller 409s); a same-user unique race degrades to a token update.
 async function upsertAuthenticatedConnection(
   userId: string,
   provider: ProviderName,
   username: string,
   baseUrl: string | undefined,
   accessTokenEnc: string,
-): Promise<{ connection: ConnectionView; created: boolean }> {
+): Promise<{ connection: ConnectionView; created: boolean } | null> {
   const existing = await prisma.gitConnection.findFirst({
     where: { userId, provider, username, baseUrl: baseUrl ?? null },
   });
   if (existing) {
     const connection = await prisma.gitConnection.update({
       where: { id: existing.id },
-      // A PAT replaces any OAuth tokens: clear the refresh flow's fields.
-      data: { accessTokenEnc, tokenType: 'pat', refreshTokenEnc: null, tokenExpiresAt: null },
+      data: { accessTokenEnc, ...PAT_TOKEN_FIELDS },
       select: connectionSelect,
     });
     return { connection, created: false };
   }
-  const connection = await prisma.gitConnection.create({
-    data: { userId, provider, username, baseUrl: baseUrl ?? null, accessTokenEnc },
+  try {
+    const connection = await prisma.gitConnection.create({
+      data: { userId, provider, username, baseUrl: baseUrl ?? null, accessTokenEnc },
+      select: connectionSelect,
+    });
+    return { connection, created: true };
+  } catch (err) {
+    if (!isUniqueViolation(err)) throw err;
+    return resolveUniqueConflict(userId, provider, username, baseUrl, accessTokenEnc);
+  }
+}
+
+// P2002 recovery: the identity row exists but is not scoped to this user —
+// attach to it when it turns out to be theirs (concurrent-connect race),
+// otherwise report the conflict so the caller can 409.
+async function resolveUniqueConflict(
+  userId: string,
+  provider: ProviderName,
+  username: string,
+  baseUrl: string | undefined,
+  accessTokenEnc: string,
+): Promise<{ connection: ConnectionView; created: boolean } | null> {
+  const conflict = await findPatIdentity(provider, username, baseUrl);
+  if (!conflict || conflict.userId !== userId) return null;
+  const connection = await prisma.gitConnection.update({
+    where: { id: conflict.id },
+    data: { accessTokenEnc, ...PAT_TOKEN_FIELDS },
     select: connectionSelect,
   });
-  return { connection, created: true };
+  return { connection, created: false };
 }
 
 // Unauthenticated path: the PAT is the credential — find the user behind
@@ -166,19 +233,16 @@ async function connectByPatIdentity(
   request: FastifyRequest,
   reply: FastifyReply,
 ): Promise<FastifyReply> {
-  const existing = await prisma.gitConnection.findFirst({
-    where: { provider, username, baseUrl: baseUrl ?? null },
-  });
+  const existing = await findPatIdentity(provider, username, baseUrl);
   if (!existing) {
     return reply.code(401).send({ error: 'No account matches this token' });
   }
   const connection = await prisma.gitConnection.update({
     where: { id: existing.id },
-    // A PAT replaces any OAuth tokens: clear the refresh flow's fields.
-    data: { accessTokenEnc, tokenType: 'pat', refreshTokenEnc: null, tokenExpiresAt: null },
+    data: { accessTokenEnc, ...PAT_TOKEN_FIELDS },
     select: connectionSelect,
   });
-  setAuthCookie(reply, existing.userId);
+  await setAuthCookie(reply, existing.userId);
   await syncConnectionByIdBestEffort(connection.id, request.log);
   return reply.code(200).send({ connection });
 }
@@ -212,21 +276,29 @@ async function connectWithPat(request: FastifyRequest, reply: FastifyReply) {
   if (provider !== 'gitverse' && baseUrl) {
     return reply.code(400).send({ error: 'baseUrl is only supported for gitverse connections' });
   }
+  if (provider === 'gitverse' && baseUrl && !(await validGitverseBaseUrl(baseUrl, reply))) {
+    return;
+  }
 
   const username = await validatedUsername(provider, token, baseUrl, reply);
   if (username === null) return;
   const accessTokenEnc = encrypt(token);
 
   if (request.userId) {
-    const { connection, created } = await upsertAuthenticatedConnection(
+    const result = await upsertAuthenticatedConnection(
       request.userId,
       provider,
       username,
       baseUrl,
       accessTokenEnc,
     );
-    await syncConnectionByIdBestEffort(connection.id, request.log);
-    return reply.code(created ? 201 : 200).send({ connection });
+    if (result === null) {
+      return reply
+        .code(409)
+        .send({ error: 'This git account is already connected by another user' });
+    }
+    await syncConnectionByIdBestEffort(result.connection.id, request.log);
+    return reply.code(result.created ? 201 : 200).send({ connection: result.connection });
   }
   return connectByPatIdentity(provider, username, baseUrl, accessTokenEnc, request, reply);
 }
@@ -241,6 +313,12 @@ async function deleteConnection(request: FastifyRequest, reply: FastifyReply) {
   });
   if (count === 0) {
     return reply.code(404).send({ error: 'Connection not found' });
+  }
+  // Losing the last git connection ends the session: the PAT identity was
+  // the only way back in, so every outstanding token is revoked.
+  const remaining = await prisma.gitConnection.count({ where: { userId } });
+  if (remaining === 0) {
+    await bumpSessionVersion(userId);
   }
   return reply.code(204).send();
 }
@@ -283,7 +361,7 @@ async function createAndSyncRepo(
     const client = getProviderClient(connection);
     const repository = await client.createRepo({ name: input.name, private: input.private });
     const sync = await syncConnectionRepositories(connection);
-    const initialized = await initializeNewRepo(client, repository, input);
+    const initialized = await initializeNewRepo(client, repository, input, connection.userId);
     await applyRepoSelections(connection.id, repository.fullName, input);
     const initTask = await startInitPromptTask(connection, repository.fullName, input, initialized);
     return reply.code(201).send({ repository, sync, initialized, initTask });
@@ -296,27 +374,27 @@ async function createAndSyncRepo(
 }
 
 // Legacy root-only pair: uploaded text wins, then the template skill.
-async function resolveRootAgentsMd(input: CreateRepoBody): Promise<string | null> {
+async function resolveRootAgentsMd(input: CreateRepoBody, userId: string): Promise<string | null> {
   if (input.agentsMdContent) return input.agentsMdContent;
   if (!input.agentsMdSkillId) return null;
-  return loadAgentsMdTemplate({ agentsMdSkillId: input.agentsMdSkillId });
+  return loadAgentsMdTemplate({ agentsMdSkillId: input.agentsMdSkillId }, userId);
 }
 
 // Per-folder AGENTS.md assignments; falls back to the legacy root-only pair.
-async function resolveAgentsMdFiles(input: CreateRepoBody) {
+async function resolveAgentsMdFiles(input: CreateRepoBody, userId: string) {
   if (!input.agentsMdFiles || input.agentsMdFiles.length === 0) {
-    const content = await resolveRootAgentsMd(input);
+    const content = await resolveRootAgentsMd(input, userId);
     return content ? [{ folder: '/', content }] : [];
   }
-  return resolveAgentsMdFileContents(input.agentsMdFiles);
+  return resolveAgentsMdFileContents(input.agentsMdFiles, userId);
 }
 
 // Selected skills as commit-ready SKILL.md inputs (kind 'skill' rows only —
 // AGENTS.md templates are not materialized as skill packs).
-async function resolveSkillFiles(input: CreateRepoBody) {
+async function resolveSkillFiles(input: CreateRepoBody, userId: string) {
   if (!input.skillSlugs || input.skillSlugs.length === 0) return [];
   return prisma.skill.findMany({
-    where: { slug: { in: input.skillSlugs }, kind: 'skill' },
+    where: { slug: { in: input.skillSlugs }, kind: 'skill', ...libraryScopeWhere(userId) },
     select: { slug: true, name: true, description: true, content: true },
   });
 }
@@ -327,13 +405,14 @@ async function initializeNewRepo(
   client: ReturnType<typeof getProviderClient>,
   repository: NormalizedRepo,
   input: CreateRepoBody,
+  userId: string,
 ) {
   const files = buildRepoInitFiles({
     repoName: repository.name,
     readme: input.readme,
-    agentsMdFiles: await resolveAgentsMdFiles(input),
-    skillFiles: await resolveSkillFiles(input),
-    mcpServers: await resolveMcpServerConfigs(input.mcpServerSlugs ?? []),
+    agentsMdFiles: await resolveAgentsMdFiles(input, userId),
+    skillFiles: await resolveSkillFiles(input, userId),
+    mcpServers: await resolveMcpServerConfigs(input.mcpServerSlugs ?? [], userId),
   });
   return initializeRepoFiles(client, repository.fullName, repository.defaultBranch, files);
 }
@@ -394,9 +473,9 @@ async function applyRepoSelections(
   });
 }
 
-async function validateAgentsMdFiles(input: CreateRepoBody): Promise<string | null> {
+async function validateAgentsMdFiles(input: CreateRepoBody, userId: string): Promise<string | null> {
   for (const entry of input.agentsMdFiles ?? []) {
-    if (entry.skillId && !(await isAgentsMdSkill(entry.skillId))) {
+    if (entry.skillId && !(await isAgentsMdSkill(entry.skillId, userId))) {
       return `agentsMdFiles skillId does not reference an AGENTS.md skill: ${entry.skillId}`;
     }
   }
@@ -415,22 +494,22 @@ async function createConnectionRepo(request: FastifyRequest, reply: FastifyReply
   if (data === null) return;
 
   if (data.skillSlugs) {
-    const unknown = await findUnknownSkillSlugs(data.skillSlugs);
+    const unknown = await findUnknownSkillSlugs(data.skillSlugs, userId);
     if (unknown.length > 0) {
       return reply.code(400).send({ error: `Unknown skill slug(s): ${unknown.join(', ')}` });
     }
   }
-  if (data.agentsMdSkillId && !(await isAgentsMdSkill(data.agentsMdSkillId))) {
+  if (data.agentsMdSkillId && !(await isAgentsMdSkill(data.agentsMdSkillId, userId))) {
     return reply
       .code(400)
       .send({ error: 'agentsMdSkillId does not reference an AGENTS.md skill' });
   }
-  const agentsMdFilesError = await validateAgentsMdFiles(data);
+  const agentsMdFilesError = await validateAgentsMdFiles(data, userId);
   if (agentsMdFilesError) {
     return reply.code(400).send({ error: agentsMdFilesError });
   }
   if (data.mcpServerSlugs) {
-    const unknown = await findUnknownMcpServerSlugs(data.mcpServerSlugs);
+    const unknown = await findUnknownMcpServerSlugs(data.mcpServerSlugs, userId);
     if (unknown.length > 0) {
       return reply.code(400).send({ error: `Unknown MCP server slug(s): ${unknown.join(', ')}` });
     }
@@ -447,7 +526,11 @@ async function createConnectionRepo(request: FastifyRequest, reply: FastifyReply
 
 const connectionsRoutes: FastifyPluginAsync = async (app) => {
   app.get('/connections', { preHandler: requireAuth }, listConnections);
-  app.post('/connections', { preHandler: optionalAuth }, connectWithPat);
+  app.post(
+    '/connections',
+    { preHandler: optionalAuth, config: { rateLimit: CONNECT_RATE_LIMIT } },
+    connectWithPat,
+  );
   app.delete('/connections/:id', { preHandler: requireAuth }, deleteConnection);
   app.post('/connections/:id/sync', { preHandler: requireAuth }, syncConnectionRepos);
   app.post('/connections/:id/repositories', { preHandler: requireAuth }, createConnectionRepo);

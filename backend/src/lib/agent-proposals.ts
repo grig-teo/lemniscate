@@ -204,10 +204,10 @@ async function executeGenerateProposals(
   workdir: string,
   secrets: string[],
 ): Promise<void> {
-  const { cloneUrl, rt } = await prepareAgentRuntime(null, repository, secrets);
+  const { cloneUrl, gitAuth, rt } = await prepareAgentRuntime(null, repository, secrets);
   // Empty remotes are bootstrapped by cloneRepository's init fallback, so an
   // empty repo simply yields greenfield proposals.
-  await cloneRepository(workdir, cloneUrl, repository.defaultBranch, secrets);
+  await cloneRepository(workdir, cloneUrl, repository.defaultBranch, secrets, { auth: gitAuth });
   const agentsMdTemplate = await loadAgentsMdTemplate(repository);
   const { text: repoContext } = await buildRepoContext(
     workdir,

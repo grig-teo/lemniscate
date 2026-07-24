@@ -11,6 +11,7 @@ import {
   logEvent,
   persistTokenUsage,
   recordJobFailure,
+  type GitAuth,
 } from './agent-git.js';
 import {
   buildPrBody,
@@ -42,11 +43,13 @@ async function cloneForTask(
   workdir: string,
   cloneUrl: string,
   secrets: string[],
+  auth: GitAuth,
 ): Promise<boolean> {
   const { repository } = task;
   await logEvent(task.id, `cloning ${repository.fullName} (${repository.defaultBranch})`);
   const { emptyRepo } = await cloneRepository(workdir, cloneUrl, repository.defaultBranch, secrets, {
     taskId: task.id,
+    auth,
   });
   return emptyRepo;
 }
@@ -135,8 +138,17 @@ async function pushBranch(
   branchName: string,
   summary: string,
   secrets: string[],
+  auth: GitAuth,
 ): Promise<void> {
-  await commitAndPush(task, rt, workdir, summary, ['push', '-u', 'origin', branchName], secrets);
+  await commitAndPush(
+    task,
+    rt,
+    workdir,
+    summary,
+    ['push', '-u', 'origin', branchName],
+    secrets,
+    auth,
+  );
   await logEvent(task.id, `pushed branch ${branchName}`);
 }
 
@@ -241,7 +253,7 @@ async function executeRunTask(
   secrets: string[],
 ): Promise<LlmRuntime> {
   await logEvent(task.id, 'checking repository push access');
-  const { cloneUrl, rt } = await prepareAgentRuntime(
+  const { cloneUrl, gitAuth, rt } = await prepareAgentRuntime(
     task,
     task.repository,
     secrets,
@@ -249,7 +261,7 @@ async function executeRunTask(
   );
   await setTaskStatus(task.id, 'running');
   await logEvent(task.id, `starting task "${task.title}" on ${task.repository.fullName}`);
-  const emptyRepo = await cloneForTask(task, workdir, cloneUrl, secrets);
+  const emptyRepo = await cloneForTask(task, workdir, cloneUrl, secrets, gitAuth);
   const branchName = emptyRepo
     ? await prepareEmptyRepoBranch(task)
     : await createTaskBranch(task, rt, workdir);
@@ -260,7 +272,7 @@ async function executeRunTask(
     await setTaskStatus(task.id, 'done');
     return rt;
   }
-  await pushBranch(task, rt, workdir, branchName, summary, secrets);
+  await pushBranch(task, rt, workdir, branchName, summary, secrets, gitAuth);
   if (emptyRepo) {
     await logEvent(task.id, `empty repository bootstrapped on ${branchName}; no PR opened`);
     await setTaskStatus(task.id, 'done');

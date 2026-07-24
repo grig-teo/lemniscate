@@ -1,14 +1,17 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
-import type { Prisma } from '@prisma/client';
+import type { McpServer, Prisma } from '@prisma/client';
 import { z } from 'zod';
 import { prisma } from '../lib/prisma.js';
 import { mirrorLibraryObject, removeLibraryObject } from '../lib/library-storage.js';
-import { requireAuth } from '../plugins/auth.js';
+import { libraryMutationBlocker, libraryScopeWhere } from '../lib/task-skills.js';
+import { authenticatedUserId, requireAuth } from '../plugins/auth.js';
 import { parseOrReply, parsePageQuery } from './helpers.js';
 
 // MCP server library: each row's `config` is the server fragment assembled
 // into `.mcp.json` ("mcpServers": { "<slug>": <config> }) when the server is
-// selected during repository creation. CRUD writes are mirrored to MinIO.
+// selected during repository creation. Seeded rows are global (userId NULL,
+// readable by all, not editable); rows created through the API belong to
+// their creator. CRUD writes are mirrored to MinIO.
 // Register with prefix `/api/mcp-servers` (done in main.ts).
 
 const MAX_PAGE_SIZE = 50;
@@ -51,7 +54,9 @@ export function buildMcpServerWhere(query: { search?: string }): Prisma.McpServe
 async function listServers(request: FastifyRequest, reply: FastifyReply) {
   const query = parseOrReply(listQuerySchema, request.query, reply, 'Invalid query');
   if (query === null) return;
-  const where = buildMcpServerWhere(query);
+  const where = {
+    AND: [buildMcpServerWhere(query), libraryScopeWhere(authenticatedUserId(request))],
+  };
   const pageQuery = parsePageQuery(query) ?? { skip: 0, take: MAX_PAGE_SIZE, page: 1, pageSize: MAX_PAGE_SIZE };
   const [servers, total] = await Promise.all([
     prisma.mcpServer.findMany({
@@ -73,10 +78,34 @@ async function createServer(request: FastifyRequest, reply: FastifyReply) {
     return reply.code(409).send({ error: `MCP server slug already exists: ${body.slug}` });
   }
   const server = await prisma.mcpServer.create({
-    data: { ...body, config: body.config as Prisma.InputJsonValue },
+    data: {
+      ...body,
+      config: body.config as Prisma.InputJsonValue,
+      userId: authenticatedUserId(request),
+    },
   });
   await mirrorLibraryObject('mcp_server', server.slug, JSON.stringify(server.config, null, 2), request.log);
   return reply.code(201).send({ server });
+}
+
+// Resolves the row the requester may mutate: the server, or null after
+// sending 404/403.
+async function mutableServer(
+  request: FastifyRequest,
+  reply: FastifyReply,
+  id: string,
+): Promise<McpServer | null> {
+  const existing = await prisma.mcpServer.findUnique({ where: { id } });
+  if (!existing) {
+    await reply.code(404).send({ error: 'MCP server not found' });
+    return null;
+  }
+  const blocker = libraryMutationBlocker(existing.userId, authenticatedUserId(request));
+  if (blocker) {
+    await reply.code(403).send({ error: blocker });
+    return null;
+  }
+  return existing;
 }
 
 async function updateServer(request: FastifyRequest, reply: FastifyReply) {
@@ -84,10 +113,7 @@ async function updateServer(request: FastifyRequest, reply: FastifyReply) {
   if (params === null) return;
   const body = parseOrReply(upsertBodySchema.partial(), request.body, reply, 'Invalid body');
   if (body === null) return;
-  const existing = await prisma.mcpServer.findUnique({ where: { id: params.id } });
-  if (!existing) {
-    return reply.code(404).send({ error: 'MCP server not found' });
-  }
+  if (!(await mutableServer(request, reply, params.id))) return;
   const server = await prisma.mcpServer.update({
     where: { id: params.id },
     data: {
@@ -103,10 +129,8 @@ async function updateServer(request: FastifyRequest, reply: FastifyReply) {
 async function deleteServer(request: FastifyRequest, reply: FastifyReply) {
   const params = parseOrReply(idParamSchema, request.params, reply, 'Invalid id');
   if (params === null) return;
-  const existing = await prisma.mcpServer.findUnique({ where: { id: params.id } });
-  if (!existing) {
-    return reply.code(404).send({ error: 'MCP server not found' });
-  }
+  const existing = await mutableServer(request, reply, params.id);
+  if (!existing) return;
   await prisma.mcpServer.delete({ where: { id: params.id } });
   await removeLibraryObject('mcp_server', existing.slug, request.log);
   return { deleted: true };

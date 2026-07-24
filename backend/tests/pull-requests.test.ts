@@ -7,6 +7,7 @@ import {
   getPullRequestDiff,
   mergePullRequest,
   openPullRequest,
+  pullRequestChecksStatus,
 } from '../src/lib/pull-requests.js';
 
 // Locking tests for the "open PR → on already-exists status, look up the
@@ -269,6 +270,53 @@ describe('gitverse mergePullRequest', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Provider API URL path encoding
+// ---------------------------------------------------------------------------
+
+const ghConnection = {
+  provider: 'github' as const,
+  baseUrl: null,
+  accessTokenEnc: encrypt('tok'),
+};
+const oddNameInput = { ...gvInput, repoFullName: 'my org/re.po' };
+
+describe('provider API URL path encoding', () => {
+  it('encodes each repoFullName segment for github', async () => {
+    stubFetch((url) => {
+      expect(url).toBe('https://api.github.com/repos/my%20org/re.po/pulls');
+      return mockResponse(201, { html_url: 'https://github.com/x/pulls/1' });
+    });
+    await openPullRequest(ghConnection, oddNameInput);
+  });
+
+  it('encodes each repoFullName segment for gitverse', async () => {
+    stubFetch((url) => {
+      expect(url).toBe('https://api.gitverse.ru/repos/my%20org/re.po/pulls');
+      return mockResponse(201, { number: 1, html_url: 'https://gitverse.ru/x/pulls/1' });
+    });
+    await openPullRequest(gvConnection, oddNameInput);
+  });
+
+  it('encodes each repoFullName segment for gitee', async () => {
+    stubFetch((url) => {
+      expect(url).toBe('https://gitee.com/api/v5/repos/my%20org/re.po/pulls');
+      return mockResponse(201, { number: 1, html_url: 'https://gitee.com/x/pulls/1' });
+    });
+    await openPullRequest(giteeConnection, oddNameInput);
+  });
+
+  it('encodes segments in the gitverse compare URL', async () => {
+    stubFetch((url) => {
+      expect(url).toBe(
+        'https://api.gitverse.ru/repos/my%20org/re.po/compare/main...lemniscate/t-1',
+      );
+      return mockResponse(200, { files: [] });
+    });
+    await getPullRequestDiff(gvConnection, { ...gvRef, repoFullName: 'my org/re.po' });
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Gitee provider (mocked fetch, no network)
 // ---------------------------------------------------------------------------
 
@@ -350,5 +398,73 @@ describe('gitee getPullRequestDiff', () => {
     });
     const diff = await getPullRequestDiff(giteeConnection, gvRef);
     expect(diff).toBe('diff --git a/a.ts b/a.ts\n--- a/a.ts\n+++ b/a.ts\n@@ -1 +1 @@\n-a\n+b');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Auto-merge gate: provider check statuses
+// ---------------------------------------------------------------------------
+
+const gitlabConnection = {
+  provider: 'gitlab' as const,
+  baseUrl: null,
+  accessTokenEnc: encrypt('tok'),
+  tokenType: 'pat',
+};
+
+describe('pullRequestChecksStatus', () => {
+  it('github: green when the combined commit status is success', async () => {
+    stubFetch((url) => {
+      expect(url).toBe(
+        'https://api.github.com/repos/ivan/repo/commits/lemniscate%2Ft-1/status',
+      );
+      return mockResponse(200, { state: 'success', total_count: 2 });
+    });
+    const status = await pullRequestChecksStatus(ghConnection, gvRef);
+    expect(status).toEqual({ supported: true, green: true });
+  });
+
+  it('github: green when the commit has no checks at all', async () => {
+    stubFetch(() => mockResponse(200, { state: 'pending', total_count: 0 }));
+    const status = await pullRequestChecksStatus(ghConnection, gvRef);
+    expect(status).toEqual({ supported: true, green: true });
+  });
+
+  it('github: not green when checks are failing or pending', async () => {
+    stubFetch(() => mockResponse(200, { state: 'failure', total_count: 3 }));
+    const status = await pullRequestChecksStatus(ghConnection, gvRef);
+    expect(status).toEqual({ supported: true, green: false });
+  });
+
+  it('gitlab: green when the MR has no head pipeline', async () => {
+    stubFetch((url) => {
+      if (url.includes('state=opened')) return mockResponse(200, [{ iid: 5, web_url: 'https://gitlab.com/ivan/repo/-/merge_requests/5' }]);
+      expect(url).toBe('https://gitlab.com/api/v4/projects/ivan%2Frepo/merge_requests/5');
+      return mockResponse(200, { head_pipeline: null });
+    });
+    const status = await pullRequestChecksStatus(gitlabConnection, gvRef);
+    expect(status).toEqual({ supported: true, green: true });
+  });
+
+  it('gitlab: not green when the head pipeline failed', async () => {
+    stubFetch((url) => {
+      if (url.includes('state=opened')) return mockResponse(200, [{ iid: 5, web_url: 'u' }]);
+      return mockResponse(200, { head_pipeline: { status: 'failed' } });
+    });
+    const status = await pullRequestChecksStatus(gitlabConnection, gvRef);
+    expect(status).toEqual({ supported: true, green: false });
+  });
+
+  it('reports unsupported for providers without a checks API', async () => {
+    const fetchMock = stubFetch(() => mockResponse(500, {}));
+    expect(await pullRequestChecksStatus(gvConnection, gvRef)).toEqual({
+      supported: false,
+      green: true,
+    });
+    expect(await pullRequestChecksStatus(giteeConnection, gvRef)).toEqual({
+      supported: false,
+      green: true,
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });

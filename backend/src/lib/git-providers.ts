@@ -468,7 +468,7 @@ async function gitlabCreateFile(
 // GitVerse's public API (gitverse.ru/docs/developers/public-api) is
 // GitHub-shaped and lives on the api. subdomain of the instance. Every call
 // needs the vendor Accept header; tokens authenticate as Bearer.
-// Cloning works over HTTPS with the token embedded (see cloneUrlWithToken).
+// Cloning works over HTTPS with per-invocation credential auth (agent-git.ts).
 
 export const GITVERSE_API = 'https://api.gitverse.ru';
 export const GITVERSE_ACCEPT = 'application/vnd.gitverse.object+json;version=1';
@@ -563,12 +563,19 @@ async function gitverseAssertPushAccess(
   }
 }
 
-// Returns an https clone URL with the token embedded, for use at clone time
-// (never persisted to the database).
-export function cloneUrlWithToken(cloneUrl: string, token: string): string {
+// Username for HTTP(S) git authentication with the token as the password.
+// 'oauth2' is the GitLab convention (PAT and OAuth); GitHub, GitVerse, and
+// Gitee accept any username with a valid token password.
+export const GIT_HTTP_AUTH_USERNAME = 'oauth2';
+
+// Clone URLs must never carry embedded credentials: the URL is persisted in
+// the workdir's .git/config, which the YOLO agent can read. Auth instead
+// travels per-invocation via a credential helper (see agent-git.ts). Any
+// userinfo already present is stripped defensively.
+export function tokenlessCloneUrl(cloneUrl: string): string {
   const url = new URL(cloneUrl);
-  url.username = 'oauth2';
-  url.password = token;
+  url.username = '';
+  url.password = '';
   return url.toString();
 }
 
