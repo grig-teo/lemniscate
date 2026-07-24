@@ -196,22 +196,46 @@ function AddFolderInput({ onAdd }: { onAdd: (folder: string) => void }) {
 export function LibraryAttachments({
   state,
   allowAddFolder = false,
+  columns = false,
 }: {
   state: LibraryAttachmentsState;
   /** Show an add-folder input (task editor); otherwise the folder list is fixed. */
   allowAddFolder?: boolean;
+  /** Render the three sections side by side on one line (sm+). */
+  columns?: boolean;
 }) {
+  if (columns) {
+    return (
+      <div className="grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-3">
+        <SkillsSection state={state} />
+        <AgentsMdSection state={state} allowAddFolder={allowAddFolder} />
+        <McpSection state={state} />
+      </div>
+    );
+  }
   return (
     <div className="flex min-w-0 flex-col gap-3">
       <SkillsSection state={state} />
       <McpSection state={state} />
-      <section className="flex min-w-0 flex-col gap-1.5">
-        <SectionLabel>AGENTS.md per folder</SectionLabel>
-        {state.agentsMd.folders.map((folder) => (
-          <FolderRow key={folder} folder={folder} state={state} />
-        ))}
-        {allowAddFolder && <AddFolderInput onAdd={state.agentsMd.addFolder} />}
-      </section>
+      <AgentsMdSection state={state} allowAddFolder={allowAddFolder} />
     </div>
+  );
+}
+
+function AgentsMdSection({
+  state,
+  allowAddFolder,
+}: {
+  state: LibraryAttachmentsState;
+  allowAddFolder: boolean;
+}) {
+  return (
+    <section className="flex min-w-0 flex-col gap-1.5">
+      <SectionLabel>AGENTS.md per folder</SectionLabel>
+      {state.agentsMd.folders.map((folder) => (
+        <FolderRow key={folder} folder={folder} state={state} />
+      ))}
+      {allowAddFolder && <AddFolderInput onAdd={state.agentsMd.addFolder} />}
+    </section>
   );
 }

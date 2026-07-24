@@ -1,10 +1,9 @@
 import * as React from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { FileText, Hammer, Loader2, Paperclip, Save } from 'lucide-react';
+import { Hammer, Loader2, Paperclip, Save } from 'lucide-react';
 
 import { api } from '@/lib/api';
 import {
-  appendMarkdownToPrompt,
   buildTaskEditBody,
   taskAgentsMdInitial,
   taskMcpSelections,
@@ -23,9 +22,7 @@ import {
   useAutoResizeTextarea,
 } from '@/components/console/TaskComposer';
 
-// Attach row accepts markdown (content appended into the prompt, separated by
-// a blank line) and images (thumbnails, same rules as the task composer).
-const MARKDOWN_ACCEPT = '.md,text/markdown';
+// Attach row accepts images (thumbnails, same rules as the task composer).
 
 /** Task row plus the library-attachment columns returned by GET /api/tasks/:id. */
 type TaskWithAttachments = Task & {
@@ -137,14 +134,6 @@ function TaskEditorInner({
   const addImageFiles = (files: FileList | null) => appendImageFiles(files, setImages);
   const removeImage = (index: number) =>
     setImages((prev) => prev.filter((_, i) => i !== index));
-  const addMarkdownFiles = (files: FileList | null) => {
-    if (!files) return;
-    for (const file of Array.from(files)) {
-      void file.text().then((content) =>
-        setPrompt((prev) => appendMarkdownToPrompt(prev, content)),
-      );
-    }
-  };
 
   const editBody = () =>
     buildTaskEditBody({
@@ -186,16 +175,11 @@ function TaskEditorInner({
           className="resize-none overflow-y-auto border-0 shadow-none focus-visible:ring-0"
         />
       </div>
+      <LibraryAttachments state={attachments} allowAddFolder columns />
       <div className="flex items-center gap-2">
         <AttachFileButton
-          accept={MARKDOWN_ACCEPT}
-          label="Attach .md"
-          icon={FileText}
-          onFiles={addMarkdownFiles}
-        />
-        <AttachFileButton
           accept={IMAGE_ACCEPT}
-          label="Attach image"
+          label="Attach file"
           icon={Paperclip}
           disabled={images.length >= MAX_IMAGES}
           onFiles={addImageFiles}
@@ -219,7 +203,6 @@ function TaskEditorInner({
           Start
         </Button>
       </div>
-      <LibraryAttachments state={attachments} allowAddFolder />
     </div>
   );
 }
