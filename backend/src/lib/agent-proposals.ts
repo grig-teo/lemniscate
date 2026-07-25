@@ -7,8 +7,10 @@ import {
   buildSkillsSection,
   llmProposalsSchema,
   PROPOSAL_CATEGORIES,
+  proposalJsonContractLines,
   requestProposals,
   type LlmProposals,
+  type ProposalPriority,
 } from './agent-prompts.js';
 import { prepareAgentRuntime, type LlmRuntime } from './agent-runtime.js';
 import { runHermesTask, type HermesLlmConfig } from './hermes-runner.js';
@@ -45,12 +47,12 @@ export interface HermesProposalPromptOptions {
 // write the proposals file — no implementing, no git mutations.
 export function buildHermesProposalPrompt(opts: HermesProposalPromptOptions): string {
   return [
-    'You are Lemniscate, an autonomous code-review agent.',
-    `Explore the current directory (a freshly cloned repository) and propose up to ${opts.maxProposals} concrete, URGENT improvement or bug-fix tasks this repository genuinely needs — skip nice-to-haves and cosmetic tweaks.`,
-    `Cover DIFFERENT categories across the proposals: ${PROPOSAL_CATEGORIES.join(', ')}.`,
+    'You are a senior software architect and product consultant reviewing a codebase.',
+    `Explore the current directory (a freshly cloned repository) and propose up to ${opts.maxProposals} concrete, URGENT improvements this repository genuinely needs — do not pad with filler or cosmetic tweaks.`,
+    `Categorize each proposal under exactly one of: ${PROPOSAL_CATEGORIES.join(', ')}.`,
+    'Cover DIFFERENT categories across the proposals. Order them by priority, critical first.',
     `Write them to ${PROPOSALS_FILENAME} in the repository root as STRICT JSON:`,
-    '[{"title": string, "prompt": string, "category": string}]',
-    '"title" is a short imperative summary; "prompt" is a detailed instruction another coding agent can execute directly; "category" is exactly one of the categories above.',
+    ...proposalJsonContractLines(),
     `Do NOT implement the proposals. Do NOT git commit, push, or create branches — your only output is ${PROPOSALS_FILENAME}.`,
     "The repository's AGENTS.md context (its conventions and instructions) applies to what you propose.",
     ...(opts.systemPromptExtra
@@ -100,6 +102,18 @@ async function loadPendingProposalState(repositoryId: string): Promise<PendingPr
   return pendingProposalState(existing);
 }
 
+const PRIORITY_RANK: Record<ProposalPriority, number> = {
+  critical: 0,
+  high: 1,
+  medium: 2,
+  low: 3,
+};
+
+/** Stable sort, critical first. Pure for tests. */
+export function sortByPriority(proposals: LlmProposals): LlmProposals {
+  return [...proposals].sort((a, b) => PRIORITY_RANK[a.priority] - PRIORITY_RANK[b.priority]);
+}
+
 function proposalTaskData(repository: RepositoryWithConnection, proposal: LlmProposals[number]) {
   return {
     repositoryId: repository.id,
@@ -107,6 +121,8 @@ function proposalTaskData(repository: RepositoryWithConnection, proposal: LlmPro
     title: proposal.title,
     prompt: proposal.prompt,
     category: proposal.category,
+    priority: proposal.priority,
+    effort: proposal.effort,
     status: 'pending' as const,
     // Proposals inherit the repository's skills, same as prompt tasks.
     skills: parseSkillSlugs(repository.skillSlugs),
@@ -116,15 +132,17 @@ function proposalTaskData(repository: RepositoryWithConnection, proposal: LlmPro
 
 // Creates new pending proposal tasks, at most enough to bring the repo back
 // to MAX_PENDING_PROPOSALS pending. Nothing is enqueued — proposals wait for
-// user approval.
+// user approval. Creation runs lowest-priority first so the critical ones
+// get the newest createdAt and top the UI's newest-first list.
 async function createProposalTasks(
   repository: RepositoryWithConnection,
   proposals: LlmProposals,
 ): Promise<number> {
   const { titles, pendingCount } = await loadPendingProposalState(repository.id);
   const budget = MAX_PENDING_PROPOSALS - pendingCount;
+  const ordered = sortByPriority(proposals.slice(0, MAX_PENDING_PROPOSALS)).reverse();
   let created = 0;
-  for (const proposal of proposals.slice(0, MAX_PENDING_PROPOSALS)) {
+  for (const proposal of ordered) {
     if (created >= budget) break;
     const key = proposal.title.trim().toLowerCase();
     if (titles.has(key)) continue;

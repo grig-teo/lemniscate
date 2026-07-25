@@ -159,6 +159,9 @@ export type Task = {
   title: string;
   /** Proposal category label ('security', 'ux/ui', …); null for prompt tasks. */
   category?: string | null;
+  /** Proposal priority ('critical'|'high'|'medium'|'low') and effort ('small'|'medium'|'large'). */
+  priority?: string | null;
+  effort?: string | null;
   status: TaskStatus;
   /** Full prompt — only included by GET /api/tasks/:id, not by list endpoints. */
   prompt?: string;

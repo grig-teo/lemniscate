@@ -274,11 +274,22 @@ export type ProposalCategory = (typeof PROPOSAL_CATEGORIES)[number];
 
 const DEFAULT_PROPOSAL_CATEGORY: ProposalCategory = 'code quality';
 
+/** Priority levels for generated proposals, highest first. */
+export const PROPOSAL_PRIORITIES = ['critical', 'high', 'medium', 'low'] as const;
+export type ProposalPriority = (typeof PROPOSAL_PRIORITIES)[number];
+
+/** Effort sizes: small ≈ hours, medium ≈ days, large ≈ weeks. */
+export const PROPOSAL_EFFORTS = ['small', 'medium', 'large'] as const;
+export type ProposalEffort = (typeof PROPOSAL_EFFORTS)[number];
+
 const llmProposalSchema = z.object({
   title: z.string().min(1).max(200),
-  prompt: z.string().min(1).max(8_000),
-  // Unknown/missing categories fall back instead of rejecting the proposal.
+  // The full structured proposal document — longer than a plain instruction.
+  prompt: z.string().min(1).max(16_000),
+  // Unknown/missing fields fall back instead of rejecting the proposal.
   category: z.enum(PROPOSAL_CATEGORIES).catch(DEFAULT_PROPOSAL_CATEGORY),
+  priority: z.enum(PROPOSAL_PRIORITIES).catch('medium'),
+  effort: z.enum(PROPOSAL_EFFORTS).catch('medium'),
 });
 // Single home for the proposals contract: requestProposals (direct LLM) and
 // the hermes proposals-file parsing in agent-proposals.ts both validate
@@ -286,15 +297,29 @@ const llmProposalSchema = z.object({
 export const llmProposalsSchema = z.array(llmProposalSchema).max(5);
 export type LlmProposals = z.infer<typeof llmProposalsSchema>;
 
+/** Shared JSON contract lines used by both proposal generation prompts. */
+export function proposalJsonContractLines(): string[] {
+  return [
+    '[{"title": string, "category": string, "priority": "critical"|"high"|"medium"|"low", "effort": "small"|"medium"|"large", "prompt": string}]',
+    '"title" is a short imperative summary; "category" is exactly one of the categories above; "effort" is small (hours), medium (days), or large (weeks).',
+    '"prompt" is the full structured proposal document in markdown, with exactly these sections:',
+    '## 1. Non-Technical Summary — Problem, Why it matters, Risk of not addressing it, Expected benefit (quantify if possible).',
+    '## 2. Technical Details — Root cause/current state (reference specific files and functions), Proposed solution, Tech stack/tools required, numbered Implementation steps, Dependencies, Risks/trade-offs, Testing strategy.',
+    '## 3. Success Metrics — how we will know the improvement worked.',
+    'Ground every claim in what you actually observe in the code — no generic advice. End the document with a one-line directive the implementing coding agent can execute directly.',
+  ];
+}
+
 export function proposalsSystemPrompt(systemPromptExtra: string | null): string {
   return [
-    'You are Lemniscate, an autonomous code-review agent.',
+    'You are a senior software architect and product consultant reviewing a codebase.',
     'You are given a repository file tree and its key files.',
-    'Propose up to 5 concrete, URGENT improvement or bug-fix tasks this repository genuinely needs — skip nice-to-haves and cosmetic tweaks.',
-    `Cover DIFFERENT categories across the proposals: ${PROPOSAL_CATEGORIES.join(', ')}.`,
+    'Analyze the code and propose up to 5 concrete, URGENT improvements this repository genuinely needs — do not pad with filler or cosmetic tweaks.',
+    `Categorize each proposal under exactly one of: ${PROPOSAL_CATEGORIES.join(', ')}.`,
+    'Cover DIFFERENT categories across the proposals.',
+    'Order the proposals by priority, critical first.',
     'Respond with STRICT JSON only — no markdown fences, no commentary — a JSON array matching:',
-    '[{"title": string, "prompt": string, "category": string}]',
-    '"title" is a short imperative summary; "prompt" is a detailed instruction another coding agent can execute directly; "category" is exactly one of the categories above.',
+    ...proposalJsonContractLines(),
     ...(systemPromptExtra
       ? ['', 'Additional instructions from the repository owner:', systemPromptExtra]
       : []),

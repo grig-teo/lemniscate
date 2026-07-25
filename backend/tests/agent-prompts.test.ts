@@ -8,6 +8,7 @@ import {
   changesUserMessage,
   commitMessageFromResponse,
   fallbackBranchSlug,
+  llmProposalsSchema,
   maxBranchSlugLength,
   MAX_SKILLS_SECTION_CHARS,
   proposalsSystemPrompt,
@@ -98,10 +99,25 @@ describe('system prompts', () => {
     const prompt = proposalsSystemPrompt(null);
     expect(prompt).toContain('up to 5');
     expect(prompt).toContain('URGENT');
-    expect(prompt).toContain('[{"title": string, "prompt": string, "category": string}]');
+    expect(prompt).toContain('"priority": "critical"|"high"|"medium"|"low"');
+    expect(prompt).toContain('"effort": "small"|"medium"|"large"');
+    expect(prompt).toContain('Non-Technical Summary');
+    expect(prompt).toContain('Technical Details');
+    expect(prompt).toContain('Success Metrics');
     expect(prompt).toContain('security');
     expect(prompt).toContain('testing');
     expect(prompt).toContain('ux/ui');
+  });
+
+  it('llmProposalsSchema defaults missing or invalid priority/effort to medium', () => {
+    const parsed = llmProposalsSchema.parse([
+      { title: 'A', prompt: 'P', category: 'security' },
+      { title: 'B', prompt: 'P', category: 'testing', priority: 'critical', effort: 'large' },
+      { title: 'C', prompt: 'P', category: 'ux/ui', priority: 'urgent', effort: 'huge' },
+    ]);
+    expect(parsed[0]).toMatchObject({ priority: 'medium', effort: 'medium' });
+    expect(parsed[1]).toMatchObject({ priority: 'critical', effort: 'large' });
+    expect(parsed[2]).toMatchObject({ priority: 'medium', effort: 'medium' });
   });
 });
 

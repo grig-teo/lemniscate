@@ -13,6 +13,8 @@ import { useSkills, useStartTask, useTask, type Task, type TaskImage } from '@/l
 import { useLibraryAttachments } from '@/lib/library-attachments';
 import { IMAGE_ACCEPT, MAX_IMAGES } from '@/lib/prompt-composer';
 import { LibraryAttachments } from '@/components/library/LibraryAttachments';
+import { PriorityBadge } from '@/components/PriorityBadge';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
@@ -163,6 +165,19 @@ function TaskEditorInner({
         aria-label="Task title"
         className="shrink-0 border-0 px-0 text-base font-medium shadow-none focus-visible:ring-0"
       />
+      {(task.priority || task.effort) && (
+        <div className="flex shrink-0 items-center gap-1.5">
+          <PriorityBadge priority={task.priority} className="px-1.5 py-0 text-[10px]" />
+          {task.effort && (
+            <Badge
+              variant="outline"
+              className="shrink-0 px-1.5 py-0 text-[10px] text-muted-foreground"
+            >
+              {task.effort} effort
+            </Badge>
+          )}
+        </div>
+      )}
       {actionError && <p className="shrink-0 text-xs text-destructive">{actionError.message}</p>}
       <div className="max-h-[38%] shrink-0 overflow-y-auto rounded-lg border bg-background shadow-sm focus-within:ring-1 focus-within:ring-ring">
         <ImageThumbnails images={images} onRemove={removeImage} />

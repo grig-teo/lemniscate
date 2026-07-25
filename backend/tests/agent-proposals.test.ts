@@ -60,6 +60,7 @@ import {
   generateProposals,
   parseProposalsFile,
   pendingProposalState,
+  sortByPriority,
 } from '../src/lib/agent-proposals.js';
 
 type RepositoryWithConnection = Repository & { connection: GitConnection };
@@ -80,7 +81,7 @@ function stubRepository(): RepositoryWithConnection {
 }
 
 function stubHappyPath(
-  proposals: Array<{ title: string; prompt: string; category?: string }>,
+  proposals: Array<{ title: string; prompt: string; category?: string; priority?: string; effort?: string }>,
 ): void {
   mocks.repositoryFindUnique.mockResolvedValue(stubRepository());
   mocks.prepareAgentRuntime.mockResolvedValue({
@@ -113,10 +114,16 @@ describe('generateProposals', () => {
     expect(mocks.enqueueRunTask).not.toHaveBeenCalled();
   });
 
-  it('persists the proposal category on the created task', async () => {
-    stubHappyPath([{ title: 'Fix XSS', prompt: 'Escape output', category: 'security' }]);
+  it('persists the proposal category, priority, and effort on the created task', async () => {
+    stubHappyPath([
+      { title: 'Fix XSS', prompt: 'Escape output', category: 'security', priority: 'critical', effort: 'small' },
+    ]);
     await generateProposals('repo-1');
-    expect(mocks.taskCreate.mock.calls[0]?.[0].data.category).toBe('security');
+    expect(mocks.taskCreate.mock.calls[0]?.[0].data).toMatchObject({
+      category: 'security',
+      priority: 'critical',
+      effort: 'small',
+    });
   });
 
   it('skips proposals whose title is already pending or queued', async () => {
@@ -297,35 +304,52 @@ describe('generateProposals with AGENT_EXECUTOR=hermes', () => {
 });
 
 describe('parseProposalsFile', () => {
-  it('parses a plain JSON array, defaulting a missing category to code quality', () => {
+  it('parses a plain JSON array, defaulting missing category/priority/effort', () => {
     expect(parseProposalsFile('[{"title":"T","prompt":"P"}]')).toEqual([
-      { title: 'T', prompt: 'P', category: 'code quality' },
+      { title: 'T', prompt: 'P', category: 'code quality', priority: 'medium', effort: 'medium' },
     ]);
   });
 
-  it('keeps a valid category and falls back on an unknown one', () => {
-    const raw = '[{"title":"A","prompt":"P","category":"security"},' +
-      '{"title":"B","prompt":"P","category":"nonsense"}]';
+  it('keeps valid fields and falls back on unknown ones', () => {
+    const raw = '[{"title":"A","prompt":"P","category":"security","priority":"critical","effort":"small"},' +
+      '{"title":"B","prompt":"P","category":"nonsense","priority":"urgent","effort":"huge"}]';
     expect(parseProposalsFile(raw)).toEqual([
-      { title: 'A', prompt: 'P', category: 'security' },
-      { title: 'B', prompt: 'P', category: 'code quality' },
+      { title: 'A', prompt: 'P', category: 'security', priority: 'critical', effort: 'small' },
+      { title: 'B', prompt: 'P', category: 'code quality', priority: 'medium', effort: 'medium' },
     ]);
   });
 
   it('parses JSON wrapped in markdown fences', () => {
     const raw = '```json\n[{"title":"T","prompt":"P","category":"testing"}]\n```';
-    expect(parseProposalsFile(raw)).toEqual([{ title: 'T', prompt: 'P', category: 'testing' }]);
+    expect(parseProposalsFile(raw)).toEqual([
+      { title: 'T', prompt: 'P', category: 'testing', priority: 'medium', effort: 'medium' },
+    ]);
   });
 
   it('parses JSON embedded in surrounding prose', () => {
     const raw = 'Here are the proposals:\n[{"title":"T","prompt":"P"}]\nDone.';
-    expect(parseProposalsFile(raw)).toEqual([{ title: 'T', prompt: 'P', category: 'code quality' }]);
+    expect(parseProposalsFile(raw)).toEqual([
+      { title: 'T', prompt: 'P', category: 'code quality', priority: 'medium', effort: 'medium' },
+    ]);
   });
 
   it('returns null for malformed JSON or schema mismatches', () => {
     expect(parseProposalsFile('not json at all')).toBeNull();
     expect(parseProposalsFile('[{"title":"T"}]')).toBeNull();
     expect(parseProposalsFile('{"title":"T","prompt":"P"}')).toBeNull();
+  });
+});
+
+describe('sortByPriority', () => {
+  it('orders critical first and keeps the input array unchanged', () => {
+    const input = [
+      { title: 'L', prompt: 'P', category: 'seo' as const, priority: 'low' as const, effort: 'small' as const },
+      { title: 'C', prompt: 'P', category: 'security' as const, priority: 'critical' as const, effort: 'small' as const },
+      { title: 'H', prompt: 'P', category: 'bug fix' as const, priority: 'high' as const, effort: 'medium' as const },
+    ];
+    const sorted = sortByPriority(input);
+    expect(sorted.map((p) => p.priority)).toEqual(['critical', 'high', 'low']);
+    expect(input[0]?.priority).toBe('low');
   });
 });
 
@@ -338,6 +362,7 @@ describe('buildHermesProposalPrompt', () => {
     });
     expect(prompt).toContain('.lemniscate-proposals.json');
     expect(prompt).toContain('up to 5');
+    expect(prompt).toContain('"priority": "critical"|"high"|"medium"|"low"');
     expect(prompt).toContain('### Skill A (skill-a)');
     expect(prompt).toContain('Focus on tests.');
     expect(prompt).toContain('Do NOT');

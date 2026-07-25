@@ -13,6 +13,7 @@ import { useWorkspaceSelection } from '@/lib/selection';
 import { cn } from '@/lib/utils';
 import { ArchivedTaskRow } from '@/components/repo-tree/ArchivedTaskRow';
 import { GenerateProposalsButton } from '@/components/repo-tree/GenerateProposalsButton';
+import { PriorityBadge } from '@/components/PriorityBadge';
 import { StatusBadge } from '@/components/StatusBadge';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -147,6 +148,9 @@ function TaskRow({ task }: { task: Task }) {
         <span className="min-w-0 flex-1 truncate" title={task.title}>
           {task.title}
         </span>
+        {task.kind === 'proposal' && (
+          <PriorityBadge priority={task.priority} className="px-1.5 py-0 text-[10px]" />
+        )}
         {task.kind === 'proposal' && (
           <Badge variant="outline" className="shrink-0 px-1.5 py-0 text-[10px]">
             {task.category ?? 'proposal'}

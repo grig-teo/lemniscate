@@ -148,6 +148,11 @@ model Task {
   // PROPOSAL_CATEGORIES in agent-prompts.ts; null for prompt tasks and
   // proposals created before this column existed.
   category     String?
+  // Proposal priority ('critical'|'high'|'medium'|'low') and effort size
+  // ('small'|'medium'|'large') from the generator prompt; null for prompt
+  // tasks and proposals created before these columns existed.
+  priority     String?
+  effort       String?
   prompt       String?
   status       TaskStatus  @default(pending)
   branchName   String?
