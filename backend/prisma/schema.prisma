@@ -51,6 +51,8 @@ model User {
   llmConfigs     LlmConfig[]
   skills         Skill[]
   mcpServers     McpServer[]
+  devices        Device[]
+  devicePairings DevicePairing[]
 }
 
 model GitConnection {
@@ -240,4 +242,51 @@ model TaskEvent {
   task      Task          @relation(fields: [taskId], references: [id], onDelete: Cascade)
 
   @@index([taskId, createdAt])
+}
+
+// A paired local device (companion agent). Connects OUTBOUND to the
+// WebSocket gateway (/api/devices/ws); the server pushes DeviceCommands
+// through that tunnel. Only the sha256 of the device token is stored.
+model Device {
+  id         String    @id @default(cuid())
+  userId     String
+  name       String
+  // 'android'|'ios'|'desktop'|'web' — TEXT, validated by zod at the API.
+  platform   String
+  // Agent-reported capabilities: os, arch, agentVersion, dockerAvailable, …
+  meta       Json?
+  tokenHash  String    @unique
+  lastSeenAt DateTime?
+  createdAt  DateTime  @default(now())
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  commands   DeviceCommand[]
+
+  @@index([userId])
+}
+
+// Short-lived (10 min) 6-char code the user creates in the UI; the device
+// agent exchanges it for a device token via POST /api/devices/claim.
+model DevicePairing {
+  id        String   @id @default(cuid())
+  code      String   @unique
+  userId    String
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model DeviceCommand {
+  id        String   @id @default(cuid())
+  deviceId  String
+  // 'run_web' for now — TEXT, validated by zod at the API.
+  type      String
+  payload   Json
+  // queued|sent|running|done|failed — TEXT, transitions via the WS gateway.
+  status    String   @default("queued")
+  result    Json?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  device    Device   @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+
+  @@index([deviceId])
 }

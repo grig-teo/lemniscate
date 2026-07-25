@@ -1,0 +1,298 @@
+import Fastify from 'fastify';
+import cookie from '@fastify/cookie';
+import websocket from '@fastify/websocket';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+// Route tests for /api/devices: pairing, claim, device management and
+// command dispatch, with prisma mocked and the device hub driven by fake
+// sockets. The WS message handlers are covered in devices-ws.test.ts.
+
+const mocks = vi.hoisted(() => ({
+  userFindUnique: vi.fn(),
+  pairingDeleteMany: vi.fn(),
+  pairingCreate: vi.fn(),
+  pairingFindUnique: vi.fn(),
+  pairingDelete: vi.fn(),
+  deviceCreate: vi.fn(),
+  deviceFindMany: vi.fn(),
+  deviceFindFirst: vi.fn(),
+  deviceUpdate: vi.fn(),
+  deviceDelete: vi.fn(),
+  commandFindMany: vi.fn(),
+  commandCreate: vi.fn(),
+  commandUpdate: vi.fn(),
+}));
+
+vi.mock('../src/lib/prisma.js', () => ({
+  prisma: {
+    user: { findUnique: mocks.userFindUnique },
+    devicePairing: {
+      deleteMany: mocks.pairingDeleteMany,
+      create: mocks.pairingCreate,
+      findUnique: mocks.pairingFindUnique,
+      delete: mocks.pairingDelete,
+    },
+    device: {
+      create: mocks.deviceCreate,
+      findMany: mocks.deviceFindMany,
+      findFirst: mocks.deviceFindFirst,
+      update: mocks.deviceUpdate,
+      delete: mocks.deviceDelete,
+    },
+    deviceCommand: {
+      findMany: mocks.commandFindMany,
+      create: mocks.commandCreate,
+      update: mocks.commandUpdate,
+    },
+  },
+}));
+
+import devicesRoutes from '../src/routes/devices.js';
+import { deviceHub } from '../src/lib/device-hub.js';
+import { hashDeviceToken } from '../src/lib/device-tokens.js';
+import { signAuthToken } from '../src/plugins/auth.js';
+
+async function buildApp() {
+  const app = Fastify({ logger: false });
+  await app.register(cookie);
+  await app.register(websocket);
+  await app.register(devicesRoutes, { prefix: '/api/devices' });
+  return app;
+}
+
+const AUTH = { cookies: { lemniscate_token: signAuthToken('user-1', 0) } };
+
+const COMMAND_BODY = {
+  type: 'run_web',
+  payload: { repoUrl: 'https://github.com/a/b', branch: 'main', port: 3000 },
+};
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  mocks.userFindUnique.mockResolvedValue({ id: 'user-1', sessionVersion: 0 });
+  mocks.pairingCreate.mockImplementation(async ({ data }: { data: object }) => ({ id: 'p1', ...data }));
+  mocks.deviceCreate.mockImplementation(async ({ data }: { data: object }) => ({ id: 'dev-1', ...data }));
+  mocks.deviceFindFirst.mockResolvedValue({ id: 'dev-1', userId: 'user-1' });
+  mocks.commandCreate.mockImplementation(async ({ data }: { data: object }) => ({
+    id: 'cmd-1',
+    status: 'queued',
+    ...data,
+  }));
+});
+
+describe('POST /api/devices/pairings', () => {
+  it('requires auth', async () => {
+    const app = await buildApp();
+    const response = await app.inject({ method: 'POST', url: '/api/devices/pairings' });
+    expect(response.statusCode).toBe(401);
+  });
+
+  it('replaces previous pairings and returns a 6-char code with expiry', async () => {
+    const app = await buildApp();
+    const response = await app.inject({ method: 'POST', url: '/api/devices/pairings', ...AUTH });
+    expect(response.statusCode).toBe(201);
+    expect(mocks.pairingDeleteMany).toHaveBeenCalledWith({ where: { userId: 'user-1' } });
+    const body = response.json();
+    expect(body.code).toMatch(/^[A-Z2-9]{6}$/);
+    expect(new Date(body.expiresAt).getTime()).toBeGreaterThan(Date.now());
+  });
+});
+
+describe('POST /api/devices/claim', () => {
+  function claim(app: Awaited<ReturnType<typeof buildApp>>, code = 'ABC234') {
+    return app.inject({
+      method: 'POST',
+      url: '/api/devices/claim',
+      payload: { code, name: 'pixel', platform: 'android' },
+    });
+  }
+
+  it('404s an unknown code', async () => {
+    mocks.pairingFindUnique.mockResolvedValue(null);
+    const app = await buildApp();
+    expect((await claim(app)).statusCode).toBe(404);
+    expect(mocks.deviceCreate).not.toHaveBeenCalled();
+  });
+
+  it('401s an expired code', async () => {
+    mocks.pairingFindUnique.mockResolvedValue({
+      id: 'p1',
+      userId: 'user-1',
+      expiresAt: new Date(Date.now() - 1000),
+    });
+    const app = await buildApp();
+    expect((await claim(app)).statusCode).toBe(401);
+    expect(mocks.deviceCreate).not.toHaveBeenCalled();
+  });
+
+  it('400s a body with an invalid platform', async () => {
+    const app = await buildApp();
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/devices/claim',
+      payload: { code: 'ABC234', name: 'pixel', platform: 'toaster' },
+    });
+    expect(response.statusCode).toBe(400);
+  });
+
+  it('creates the device with the hashed token and consumes the pairing', async () => {
+    mocks.pairingFindUnique.mockResolvedValue({
+      id: 'p1',
+      userId: 'user-1',
+      expiresAt: new Date(Date.now() + 60_000),
+    });
+    const app = await buildApp();
+    const response = await claim(app);
+    expect(response.statusCode).toBe(201);
+    const body = response.json();
+    expect(body.deviceId).toBe('dev-1');
+    expect(body.deviceToken).toMatch(/^[0-9a-f]{48}$/);
+    expect(mocks.deviceCreate).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        userId: 'user-1',
+        tokenHash: hashDeviceToken(body.deviceToken),
+      }),
+    });
+    expect(mocks.pairingDelete).toHaveBeenCalledWith({ where: { id: 'p1' } });
+  });
+});
+
+describe('GET /api/devices', () => {
+  it('requires auth', async () => {
+    const app = await buildApp();
+    expect((await app.inject({ method: 'GET', url: '/api/devices' })).statusCode).toBe(401);
+  });
+
+  it('lists only own devices with online flag and no tokenHash', async () => {
+    mocks.deviceFindMany.mockResolvedValue([
+      { id: 'dev-1', name: 'pixel', platform: 'android', meta: null, lastSeenAt: null, createdAt: new Date(0) },
+    ]);
+    const app = await buildApp();
+    const response = await app.inject({ method: 'GET', url: '/api/devices', ...AUTH });
+    expect(response.statusCode).toBe(200);
+    expect(mocks.deviceFindMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { userId: 'user-1' } }),
+    );
+    expect(response.body).not.toContain('tokenHash');
+    expect(response.json().devices).toEqual([
+      expect.objectContaining({ id: 'dev-1', online: false }),
+    ]);
+  });
+});
+
+describe('PATCH/DELETE /api/devices/:id', () => {
+  it('404s rename for another user’s device', async () => {
+    mocks.deviceFindFirst.mockResolvedValue(null);
+    const app = await buildApp();
+    const response = await app.inject({
+      method: 'PATCH',
+      url: '/api/devices/dev-9',
+      ...AUTH,
+      payload: { name: 'new' },
+    });
+    expect(response.statusCode).toBe(404);
+    expect(mocks.deviceUpdate).not.toHaveBeenCalled();
+  });
+
+  it('renames an owned device', async () => {
+    mocks.deviceUpdate.mockResolvedValue({ id: 'dev-1', name: 'new' });
+    const app = await buildApp();
+    const response = await app.inject({
+      method: 'PATCH',
+      url: '/api/devices/dev-1',
+      ...AUTH,
+      payload: { name: 'new' },
+    });
+    expect(response.statusCode).toBe(200);
+    expect(mocks.deviceUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: 'dev-1' }, data: { name: 'new' } }),
+    );
+  });
+
+  it('404s delete for another user’s device', async () => {
+    mocks.deviceFindFirst.mockResolvedValue(null);
+    const app = await buildApp();
+    const response = await app.inject({ method: 'DELETE', url: '/api/devices/dev-9', ...AUTH });
+    expect(response.statusCode).toBe(404);
+    expect(mocks.deviceDelete).not.toHaveBeenCalled();
+  });
+
+  it('delete closes the hub socket and removes the device', async () => {
+    const socket = { send: vi.fn(), close: vi.fn() };
+    deviceHub.register('dev-del', socket);
+    mocks.deviceFindFirst.mockResolvedValue({ id: 'dev-del', userId: 'user-1' });
+    const app = await buildApp();
+    const response = await app.inject({ method: 'DELETE', url: '/api/devices/dev-del', ...AUTH });
+    expect(response.statusCode).toBe(200);
+    expect(socket.close).toHaveBeenCalledOnce();
+    expect(deviceHub.isOnline('dev-del')).toBe(false);
+    expect(mocks.deviceDelete).toHaveBeenCalledWith({ where: { id: 'dev-del' } });
+  });
+});
+
+describe('device commands', () => {
+  it('lists recent commands for the owner only', async () => {
+    mocks.deviceFindFirst.mockResolvedValue(null);
+    const app = await buildApp();
+    const denied = await app.inject({ method: 'GET', url: '/api/devices/dev-9/commands', ...AUTH });
+    expect(denied.statusCode).toBe(404);
+
+    mocks.deviceFindFirst.mockResolvedValue({ id: 'dev-1', userId: 'user-1' });
+    mocks.commandFindMany.mockResolvedValue([{ id: 'cmd-1' }]);
+    const allowed = await app.inject({ method: 'GET', url: '/api/devices/dev-1/commands', ...AUTH });
+    expect(allowed.statusCode).toBe(200);
+    expect(mocks.commandFindMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { deviceId: 'dev-1' }, take: 20 }),
+    );
+    expect(allowed.json().commands).toEqual([{ id: 'cmd-1' }]);
+  });
+
+  it('stays queued when the device is offline', async () => {
+    const app = await buildApp();
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/devices/dev-1/commands',
+      ...AUTH,
+      payload: COMMAND_BODY,
+    });
+    expect(response.statusCode).toBe(201);
+    expect(response.json().command.status).toBe('queued');
+    expect(mocks.commandUpdate).not.toHaveBeenCalled();
+  });
+
+  it('sends immediately and marks sent when the device is online', async () => {
+    const socket = { send: vi.fn(), close: vi.fn() };
+    deviceHub.register('dev-online', socket);
+    mocks.deviceFindFirst.mockResolvedValue({ id: 'dev-online', userId: 'user-1' });
+    const app = await buildApp();
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/devices/dev-online/commands',
+      ...AUTH,
+      payload: COMMAND_BODY,
+    });
+    deviceHub.unregister('dev-online', socket);
+    expect(response.statusCode).toBe(201);
+    expect(response.json().command.status).toBe('sent');
+    expect(JSON.parse(socket.send.mock.calls[0]?.[0] as string)).toEqual({
+      id: 'cmd-1',
+      type: 'run_web',
+      payload: COMMAND_BODY.payload,
+    });
+    expect(mocks.commandUpdate).toHaveBeenCalledWith({
+      where: { id: 'cmd-1' },
+      data: { status: 'sent' },
+    });
+  });
+
+  it('400s an invalid command payload', async () => {
+    const app = await buildApp();
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/devices/dev-1/commands',
+      ...AUTH,
+      payload: { type: 'run_web', payload: { repoUrl: 'not-a-url' } },
+    });
+    expect(response.statusCode).toBe(400);
+  });
+});

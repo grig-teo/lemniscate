@@ -2,6 +2,7 @@ import Fastify from 'fastify';
 import cookie from '@fastify/cookie';
 import cors from '@fastify/cors';
 import rateLimit from '@fastify/rate-limit';
+import websocket from '@fastify/websocket';
 import { config } from './config.js';
 import apiRoutes from './routes/index.js';
 import llmConfigRoutes from './routes/llm-configs.js';
@@ -9,6 +10,7 @@ import skillsRoutes from './routes/skills.js';
 import mcpServersRoutes from './routes/mcp-servers.js';
 import libraryRoutes from './routes/library.js';
 import tasksRoutes from './routes/tasks.js';
+import devicesRoutes from './routes/devices.js';
 
 const app = Fastify({
   logger: {
@@ -26,12 +28,16 @@ await app.register(cors, {
 // the sensitive routes (auth, PAT connect, LLM test, task create).
 await app.register(rateLimit, { max: 300, timeWindow: '1 minute' });
 
+// WebSocket support for the device tunnel gateway (/api/devices/ws).
+await app.register(websocket);
+
 // Auth, git connections, repositories (prefixed /api inside the plugin).
 await app.register(apiRoutes);
 await app.register(llmConfigRoutes, { prefix: '/api/llm-configs' });
 await app.register(skillsRoutes, { prefix: '/api/skills' });
 await app.register(mcpServersRoutes, { prefix: '/api/mcp-servers' });
 await app.register(libraryRoutes, { prefix: '/api/library' });
+await app.register(devicesRoutes, { prefix: '/api/devices' });
 // tasks.ts declares its routes as `/tasks...` (same convention as
 // repositories.ts), so it mounts under /api, not /api/tasks.
 await app.register(tasksRoutes, { prefix: '/api' });
