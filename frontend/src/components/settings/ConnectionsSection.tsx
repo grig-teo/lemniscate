@@ -51,7 +51,15 @@ export function ConnectionsSection() {
 
   function disconnect(connection: Connection) {
     const label = providerLabel(connection.provider);
-    if (window.confirm(`Disconnect ${label} account "${connection.username}"?`)) {
+    const message =
+      `Disconnect ${label} account "${connection.username}"?\n\n` +
+      'This PERMANENTLY deletes its repositories and all their tasks/proposals from Lemniscate ' +
+      '(they remain on the git host, but task history is lost).\n\n' +
+      'If this is your last connection you will also be logged out, and signing back in ' +
+      'creates a FRESH account that cannot see your LLM configs.\n\n' +
+      'Tip: to refresh a token, connect the same account again without disconnecting first — ' +
+      'the token is updated in place and nothing is lost.';
+    if (window.confirm(message)) {
       deleteConnection.mutate(connection.id);
     }
   }
