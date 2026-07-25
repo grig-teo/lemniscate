@@ -107,19 +107,17 @@ export function RepoTree({ width }: { width: number }) {
         </Button>
       </div>
 
-      <ScrollArea className="flex-1" horizontal>
-        {/* Bounded to the sidebar width so long names/titles truncate with
-            an ellipsis instead of pushing action icons into a scrollbar. */}
-        <div className="min-w-full">
-          <RepoTreeBody
-            reposQuery={reposQuery}
-            groups={groups}
-            syncing={syncConnection.isPending}
-            onSync={(connectionId) => syncConnection.mutate(connectionId)}
-            expanded={expanded}
-            onToggleRepo={toggle}
-          />
-        </div>
+      {/* Rows are bounded to the sidebar width: titles truncate with an
+          ellipsis while badges/action icons stay pinned to the resize edge. */}
+      <ScrollArea className="flex-1">
+        <RepoTreeBody
+          reposQuery={reposQuery}
+          groups={groups}
+          syncing={syncConnection.isPending}
+          onSync={(connectionId) => syncConnection.mutate(connectionId)}
+          expanded={expanded}
+          onToggleRepo={toggle}
+        />
       </ScrollArea>
 
       <CreateRepoDialog open={createOpen} onOpenChange={setCreateOpen} />
