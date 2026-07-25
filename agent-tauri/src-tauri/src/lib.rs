@@ -64,7 +64,8 @@ pub(crate) fn set_status(app: &AppHandle, status: &str, detail: Option<&str>) {
 
 fn update_tray_status(app: &AppHandle, status: &str) {
     let state = app.state::<AppState>();
-    if let Some(item) = state.status_item.lock().unwrap().as_ref() {
+    let item = state.status_item.lock().unwrap();
+    if let Some(item) = item.as_ref() {
         let _ = item.set_text(format!("Status: {status}"));
     }
 }
@@ -93,13 +94,11 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
     Ok(())
 }
 
-/// Default window icon, or a solid-color fallback when none is bundled.
-fn tray_icon(app: &AppHandle) -> tauri::image::Image<'static> {
-    if let Some(icon) = app.default_window_icon() {
-        return icon.clone();
-    }
+/// Solid-color fallback tray icon (owned pixels → 'static). The bundled
+/// window icon can't be reused here: default_window_icon() borrows the app.
+fn tray_icon(_app: &AppHandle) -> tauri::image::Image<'static> {
     let rgba = vec![76u8, 110, 245, 255].repeat(32 * 32);
-    tauri::image::Image::new(&rgba, 32, 32)
+    tauri::image::Image::new_owned(rgba, 32, 32)
 }
 
 // --- tunnel lifecycle ----------------------------------------------------------
