@@ -792,6 +792,158 @@ async function giteeOpenPullRequest(
 }
 
 // ---------------------------------------------------------------------------
+// PR state polling (open/merged/closed) — used by the pr-state-sync job to
+// detect pull requests merged manually on the git host.
+// ---------------------------------------------------------------------------
+
+export type PrState = 'open' | 'merged' | 'closed';
+
+/** Maps an explicit provider state string ('merged'/'closed'/'open'…) to a PrState. */
+export function prStateFromString(state: string): PrState {
+  if (state === 'merged') return 'merged';
+  if (state === 'open' || state === 'opened') return 'open';
+  return 'closed';
+}
+
+/** Maps a GitHub-shaped { state, merged } pair to a PrState. */
+export function prStateFromOpenMerged(state: string, merged: boolean): PrState {
+  if (merged) return 'merged';
+  return prStateFromString(state);
+}
+
+const githubPullStateListSchema = z.array(
+  z.object({ number: z.number(), base: z.object({ ref: z.string() }) }),
+);
+const githubPullDetailStateSchema = z.object({ state: z.string(), merged: z.boolean() });
+
+function githubAllPullsQueryUrl(input: PullRequestRefInput): string {
+  const owner = input.repoFullName.split('/')[0] ?? '';
+  return (
+    `${githubPullsUrl(input.repoFullName)}?state=all` +
+    `&head=${encodeURIComponent(`${owner}:${input.headBranch}`)}&per_page=100`
+  );
+}
+
+// Two requests: the state=all list finds the PR number, the detail reports
+// the merged flag (list payloads do not reliably include it).
+async function githubPullRequestState(
+  token: string,
+  input: PullRequestRefInput,
+): Promise<PrState> {
+  const { body } = await apiRequest(
+    'github',
+    'GET',
+    githubAllPullsQueryUrl(input),
+    githubHeaders(token),
+    token,
+  );
+  const match = githubPullStateListSchema
+    .parse(body)
+    .find((pull) => pull.base.ref === input.baseBranch);
+  if (!match) {
+    throw new ProviderError(
+      `github: no pull request for ${input.headBranch} -> ${input.baseBranch}`,
+    );
+  }
+  const url = `${githubPullsUrl(input.repoFullName)}/${match.number}`;
+  const detail = await apiRequest('github', 'GET', url, githubHeaders(token), token);
+  const pull = githubPullDetailStateSchema.parse(detail.body);
+  return prStateFromOpenMerged(pull.state, pull.merged);
+}
+
+const gitlabMrStateListSchema = z.array(z.object({ state: z.string() }));
+
+function gitlabAllMrsQueryUrl(connection: PrConnectionInput, input: PullRequestRefInput): string {
+  return (
+    `${gitlabMrsUrl(connection, input.repoFullName)}?state=all` +
+    `&source_branch=${encodeURIComponent(input.headBranch)}` +
+    `&target_branch=${encodeURIComponent(input.baseBranch)}`
+  );
+}
+
+async function gitlabPullRequestState(
+  connection: PrConnectionInput,
+  token: string,
+  input: PullRequestRefInput,
+): Promise<PrState> {
+  const { body } = await gitlabGet(connection, token, gitlabAllMrsQueryUrl(connection, input));
+  const match = gitlabMrStateListSchema.parse(body)[0];
+  if (!match) {
+    throw new ProviderError(
+      `gitlab: no merge request for ${input.headBranch} -> ${input.baseBranch}`,
+    );
+  }
+  return prStateFromString(match.state);
+}
+
+const gitversePullDetailStateSchema = z.object({
+  state: z.string(),
+  merged: z.boolean().optional(),
+  merged_at: z.string().nullable().optional(),
+});
+
+function gitverseAllPullsQueryUrl(
+  connection: PrConnectionInput,
+  input: PullRequestRefInput,
+): string {
+  return (
+    `${gitversePullsUrl(connection, input.repoFullName)}?state=all` +
+    `&head=${encodeURIComponent(input.headBranch)}&per_page=100`
+  );
+}
+
+async function gitversePullRequestState(
+  connection: PrConnectionInput,
+  token: string,
+  input: PullRequestRefInput,
+): Promise<PrState> {
+  const url = gitverseAllPullsQueryUrl(connection, input);
+  const { body } = await apiRequest('gitverse', 'GET', url, gitverseHeaders(token), token);
+  const match = gitversePullListSchema.parse(body).find((pull) => matchesGitverseRef(pull, input));
+  if (!match) {
+    throw new ProviderError(
+      `gitverse: no pull request for ${input.headBranch} -> ${input.baseBranch}`,
+    );
+  }
+  const detailUrl = `${gitversePullsUrl(connection, input.repoFullName)}/${match.number}`;
+  const detail = await apiRequest('gitverse', 'GET', detailUrl, gitverseHeaders(token), token);
+  const pull = gitversePullDetailStateSchema.parse(detail.body);
+  return prStateFromOpenMerged(pull.state, pull.merged === true || pull.merged_at != null);
+}
+
+const giteePullStateListSchema = z.array(
+  z.object({
+    state: z.string(),
+    head: z.object({ ref: z.string() }),
+    base: z.object({ ref: z.string() }),
+  }),
+);
+
+function giteeAllPullsQueryUrl(input: PullRequestRefInput): string {
+  return (
+    `${giteePullsUrl(input.repoFullName)}?state=all` +
+    `&head=${encodeURIComponent(input.headBranch)}&per_page=100`
+  );
+}
+
+async function giteePullRequestState(token: string, input: PullRequestRefInput): Promise<PrState> {
+  const { body } = await apiRequest(
+    'gitee',
+    'GET',
+    giteeAllPullsQueryUrl(input),
+    giteeHeaders(token),
+    token,
+  );
+  const match = giteePullStateListSchema.parse(body).find((pull) => matchesGitverseRef(pull, input));
+  if (!match) {
+    throw new ProviderError(
+      `gitee: no pull request for ${input.headBranch} -> ${input.baseBranch}`,
+    );
+  }
+  return prStateFromString(match.state);
+}
+
+// ---------------------------------------------------------------------------
 // Public entry points
 // ---------------------------------------------------------------------------
 
@@ -799,6 +951,7 @@ interface ProviderPrApi {
   open(input: OpenPullRequestInput): Promise<OpenPullRequestResult>;
   merge(input: PullRequestRefInput): Promise<MergePullRequestResult>;
   diff(input: PullRequestRefInput): Promise<string>;
+  state(input: PullRequestRefInput): Promise<PrState>;
   /** Commit/PR check statuses; absent when the provider has no checks API. */
   checks?(input: PullRequestRefInput): Promise<PrChecksStatus>;
 }
@@ -812,6 +965,7 @@ function providerPrApi(connection: PrConnectionInput, token: string): ProviderPr
         open: (input) => githubOpenPullRequest(token, input),
         merge: (input) => githubMergePullRequest(token, input),
         diff: (input) => githubPullRequestDiff(token, input),
+        state: (input) => githubPullRequestState(token, input),
         checks: (input) => githubChecksStatus(token, input),
       };
     case 'gitlab':
@@ -819,6 +973,7 @@ function providerPrApi(connection: PrConnectionInput, token: string): ProviderPr
         open: (input) => gitlabOpenPullRequest(connection, token, input),
         merge: (input) => gitlabMergePullRequest(connection, token, input),
         diff: (input) => gitlabPullRequestDiff(connection, token, input),
+        state: (input) => gitlabPullRequestState(connection, token, input),
         checks: (input) => gitlabChecksStatus(connection, token, input),
       };
     case 'gitverse':
@@ -826,12 +981,14 @@ function providerPrApi(connection: PrConnectionInput, token: string): ProviderPr
         open: (input) => gitverseOpenPullRequest(connection, token, input),
         merge: (input) => gitverseMergePullRequest(connection, token, input),
         diff: (input) => gitversePullRequestDiff(connection, token, input),
+        state: (input) => gitversePullRequestState(connection, token, input),
       };
     case 'gitee':
       return {
         open: (input) => giteeOpenPullRequest(token, input),
         merge: (input) => giteeMergePullRequest(token, input),
         diff: (input) => giteePullRequestDiff(token, input),
+        state: (input) => giteePullRequestState(token, input),
       };
   }
 }
@@ -878,4 +1035,15 @@ export async function pullRequestChecksStatus(
     if (!checks) return Promise.resolve({ supported: false, green: true });
     return checks(input);
   });
+}
+
+// open/merged/closed state of the PR for the head branch. Throws when no PR
+// exists for the branch pair — the caller decides what that means.
+export async function pullRequestState(
+  connection: PrConnectionInput,
+  input: PullRequestRefInput,
+): Promise<PrState> {
+  return withGitlabRefreshRetry(connection, (token) =>
+    providerPrApi(connection, token).state(input),
+  );
 }

@@ -7,7 +7,10 @@ import {
   getPullRequestDiff,
   mergePullRequest,
   openPullRequest,
+  prStateFromOpenMerged,
+  prStateFromString,
   pullRequestChecksStatus,
+  pullRequestState,
 } from '../src/lib/pull-requests.js';
 
 // Locking tests for the "open PR → on already-exists status, look up the
@@ -466,5 +469,83 @@ describe('pullRequestChecksStatus', () => {
       green: true,
     });
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// PR state polling (pr-state-sync job)
+// ---------------------------------------------------------------------------
+
+describe('prStateFromString / prStateFromOpenMerged', () => {
+  it('maps provider state strings to open/merged/closed', () => {
+    expect(prStateFromString('merged')).toBe('merged');
+    expect(prStateFromString('open')).toBe('open');
+    expect(prStateFromString('opened')).toBe('open');
+    expect(prStateFromString('closed')).toBe('closed');
+    expect(prStateFromString('locked')).toBe('closed');
+  });
+
+  it('merged flag wins over a closed state', () => {
+    expect(prStateFromOpenMerged('closed', true)).toBe('merged');
+    expect(prStateFromOpenMerged('closed', false)).toBe('closed');
+    expect(prStateFromOpenMerged('open', false)).toBe('open');
+  });
+});
+
+describe('pullRequestState', () => {
+  it('github: merged when the PR detail reports merged', async () => {
+    stubFetch((url) => {
+      if (url.includes('state=all')) {
+        return mockResponse(200, [{ number: 7, base: { ref: 'main' } }]);
+      }
+      expect(url).toBe('https://api.github.com/repos/ivan/repo/pulls/7');
+      return mockResponse(200, { state: 'closed', merged: true });
+    });
+    expect(await pullRequestState(ghConnection, gvRef)).toBe('merged');
+  });
+
+  it('github: open when the PR is still open', async () => {
+    stubFetch((url) => {
+      if (url.includes('state=all')) {
+        return mockResponse(200, [{ number: 7, base: { ref: 'main' } }]);
+      }
+      return mockResponse(200, { state: 'open', merged: false });
+    });
+    expect(await pullRequestState(ghConnection, gvRef)).toBe('open');
+  });
+
+  it('github: throws when no PR exists for the branch pair', async () => {
+    stubFetch(() => mockResponse(200, []));
+    await expect(pullRequestState(ghConnection, gvRef)).rejects.toThrow('no pull request');
+  });
+
+  it('gitlab: maps the MR state from the state=all list', async () => {
+    stubFetch((url) => {
+      expect(url).toBe(
+        'https://gitlab.com/api/v4/projects/ivan%2Frepo/merge_requests' +
+          '?state=all&source_branch=lemniscate%2Ft-1&target_branch=main',
+      );
+      return mockResponse(200, [{ state: 'merged' }]);
+    });
+    expect(await pullRequestState(gitlabConnection, gvRef)).toBe('merged');
+  });
+
+  it('gitverse: merged via merged_at on the PR detail', async () => {
+    stubFetch((url) => {
+      if (url.includes('state=all')) return mockResponse(200, [gvPull]);
+      expect(url).toBe('https://api.gitverse.ru/repos/ivan/repo/pulls/7');
+      return mockResponse(200, { state: 'closed', merged_at: '2026-01-01T00:00:00Z' });
+    });
+    expect(await pullRequestState(gvConnection, gvRef)).toBe('merged');
+  });
+
+  it('gitee: maps the PR state from the state=all list', async () => {
+    stubFetch((url) => {
+      expect(url).toContain('state=all');
+      return mockResponse(200, [
+        { state: 'closed', head: { ref: gvRef.headBranch }, base: { ref: 'main' } },
+      ]);
+    });
+    expect(await pullRequestState(giteeConnection, gvRef)).toBe('closed');
   });
 });

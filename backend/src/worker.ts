@@ -15,6 +15,7 @@ import {
   registerProposalAutoRunSchedule,
   registerProposalTopUpSchedule,
 } from './lib/proposal-scheduler.js';
+import { registerPrStateSyncSchedule, syncMergedPullRequests } from './lib/pr-state-sync.js';
 
 const runTaskDataSchema = z.object({ taskId: z.string().min(1) });
 const reviewPrDataSchema = z.object({
@@ -80,6 +81,11 @@ const worker = new Worker(
         await enqueueProposalAutoRuns();
         return;
       }
+      case 'pr-state-sync': {
+        proposalsTopUpDataSchema.parse(job.data);
+        await syncMergedPullRequests();
+        return;
+      }
       default:
         throw new Error(`unknown job name: ${job.name}`);
     }
@@ -97,6 +103,7 @@ console.log(`worker ready, consuming queue '${AGENT_QUEUE_NAME}' via ${config.RE
 // Register the single global repeatable 'proposals-topup' job (every 6h).
 await registerProposalTopUpSchedule();
 await registerProposalAutoRunSchedule();
+await registerPrStateSyncSchedule();
 
 // Re-enqueue any tasks left in 'queued' without a job (crashed/failed
 // enqueues from before the worker came up).

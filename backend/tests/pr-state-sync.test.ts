@@ -1,0 +1,114 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+// Locking tests for the pr-state-sync job: awaiting_review tasks whose PR was
+// merged on the git host must be marked done; open/closed PRs and provider
+// failures leave the task untouched. prisma, the PR API, and event helpers
+// are mocked so no DB/network is contacted.
+
+const mocks = vi.hoisted(() => ({
+  taskFindMany: vi.fn(),
+  setTaskStatus: vi.fn().mockResolvedValue(undefined),
+  logEvent: vi.fn().mockResolvedValue(undefined),
+  pullRequestState: vi.fn(),
+}));
+
+vi.mock('../src/lib/prisma.js', () => ({
+  prisma: { task: { findMany: mocks.taskFindMany } },
+}));
+vi.mock('../src/lib/task-events.js', () => ({ setTaskStatus: mocks.setTaskStatus }));
+vi.mock('../src/lib/agent-git.js', () => ({ logEvent: mocks.logEvent }));
+vi.mock('../src/lib/pull-requests.js', () => ({ pullRequestState: mocks.pullRequestState }));
+vi.mock('../src/lib/proposal-scheduler.js', () => ({ getAgentTasksQueue: vi.fn() }));
+vi.mock('ioredis', () => ({ Redis: vi.fn() }));
+
+import { syncMergedPullRequests, taskStatusForPrState } from '../src/lib/pr-state-sync.js';
+
+function awaitingTask(overrides: Record<string, unknown> = {}) {
+  return {
+    id: 't1',
+    status: 'awaiting_review',
+    prUrl: 'https://pr/1',
+    branchName: 'lemniscate/t-1',
+    repository: {
+      fullName: 'org/demo',
+      defaultBranch: 'main',
+      connection: { provider: 'github', baseUrl: null, accessTokenEnc: 'enc' },
+    },
+    ...overrides,
+  };
+}
+
+beforeEach(() => {
+  vi.clearAllMocks();
+});
+
+describe('taskStatusForPrState', () => {
+  it('maps merged to done and leaves open/closed unchanged', () => {
+    expect(taskStatusForPrState('merged')).toBe('done');
+    expect(taskStatusForPrState('open')).toBeNull();
+    expect(taskStatusForPrState('closed')).toBeNull();
+  });
+});
+
+describe('syncMergedPullRequests', () => {
+  it('marks a task done when its PR was merged on the git host', async () => {
+    mocks.taskFindMany.mockResolvedValue([awaitingTask()]);
+    mocks.pullRequestState.mockResolvedValue('merged');
+
+    await syncMergedPullRequests();
+
+    expect(mocks.pullRequestState).toHaveBeenCalledWith(
+      awaitingTask().repository.connection,
+      { repoFullName: 'org/demo', headBranch: 'lemniscate/t-1', baseBranch: 'main' },
+    );
+    expect(mocks.setTaskStatus).toHaveBeenCalledWith('t1', 'done');
+    expect(mocks.logEvent).toHaveBeenCalledWith(
+      't1',
+      'pull request merged on the git host — task marked done',
+    );
+  });
+
+  it('leaves tasks with open or closed PRs unchanged', async () => {
+    mocks.taskFindMany.mockResolvedValue([awaitingTask({ id: 't-open' })]);
+    mocks.pullRequestState.mockResolvedValue('open');
+    await syncMergedPullRequests();
+
+    mocks.taskFindMany.mockResolvedValue([awaitingTask({ id: 't-closed' })]);
+    mocks.pullRequestState.mockResolvedValue('closed');
+    await syncMergedPullRequests();
+
+    expect(mocks.setTaskStatus).not.toHaveBeenCalled();
+    expect(mocks.logEvent).not.toHaveBeenCalled();
+  });
+
+  it('skips provider failures and keeps syncing the remaining tasks', async () => {
+    mocks.taskFindMany.mockResolvedValue([
+      awaitingTask({ id: 't-broken' }),
+      awaitingTask({ id: 't-merged' }),
+    ]);
+    mocks.pullRequestState
+      .mockRejectedValueOnce(new Error('github: no pull request'))
+      .mockResolvedValueOnce('merged');
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    await syncMergedPullRequests();
+
+    expect(mocks.setTaskStatus).toHaveBeenCalledTimes(1);
+    expect(mocks.setTaskStatus).toHaveBeenCalledWith('t-merged', 'done');
+    warn.mockRestore();
+  });
+
+  it('queries only unarchived awaiting_review tasks that have a PR and branch', async () => {
+    mocks.taskFindMany.mockResolvedValue([]);
+    await syncMergedPullRequests();
+    expect(mocks.taskFindMany).toHaveBeenCalledWith({
+      where: {
+        status: 'awaiting_review',
+        prUrl: { not: null },
+        branchName: { not: null },
+        archivedAt: null,
+      },
+      include: { repository: { include: { connection: true } } },
+    });
+  });
+});
