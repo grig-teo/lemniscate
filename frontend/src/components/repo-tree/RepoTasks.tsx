@@ -149,7 +149,7 @@ function TaskRow({ task }: { task: Task }) {
         </span>
         {task.kind === 'proposal' && (
           <Badge variant="outline" className="shrink-0 px-1.5 py-0 text-[10px]">
-            proposal
+            {task.category ?? 'proposal'}
           </Badge>
         )}
         <StatusBadge status={task.status} className="px-1.5 py-0 text-[10px]" />

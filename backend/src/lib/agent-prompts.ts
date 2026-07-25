@@ -246,9 +246,39 @@ export function buildPrBody(task: Task, summary: string): string {
 // Proposal requests ('generate-proposals' jobs)
 // ---------------------------------------------------------------------------
 
+/** Canonical category labels for generated proposals (shown as badges in the UI). */
+export const PROPOSAL_CATEGORIES = [
+  'ux/ui',
+  'security',
+  'bug fix',
+  'performance',
+  'a11y',
+  'scalability',
+  'code quality',
+  'testing',
+  'documentation',
+  'devops',
+  'monitoring',
+  'data quality',
+  'compliance',
+  'i18n',
+  'cost',
+  'seo',
+  'api design',
+  'mobile',
+  'error handling',
+  'onboarding',
+] as const;
+
+export type ProposalCategory = (typeof PROPOSAL_CATEGORIES)[number];
+
+const DEFAULT_PROPOSAL_CATEGORY: ProposalCategory = 'code quality';
+
 const llmProposalSchema = z.object({
   title: z.string().min(1).max(200),
   prompt: z.string().min(1).max(8_000),
+  // Unknown/missing categories fall back instead of rejecting the proposal.
+  category: z.enum(PROPOSAL_CATEGORIES).catch(DEFAULT_PROPOSAL_CATEGORY),
 });
 // Single home for the proposals contract: requestProposals (direct LLM) and
 // the hermes proposals-file parsing in agent-proposals.ts both validate
@@ -260,10 +290,11 @@ export function proposalsSystemPrompt(systemPromptExtra: string | null): string 
   return [
     'You are Lemniscate, an autonomous code-review agent.',
     'You are given a repository file tree and its key files.',
-    'Propose up to 5 concrete, high-value improvement or bug-fix tasks for this repository.',
+    'Propose up to 5 concrete, URGENT improvement or bug-fix tasks this repository genuinely needs — skip nice-to-haves and cosmetic tweaks.',
+    `Cover DIFFERENT categories across the proposals: ${PROPOSAL_CATEGORIES.join(', ')}.`,
     'Respond with STRICT JSON only — no markdown fences, no commentary — a JSON array matching:',
-    '[{"title": string, "prompt": string}]',
-    '"title" is a short imperative summary; "prompt" is a detailed instruction another coding agent can execute directly.',
+    '[{"title": string, "prompt": string, "category": string}]',
+    '"title" is a short imperative summary; "prompt" is a detailed instruction another coding agent can execute directly; "category" is exactly one of the categories above.',
     ...(systemPromptExtra
       ? ['', 'Additional instructions from the repository owner:', systemPromptExtra]
       : []),

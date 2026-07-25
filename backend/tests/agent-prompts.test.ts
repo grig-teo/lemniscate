@@ -94,10 +94,14 @@ describe('system prompts', () => {
     expect(agentSystemPrompt(null)).not.toContain('Additional instructions');
   });
 
-  it('proposalsSystemPrompt asks for up to 5 tasks as a JSON array', () => {
+  it('proposalsSystemPrompt asks for up to 5 categorized urgent tasks as a JSON array', () => {
     const prompt = proposalsSystemPrompt(null);
     expect(prompt).toContain('up to 5');
-    expect(prompt).toContain('[{"title": string, "prompt": string}]');
+    expect(prompt).toContain('URGENT');
+    expect(prompt).toContain('[{"title": string, "prompt": string, "category": string}]');
+    expect(prompt).toContain('security');
+    expect(prompt).toContain('testing');
+    expect(prompt).toContain('ux/ui');
   });
 });
 

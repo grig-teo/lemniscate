@@ -6,6 +6,7 @@ import { cleanupWorkdir, cloneRepository } from './agent-git.js';
 import {
   buildSkillsSection,
   llmProposalsSchema,
+  PROPOSAL_CATEGORIES,
   requestProposals,
   type LlmProposals,
 } from './agent-prompts.js';
@@ -45,10 +46,11 @@ export interface HermesProposalPromptOptions {
 export function buildHermesProposalPrompt(opts: HermesProposalPromptOptions): string {
   return [
     'You are Lemniscate, an autonomous code-review agent.',
-    `Explore the current directory (a freshly cloned repository) and propose up to ${opts.maxProposals} concrete, high-value improvement or bug-fix tasks.`,
+    `Explore the current directory (a freshly cloned repository) and propose up to ${opts.maxProposals} concrete, URGENT improvement or bug-fix tasks this repository genuinely needs — skip nice-to-haves and cosmetic tweaks.`,
+    `Cover DIFFERENT categories across the proposals: ${PROPOSAL_CATEGORIES.join(', ')}.`,
     `Write them to ${PROPOSALS_FILENAME} in the repository root as STRICT JSON:`,
-    '[{"title": string, "prompt": string}]',
-    '"title" is a short imperative summary; "prompt" is a detailed instruction another coding agent can execute directly.',
+    '[{"title": string, "prompt": string, "category": string}]',
+    '"title" is a short imperative summary; "prompt" is a detailed instruction another coding agent can execute directly; "category" is exactly one of the categories above.',
     `Do NOT implement the proposals. Do NOT git commit, push, or create branches — your only output is ${PROPOSALS_FILENAME}.`,
     "The repository's AGENTS.md context (its conventions and instructions) applies to what you propose.",
     ...(opts.systemPromptExtra
@@ -104,6 +106,7 @@ function proposalTaskData(repository: RepositoryWithConnection, proposal: LlmPro
     kind: 'proposal' as const,
     title: proposal.title,
     prompt: proposal.prompt,
+    category: proposal.category,
     status: 'pending' as const,
     // Proposals inherit the repository's skills, same as prompt tasks.
     skills: parseSkillSlugs(repository.skillSlugs),

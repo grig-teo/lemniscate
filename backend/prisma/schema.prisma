@@ -144,6 +144,10 @@ model Task {
   repositoryId String
   kind         TaskKind
   title        String
+  // Proposal category label ('security', 'ux/ui', 'testing', …) from
+  // PROPOSAL_CATEGORIES in agent-prompts.ts; null for prompt tasks and
+  // proposals created before this column existed.
+  category     String?
   prompt       String?
   status       TaskStatus  @default(pending)
   branchName   String?

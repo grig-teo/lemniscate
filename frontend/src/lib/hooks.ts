@@ -157,6 +157,8 @@ export type Task = {
   repositoryId: string;
   kind: string;
   title: string;
+  /** Proposal category label ('security', 'ux/ui', …); null for prompt tasks. */
+  category?: string | null;
   status: TaskStatus;
   /** Full prompt — only included by GET /api/tasks/:id, not by list endpoints. */
   prompt?: string;

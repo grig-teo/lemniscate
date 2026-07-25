@@ -79,7 +79,9 @@ function stubRepository(): RepositoryWithConnection {
   } as unknown as RepositoryWithConnection;
 }
 
-function stubHappyPath(proposals: Array<{ title: string; prompt: string }>): void {
+function stubHappyPath(
+  proposals: Array<{ title: string; prompt: string; category?: string }>,
+): void {
   mocks.repositoryFindUnique.mockResolvedValue(stubRepository());
   mocks.prepareAgentRuntime.mockResolvedValue({
     cloneUrl: 'https://example/repo.git',
@@ -109,6 +111,12 @@ describe('generateProposals', () => {
     expect(mocks.taskCreate).toHaveBeenCalledTimes(5);
     expect(mocks.taskCreate.mock.calls[0]?.[0].data.status).toBe('pending');
     expect(mocks.enqueueRunTask).not.toHaveBeenCalled();
+  });
+
+  it('persists the proposal category on the created task', async () => {
+    stubHappyPath([{ title: 'Fix XSS', prompt: 'Escape output', category: 'security' }]);
+    await generateProposals('repo-1');
+    expect(mocks.taskCreate.mock.calls[0]?.[0].data.category).toBe('security');
   });
 
   it('skips proposals whose title is already pending or queued', async () => {
@@ -289,20 +297,29 @@ describe('generateProposals with AGENT_EXECUTOR=hermes', () => {
 });
 
 describe('parseProposalsFile', () => {
-  it('parses a plain JSON array', () => {
+  it('parses a plain JSON array, defaulting a missing category to code quality', () => {
     expect(parseProposalsFile('[{"title":"T","prompt":"P"}]')).toEqual([
-      { title: 'T', prompt: 'P' },
+      { title: 'T', prompt: 'P', category: 'code quality' },
+    ]);
+  });
+
+  it('keeps a valid category and falls back on an unknown one', () => {
+    const raw = '[{"title":"A","prompt":"P","category":"security"},' +
+      '{"title":"B","prompt":"P","category":"nonsense"}]';
+    expect(parseProposalsFile(raw)).toEqual([
+      { title: 'A', prompt: 'P', category: 'security' },
+      { title: 'B', prompt: 'P', category: 'code quality' },
     ]);
   });
 
   it('parses JSON wrapped in markdown fences', () => {
-    const raw = '```json\n[{"title":"T","prompt":"P"}]\n```';
-    expect(parseProposalsFile(raw)).toEqual([{ title: 'T', prompt: 'P' }]);
+    const raw = '```json\n[{"title":"T","prompt":"P","category":"testing"}]\n```';
+    expect(parseProposalsFile(raw)).toEqual([{ title: 'T', prompt: 'P', category: 'testing' }]);
   });
 
   it('parses JSON embedded in surrounding prose', () => {
     const raw = 'Here are the proposals:\n[{"title":"T","prompt":"P"}]\nDone.';
-    expect(parseProposalsFile(raw)).toEqual([{ title: 'T', prompt: 'P' }]);
+    expect(parseProposalsFile(raw)).toEqual([{ title: 'T', prompt: 'P', category: 'code quality' }]);
   });
 
   it('returns null for malformed JSON or schema mismatches', () => {
