@@ -202,6 +202,19 @@ export function planWorkdirSweep(
   return dirNames.filter((name) => !isActiveWorkdir(name, activeTaskIds));
 }
 
+// Appends an actionable hint to known git-host push rejections so the task
+// console tells the user how to fix it instead of showing raw stderr only.
+export function explainGitFailure(message: string): string {
+  if (/without `workflow` scope|refusing to allow an OAuth App to create or update workflow/i.test(message)) {
+    return (
+      `${message}\n` +
+      `hint: the task touched .github/workflows and the GitHub token lacks the 'workflow' OAuth scope — ` +
+      `reconnect the GitHub connection to grant it, then rerun the task.`
+    );
+  }
+  return message;
+}
+
 // Logs a job failure to the console and the task's event stream (both
 // best-effort scrubbed). Returns the sanitized message for status updates.
 export async function recordJobFailure(
@@ -210,7 +223,7 @@ export async function recordJobFailure(
   err: unknown,
   secrets: string[],
 ): Promise<string> {
-  const message = redactSecrets(errorMessage(err), secrets).slice(0, 1_000);
+  const message = explainGitFailure(redactSecrets(errorMessage(err), secrets)).slice(0, 1_000);
   console.error(`${jobKind} ${taskId} failed:`, message);
   await logEvent(taskId, `error: ${message}`).catch(() => {});
   return message;

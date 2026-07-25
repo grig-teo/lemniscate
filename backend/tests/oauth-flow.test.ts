@@ -88,6 +88,12 @@ describe('authorize URL + token body', () => {
     const body = tokenRequestBody('gitlab', oauthProviders().gitlab, 'code', 'verifier');
     expect(body.code_verifier).toBe('verifier');
   });
+
+  it('requests the workflow scope for github so workflow-file pushes succeed', () => {
+    expect(oauthProviders().github.scope.split(' ')).toEqual(
+      expect.arrayContaining(['repo', 'read:user', 'read:org', 'workflow']),
+    );
+  });
 });
 
 describe('POST /api/auth/logout', () => {

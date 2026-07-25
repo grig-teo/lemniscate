@@ -6,7 +6,7 @@ vi.mock('../src/lib/task-events.js', () => ({
   publishTaskEvent: mocks.publishTaskEvent,
 }));
 
-import { cloneRepository, git, planWorkdirSweep, sanitizeRelativePath } from '../src/lib/agent-git.js';
+import { cloneRepository, explainGitFailure, git, planWorkdirSweep, sanitizeRelativePath } from '../src/lib/agent-git.js';
 
 // Locking tests for the LLM-path safety check extracted from agent-loop.ts,
 // plus the git() console logging: every command echoes a redacted
@@ -149,5 +149,22 @@ describe('cloneRepository empty-repo fallback', () => {
     } finally {
       await fs.rm(tmp, { recursive: true, force: true });
     }
+  });
+});
+
+describe('explainGitFailure', () => {
+  it('appends a reconnect hint to the GitHub workflow-scope rejection', () => {
+    const stderr =
+      'git push failed: ! [remote rejected] x -> x (refusing to allow an OAuth App ' +
+      'to create or update workflow `.github/workflows/ci.yml` without `workflow` scope)';
+    const explained = explainGitFailure(stderr);
+    expect(explained).toContain("'workflow' OAuth scope");
+    expect(explained).toContain('reconnect the GitHub connection');
+  });
+
+  it('leaves unrelated errors untouched', () => {
+    expect(explainGitFailure('git push failed: 403 forbidden')).toBe(
+      'git push failed: 403 forbidden',
+    );
   });
 });

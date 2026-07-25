@@ -50,8 +50,9 @@ export function oauthProviders(): Record<OAuthProviderName, OAuthProviderConfig>
       clientSecret: config.GITHUB_CLIENT_SECRET,
       authorizeUrl: 'https://github.com/login/oauth/authorize',
       tokenUrl: 'https://github.com/login/oauth/access_token',
-      // read:org is required to see private organization repositories.
-      scope: 'repo read:user read:org',
+      // read:org is required to see private organization repositories;
+      // workflow is required to push branches that touch .github/workflows/*.
+      scope: 'repo read:user read:org workflow',
     },
     gitlab: {
       clientId: config.GITLAB_CLIENT_ID,
@@ -255,6 +256,11 @@ function assertGrantedScopes(
   }
   if (!hasAnyScope(scope, ['read:org'])) {
     log.warn('github OAuth token has no read:org scope; organization repositories will not sync');
+  }
+  if (!hasAnyScope(scope, ['workflow'])) {
+    log.warn(
+      'github OAuth token has no workflow scope; pushes touching .github/workflows will be rejected',
+    );
   }
 }
 
