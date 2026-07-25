@@ -91,6 +91,42 @@ function PromptPreview({ prompt }: { prompt: string }) {
   return <MarkdownView>{prompt}</MarkdownView>;
 }
 
+const PROMPT_MIN_HEIGHT = 140;
+const PROMPT_MAX_RATIO = 0.8;
+
+/** Window-level vertical drag: reports the clamped px height on each move. */
+function beginHeightDrag(
+  event: React.MouseEvent,
+  startHeight: number,
+  maxHeight: number,
+  onHeight: (height: number) => void,
+) {
+  event.preventDefault();
+  const startY = event.clientY;
+  const onMove = (e: MouseEvent) =>
+    onHeight(
+      Math.min(maxHeight, Math.max(PROMPT_MIN_HEIGHT, Math.round(startHeight + e.clientY - startY))),
+    );
+  const stop = () => {
+    window.removeEventListener('mousemove', onMove);
+    window.removeEventListener('mouseup', stop);
+  };
+  window.addEventListener('mousemove', onMove);
+  window.addEventListener('mouseup', stop);
+}
+
+/** Drag-to-resize state for the prompt field; null height = the CSS default. */
+function useResizablePrompt() {
+  const boxRef = React.useRef<HTMLDivElement>(null);
+  const [height, setHeight] = React.useState<number | null>(null);
+  const startDrag = (event: React.MouseEvent) => {
+    const startHeight = boxRef.current?.getBoundingClientRect().height ?? 0;
+    const paneHeight = boxRef.current?.parentElement?.getBoundingClientRect().height ?? 0;
+    beginHeightDrag(event, startHeight, paneHeight * PROMPT_MAX_RATIO, setHeight);
+  };
+  return { boxRef, height, startDrag };
+}
+
 /** Hidden file input plus a ghost button that opens it — one per accept kind. */
 function AttachFileButton({
   accept,
@@ -178,6 +214,7 @@ function TaskEditorInner({
   const [images, setImages] = React.useState<TaskImage[]>([]);
   const [saved, setSaved] = React.useState(false);
   const textareaRef = useAutoResizeTextarea(prompt, 14);
+  const promptResize = useResizablePrompt();
   const attachments = useLibraryAttachments({
     skills: initialSkills,
     mcpServers: taskMcpSelections(task.mcpServers),
@@ -230,11 +267,15 @@ function TaskEditorInner({
         </div>
       )}
       {actionError && <p className="shrink-0 text-xs text-destructive">{actionError.message}</p>}
-      <div className="flex max-h-[38%] shrink-0 flex-col overflow-hidden rounded-lg border bg-background shadow-sm focus-within:ring-1 focus-within:ring-ring">
+      <div
+        ref={promptResize.boxRef}
+        style={promptResize.height !== null ? { height: promptResize.height } : undefined}
+        className="flex h-1/2 shrink-0 flex-col overflow-hidden rounded-lg border bg-background shadow-sm focus-within:ring-1 focus-within:ring-ring"
+      >
         <ImageThumbnails images={images} onRemove={removeImage} />
         <ViewToggle preview={preview} onChange={setPreview} />
         {preview ? (
-          <div className="overflow-y-auto px-3 py-2">
+          <div className="min-h-0 flex-1 overflow-y-auto px-3 py-2">
             <PromptPreview prompt={prompt} />
           </div>
         ) : (
@@ -244,9 +285,19 @@ function TaskEditorInner({
             onChange={(event) => setPrompt(event.target.value)}
             placeholder="Prompt…"
             aria-label="Task prompt"
-            className="resize-none overflow-y-auto border-0 shadow-none focus-visible:ring-0"
+            className="min-h-0 flex-1 resize-none overflow-y-auto border-0 shadow-none focus-visible:ring-0"
           />
         )}
+      </div>
+      <div
+        role="separator"
+        aria-orientation="horizontal"
+        aria-label="Resize prompt field"
+        title="Drag to resize"
+        onMouseDown={promptResize.startDrag}
+        className="flex h-2 shrink-0 cursor-row-resize items-center justify-center"
+      >
+        <div className="h-0.5 w-10 rounded-full bg-border" />
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto">
         <LibraryAttachments state={attachments} columns repositoryId={task.repositoryId} />
