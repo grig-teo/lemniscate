@@ -75,6 +75,21 @@ const commandBodySchema = z.discriminatedUnion('type', [
       image: z.string().min(1).max(200).optional(),
     }),
   }),
+  // startScript lands inside an `npm run <script>` spawn on the device —
+  // keep it strictly alphanumeric (plus npm's : _ - conventions).
+  z.object({
+    type: z.literal('run_desktop'),
+    payload: z.object({
+      repoUrl: z.string().url(),
+      branch: z.string().min(1).max(200),
+      startScript: z
+        .string()
+        .min(1)
+        .max(100)
+        .regex(/^[a-zA-Z0-9:_-]+$/)
+        .optional(),
+    }),
+  }),
 ]);
 
 // install_apk launches an install intent on Android; on desktop the agent
@@ -84,6 +99,13 @@ const INSTALL_APK_PLATFORMS = new Set(['android', 'desktop']);
 function installApkBlock(platform: string): string | null {
   if (INSTALL_APK_PLATFORMS.has(platform)) return null;
   return `install_apk is only available on android and desktop devices (this device is ${platform})`;
+}
+
+// run_desktop spawns a GUI app via npm on the machine itself — only
+// desktop agents can do that.
+function runDesktopBlock(platform: string): string | null {
+  if (platform === 'desktop') return null;
+  return `run_desktop is only available on desktop devices (this device is ${platform})`;
 }
 
 // tokenHash is never selected — the token is shown once at claim time.
@@ -204,6 +226,10 @@ async function createCommand(request: FastifyRequest, reply: FastifyReply) {
   if (!device) return;
   if (body.type === 'install_apk') {
     const block = installApkBlock(device.platform);
+    if (block) return reply.code(400).send({ error: block });
+  }
+  if (body.type === 'run_desktop') {
+    const block = runDesktopBlock(device.platform);
     if (block) return reply.code(400).send({ error: block });
   }
   const command = await prisma.deviceCommand.create({

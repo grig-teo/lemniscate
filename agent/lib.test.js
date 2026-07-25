@@ -325,3 +325,45 @@ test('downloadHeaders returns empty headers without a token or on unparseable UR
   assert.deepEqual(lib.downloadHeaders('https://x.space', 'https://x.space/a.apk', null), {});
   assert.deepEqual(lib.downloadHeaders('not a url', 'also not', 'tok'), {});
 });
+
+// --- run_desktop helpers --------------------------------------------------------
+
+test('parseServerMessage parses run_desktop commands', () => {
+  const raw = '{"type":"run_desktop","id":"c1","payload":{"repoUrl":"https://x","branch":"main","startScript":"electron"}}';
+  assert.deepEqual(lib.parseServerMessage(raw), {
+    kind: 'command',
+    id: 'c1',
+    commandType: 'run_desktop',
+    payload: { repoUrl: 'https://x', branch: 'main', startScript: 'electron' },
+  });
+});
+
+test('pickDesktopScript prefers candidates in priority order', () => {
+  const scripts = { start: 'x', dev: 'x', electron: 'x', tauri: 'x' };
+  assert.equal(lib.pickDesktopScript(scripts), 'tauri');
+  assert.equal(lib.pickDesktopScript({ start: 'x', dev: 'x', electron: 'x' }), 'electron');
+  assert.equal(lib.pickDesktopScript({ start: 'x', dev: 'x' }), 'dev');
+  assert.equal(lib.pickDesktopScript({ start: 'x' }), 'start');
+});
+
+test('pickDesktopScript honors the requested script when it exists', () => {
+  const scripts = { tauri: 'x', 'dev:app': 'x' };
+  assert.equal(lib.pickDesktopScript(scripts, 'dev:app'), 'dev:app');
+});
+
+test('pickDesktopScript returns null for a missing requested script', () => {
+  assert.equal(lib.pickDesktopScript({ start: 'x' }, 'electron'), null);
+});
+
+test('pickDesktopScript returns null when no candidate exists', () => {
+  assert.equal(lib.pickDesktopScript({ test: 'x', build: 'x' }), null);
+  assert.equal(lib.pickDesktopScript({}), null);
+});
+
+test('isTauriScript matches tauri-related script names only', () => {
+  assert.equal(lib.isTauriScript('tauri'), true);
+  assert.equal(lib.isTauriScript('tauri:dev'), true);
+  assert.equal(lib.isTauriScript('dev:tauri'), true);
+  assert.equal(lib.isTauriScript('electron'), false);
+  assert.equal(lib.isTauriScript('start'), false);
+});

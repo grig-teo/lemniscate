@@ -7,6 +7,7 @@ import {
   canInstallApk,
   commandTypeLabel,
   defaultRunPort,
+  desktopRepos,
   devicePlatformLabel,
   formatLastSeen,
   repoPlatformLabel,
@@ -20,6 +21,7 @@ import {
   useInstallApk,
   useRenameDevice,
   useRepositories,
+  useRunDesktop,
   useRunOnDevice,
   type Device,
   type DeviceCommand,
@@ -339,11 +341,101 @@ function InstallApkSection({ device }: { device: Device }) {
   );
 }
 
+/** "Run desktop app" form → POST run_desktop command (desktop devices only). */
+function RunDesktopSection({ device }: { device: Device }) {
+  const repos = useRepositories();
+  const run = useRunDesktop();
+  const [repoId, setRepoId] = React.useState('');
+  const [branch, setBranch] = React.useState('');
+  const [startScript, setStartScript] = React.useState('');
+
+  const candidates = desktopRepos(repos.data ?? []);
+  const repo = candidates.find((r) => r.id === repoId) ?? null;
+  const canSubmit = repo !== null && branch.trim() !== '' && !run.isPending;
+
+  function selectRepo(id: string) {
+    setRepoId(id);
+    const next = candidates.find((r) => r.id === id);
+    if (next) setBranch(next.defaultBranch);
+  }
+
+  function submit(event: React.FormEvent) {
+    event.preventDefault();
+    if (!repo || !canSubmit) return;
+    run.mutate({
+      deviceId: device.id,
+      payload: {
+        repoUrl: repo.cloneUrl,
+        branch: branch.trim(),
+        startScript: startScript.trim() || undefined,
+      },
+    });
+  }
+
+  return (
+    <form onSubmit={submit} className="flex min-w-0 flex-col gap-3">
+      <p className="text-sm font-medium">Run desktop app</p>
+      <FormField label="Repository">
+        <Select value={repoId} onValueChange={selectRepo}>
+          <SelectTrigger aria-label="Desktop repository">
+            <SelectValue placeholder="Pick a desktop repository" />
+          </SelectTrigger>
+          <SelectContent>
+            {candidates.map((r) => (
+              <SelectItem key={r.id} value={r.id}>
+                <RepoSelectLabel repo={r} />
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </FormField>
+
+      <div className="flex gap-2">
+        <FormField label="Branch">
+          <Input
+            value={branch}
+            onChange={(event) => setBranch(event.target.value)}
+            placeholder="main"
+            autoComplete="off"
+          />
+        </FormField>
+        <FormField label="Start script (optional)">
+          <Input
+            value={startScript}
+            onChange={(event) => setStartScript(event.target.value)}
+            placeholder="tauri, electron, dev…"
+            autoComplete="off"
+          />
+        </FormField>
+      </div>
+
+      {candidates.length === 0 && (
+        <p className="text-sm text-muted-foreground">No desktop-platform repositories yet.</p>
+      )}
+      {run.isError && (
+        <p className="break-words text-sm text-destructive">{describeApiError(run.error)}</p>
+      )}
+      {run.isSuccess && !run.isPending && (
+        <p className="text-sm text-muted-foreground">Command sent — see history below.</p>
+      )}
+
+      <Button type="submit" disabled={!canSubmit}>
+        {run.isPending ? 'Sending…' : 'Run desktop app'}
+      </Button>
+    </form>
+  );
+}
+
 function commandRowDetail(command: DeviceCommand): string {
   if (command.type === 'run_web') {
     return `${command.payload.branch} · port ${command.payload.port}`;
   }
   if (command.type === 'build_android') return command.payload.branch ?? 'gradle build';
+  if (command.type === 'run_desktop') {
+    const script = (command.payload as { startScript?: string }).startScript;
+    if (script) return `${command.payload.branch} · npm run ${script}`;
+    return command.payload.branch ?? 'desktop app';
+  }
   return command.payload.appName ?? 'APK package';
 }
 
@@ -381,6 +473,12 @@ function CommandRow({ command }: { command: DeviceCommand }) {
           Built {command.result.apkName ?? 'APK'}
           {command.result.sizeBytes ? ` · ${(command.result.sizeBytes / 1_000_000).toFixed(1)} MB` : ''}
           {' · install queued'}
+        </span>
+      )}
+      {command.status === 'done' && command.type === 'run_desktop' && (
+        <span className="break-all text-xs text-muted-foreground">
+          Started {(command.result as { script?: string } | null)?.script ?? 'app'} — the app
+          window should open on the desktop
         </span>
       )}
       {command.status === 'failed' && command.result?.error && (
@@ -437,6 +535,7 @@ export function DeviceDetailsModal({
             <DeviceMeta device={device} />
             <DeleteDeviceButton device={device} onDeleted={() => onOpenChange(false)} />
             <RunOnDeviceSection device={device} />
+            {device.platform === 'desktop' && <RunDesktopSection device={device} />}
             {device.platform === 'android' && device.online && (
               <BuildInstallSection device={device} />
             )}

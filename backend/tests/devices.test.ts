@@ -389,6 +389,61 @@ describe('build_android commands', () => {
   });
 });
 
+describe('run_desktop commands', () => {
+  const RUN_DESKTOP_BODY = {
+    type: 'run_desktop',
+    payload: { repoUrl: 'https://github.com/a/b', branch: 'main', startScript: 'electron' },
+  };
+
+  function postRunDesktop(app: Awaited<ReturnType<typeof buildApp>>, body: unknown = RUN_DESKTOP_BODY) {
+    return app.inject({ method: 'POST', url: '/api/devices/dev-1/commands', ...AUTH, payload: body });
+  }
+
+  it('queues run_desktop for a desktop device', async () => {
+    mocks.deviceFindFirst.mockResolvedValue({ id: 'dev-1', userId: 'user-1', platform: 'desktop' });
+    const app = await buildApp();
+    const response = await postRunDesktop(app);
+    expect(response.statusCode).toBe(201);
+    expect(mocks.commandCreate).toHaveBeenCalledWith({
+      data: { deviceId: 'dev-1', type: 'run_desktop', payload: RUN_DESKTOP_BODY.payload },
+    });
+  });
+
+  it('accepts run_desktop without a startScript (agent picks one)', async () => {
+    mocks.deviceFindFirst.mockResolvedValue({ id: 'dev-1', userId: 'user-1', platform: 'desktop' });
+    const app = await buildApp();
+    const response = await postRunDesktop(app, {
+      type: 'run_desktop',
+      payload: { repoUrl: 'https://github.com/a/b', branch: 'main' },
+    });
+    expect(response.statusCode).toBe(201);
+  });
+
+  it('400s run_desktop on android, ios and web devices with a clear message', async () => {
+    for (const platform of ['android', 'ios', 'web']) {
+      mocks.deviceFindFirst.mockResolvedValue({ id: 'dev-1', userId: 'user-1', platform });
+      const app = await buildApp();
+      const response = await postRunDesktop(app);
+      expect(response.statusCode).toBe(400);
+      expect(response.json().error).toContain(platform);
+      expect(mocks.commandCreate).not.toHaveBeenCalled();
+    }
+  });
+
+  it('400s a startScript with shell-hostile characters', async () => {
+    mocks.deviceFindFirst.mockResolvedValue({ id: 'dev-1', userId: 'user-1', platform: 'desktop' });
+    const app = await buildApp();
+    for (const startScript of ['dev; rm -rf /', 'dev && x', 'dev prod', '$(evil)']) {
+      const response = await postRunDesktop(app, {
+        type: 'run_desktop',
+        payload: { repoUrl: 'https://github.com/a/b', branch: 'main', startScript },
+      });
+      expect(response.statusCode).toBe(400);
+    }
+    expect(mocks.commandCreate).not.toHaveBeenCalled();
+  });
+});
+
 describe('POST /api/devices/artifacts', () => {
   function upload(app: Awaited<ReturnType<typeof buildApp>>, token?: string) {
     return app.inject({

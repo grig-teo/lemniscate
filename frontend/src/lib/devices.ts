@@ -46,6 +46,11 @@ export function androidRepos<T extends Pick<Repository, 'platform'>>(repos: T[])
   return repos.filter((repo) => repo.platform === 'android');
 }
 
+/** Repositories runnable as desktop apps (detected platform 'desktop'). */
+export function desktopRepos<T extends Pick<Repository, 'platform'>>(repos: T[]): T[] {
+  return repos.filter((repo) => repo.platform === 'desktop');
+}
+
 /** Devices that can build APKs: online desktop agents with docker. */
 export function builderDevices(devices: Device[]): Device[] {
   return devices.filter((device) => device.online && canRunWeb(device));
@@ -55,6 +60,7 @@ const COMMAND_TYPE_LABELS: Record<string, string> = {
   run_web: 'Run web app',
   install_apk: 'Install APK',
   build_android: 'Build Android APK',
+  run_desktop: 'Run desktop app',
 };
 
 /** Display label for a device command type; unknown types pass through. */

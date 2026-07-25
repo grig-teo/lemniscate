@@ -13,7 +13,7 @@
 import os from 'node:os';
 import fs from 'node:fs';
 import path from 'node:path';
-import { execFile } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { Readable, Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { WebSocket } from 'ws';
@@ -24,6 +24,8 @@ const BACKOFF_BASE_MS = 1_000;
 const BACKOFF_CAP_MS = 30_000;
 const HTTP_READY_TIMEOUT_MS = 30_000;
 const GRADLE_BUILD_TIMEOUT_MS = 30 * 60_000;
+const NPM_INSTALL_TIMEOUT_MS = 15 * 60_000;
+const DESKTOP_START_GRACE_MS = 20_000;
 
 const USAGE = `Lemniscate device agent
 
@@ -270,9 +272,81 @@ async function executeBuildAndroid(send, config, { id, payload }) {
   }
 }
 
+// --- run_desktop execution ----------------------------------------------------
+
+/** package.json scripts of the cloned repo; throws when it is not a Node project. */
+async function desktopProjectScripts(projectDir) {
+  const packageJsonPath = path.join(projectDir, 'package.json');
+  if (!fs.existsSync(packageJsonPath)) {
+    throw new Error('not a Node desktop project (no package.json at repo root)');
+  }
+  const parsed = JSON.parse(await fs.promises.readFile(packageJsonPath, 'utf8'));
+  return parsed.scripts ?? {};
+}
+
+/** Resolve the start script or throw a message that names what went wrong. */
+function requireDesktopScript(scripts, requested) {
+  const script = lib.pickDesktopScript(scripts, requested);
+  if (script) return script;
+  if (requested) throw new Error(`start script '${requested}' not found in package.json`);
+  throw new Error(`no desktop start script in package.json (looked for: ${lib.DESKTOP_SCRIPT_CANDIDATES.join(', ')})`);
+}
+
+/** Tauri compiles Rust on first run — fail fast when cargo is missing. */
+async function ensureCargoForTauri(log, script) {
+  if (!lib.isTauriScript(script)) return;
+  const cargo = await run('cargo', ['--version'], { timeout: 10_000 });
+  log.text += `$ cargo --version\n${cargo.output}`;
+  if (!cargo.ok) {
+    throw new Error(`'${script}' needs the Rust toolchain — install it via https://rustup.rs on this device`);
+  }
+}
+
+/** Launch the GUI app detached so it outlives this command. */
+function spawnDesktopApp(log, projectDir, script) {
+  const child = spawn('npm', ['run', script], { cwd: projectDir, detached: true, stdio: 'ignore' });
+  child.unref();
+  log.text += `$ npm run ${script} (detached, pid ${child.pid})\n`;
+  return child;
+}
+
+/** Give the app a grace period to prove it stays up (didn't crash at startup). */
+async function waitForProcessAlive(child, timeoutMs = DESKTOP_START_GRACE_MS) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (child.exitCode !== null || child.signalCode !== null) return false;
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+  return true;
+}
+
+async function executeRunDesktop(send, { id, payload }) {
+  const log = { text: '' };
+  send(lib.commandResultMessage(id, 'running'));
+  try {
+    const projectDir = await ensureRepo(log, payload.repoUrl, payload.branch);
+    const script = requireDesktopScript(await desktopProjectScripts(projectDir), payload.startScript);
+    await ensureCargoForTauri(log, script);
+    await step(log, 'npm', ['install'], { cwd: projectDir, timeout: NPM_INSTALL_TIMEOUT_MS });
+    const child = spawnDesktopApp(log, projectDir, script);
+    if (!(await waitForProcessAlive(child))) {
+      throw new Error(`npm run ${script} exited during startup — check the project log on the device`);
+    }
+    send(lib.commandResultMessage(id, 'done', {
+      script,
+      projectDir,
+      pid: child.pid,
+      note: 'The app window should open on the desktop shortly',
+    }));
+  } catch (error) {
+    send(lib.commandResultMessage(id, 'failed', { error: error.message, log: lib.tailLog(log.text) }));
+  }
+}
+
 function executeCommand(send, config, command) {
   if (command.commandType === 'install_apk') return executeInstallApk(send, config, command);
   if (command.commandType === 'build_android') return executeBuildAndroid(send, config, command);
+  if (command.commandType === 'run_desktop') return executeRunDesktop(send, command);
   return executeRunWeb(send, command);
 }
 

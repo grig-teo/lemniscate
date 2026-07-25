@@ -798,3 +798,27 @@ export function useDeployAndroid() {
     },
   });
 }
+
+export type RunDesktopPayload = {
+  repoUrl: string;
+  branch: string;
+  startScript?: string;
+};
+
+/** POST /api/devices/:id/commands — queue a run_desktop command for the agent. */
+export function useRunDesktop() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ deviceId, payload }: { deviceId: string; payload: RunDesktopPayload }) =>
+      api
+        .post<{ command: DeviceCommand }>(`/api/devices/${deviceId}/commands`, {
+          type: 'run_desktop',
+          payload,
+        })
+        .then((res) => res.command),
+    onSuccess: (_command, { deviceId }) => {
+      void queryClient.invalidateQueries({ queryKey: ['device-commands', deviceId] });
+      void queryClient.invalidateQueries({ queryKey: ['devices'] });
+    },
+  });
+}

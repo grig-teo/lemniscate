@@ -9,7 +9,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 
-export const AGENT_VERSION = '0.3.1';
+export const AGENT_VERSION = '0.4.0';
 
 /** install_apk downloads are refused beyond this size. */
 export const APK_MAX_BYTES = 100 * 1024 * 1024;
@@ -192,6 +192,29 @@ export function artifactUploadUrl(uploadBaseUrl, filename) {
   return `${base}/api/devices/artifacts?filename=${encodeURIComponent(filename)}`;
 }
 
+// --- run_desktop helpers ------------------------------------------------------
+
+/** package.json scripts tried as the desktop entry point, in priority order. */
+export const DESKTOP_SCRIPT_CANDIDATES = ['tauri', 'electron', 'dev', 'start'];
+
+/**
+ * Which npm script to launch for a desktop repo. A requested script wins but
+ * must exist in package.json; otherwise the first candidate present is used.
+ * Null when nothing usable was found (caller fails with a clear message).
+ */
+export function pickDesktopScript(scripts, requested) {
+  if (requested) return requested in scripts ? requested : null;
+  for (const candidate of DESKTOP_SCRIPT_CANDIDATES) {
+    if (candidate in scripts) return candidate;
+  }
+  return null;
+}
+
+/** Tauri scripts need a Rust toolchain on the device (cargo build). */
+export function isTauriScript(scriptName) {
+  return scriptName.includes('tauri');
+}
+
 // --- URLs / messages ----------------------------------------------------------
 
 /** http(s) server base URL → ws(s) device-tunnel URL for a device token. */
@@ -223,7 +246,7 @@ export function commandResultMessage(id, status, result) {
  * Parse a raw server frame. Returns
  * {kind:'welcome', deviceId} | {kind:'command', id, commandType, payload} | null.
  */
-const COMMAND_TYPES = ['run_web', 'install_apk', 'build_android'];
+const COMMAND_TYPES = ['run_web', 'install_apk', 'build_android', 'run_desktop'];
 
 export function parseServerMessage(raw) {
   let message;

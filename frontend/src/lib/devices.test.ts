@@ -8,6 +8,7 @@ import {
   canRunWeb,
   commandTypeLabel,
   defaultRunPort,
+  desktopRepos,
   devicePlatformLabel,
   formatLastSeen,
   pairingExpirySeconds,
@@ -183,5 +184,24 @@ describe('builderDevices', () => {
 describe('commandTypeLabel build_android', () => {
   it('labels build_android', () => {
     expect(commandTypeLabel('build_android')).toBe('Build Android APK');
+  });
+});
+
+describe('desktopRepos', () => {
+  it('keeps only desktop-platform repositories', () => {
+    const repos = [
+      { platform: 'desktop' },
+      { platform: 'android' },
+      { platform: 'web' },
+      { platform: null },
+      { platform: 'unknown' },
+    ];
+    expect(desktopRepos(repos)).toEqual([{ platform: 'desktop' }]);
+  });
+});
+
+describe('commandTypeLabel run_desktop', () => {
+  it('labels run_desktop', () => {
+    expect(commandTypeLabel('run_desktop')).toBe('Run desktop app');
   });
 });
