@@ -27,6 +27,12 @@ export function isStartableTask(task: { kind?: string; status: string }): boolea
   return isPendingProposal(task) || isPendingPrompt(task);
 }
 
+/** Repo-tree rows show the status badge only for started tasks — unstarted
+ *  proposals/prompts sit under group labels that already say "pending". */
+export function showsStatusBadge(task: { kind?: string; status: string }): boolean {
+  return !isStartableTask(task);
+}
+
 /** Tasks the user can archive — anything not running or queued (mirrors the backend). */
 export function isArchivable(status: string): boolean {
   return status !== 'running' && status !== 'queued';
