@@ -6,6 +6,7 @@ import {
   isArchivable,
   isStartableTask,
   proposalPollInterval,
+  showsStatusBadge,
   sortByArchivedAtDesc,
   PROPOSAL_POLL_INTERVAL_MS,
   PROPOSAL_TARGET_COUNT,
@@ -101,6 +102,18 @@ describe('isStartableTask', () => {
   it('rejects started tasks and other kinds', () => {
     expect(isStartableTask(makeTask({ status: 'queued' }))).toBe(false);
     expect(isStartableTask(makeTask({ kind: 'review' }))).toBe(false);
+  });
+});
+
+describe('showsStatusBadge', () => {
+  it('hides the badge for unstarted tasks — the group label already says "pending"', () => {
+    expect(showsStatusBadge(makeTask({}))).toBe(false);
+    expect(showsStatusBadge(makeTask({ kind: 'prompt' }))).toBe(false);
+  });
+
+  it('shows the badge for started tasks of any kind', () => {
+    expect(showsStatusBadge(makeTask({ status: 'running' }))).toBe(true);
+    expect(showsStatusBadge(makeTask({ kind: 'prompt', status: 'done' }))).toBe(true);
   });
 });
 
