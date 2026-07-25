@@ -107,6 +107,12 @@ describe('buildRefreshRequestBody', () => {
 });
 
 describe('getValidAccessToken', () => {
+  it('rejects a soft-disconnected connection with a reconnect hint', async () => {
+    await expect(
+      getValidAccessToken(gitlabOAuthConnection({ accessTokenEnc: null })),
+    ).rejects.toThrow('connection is disconnected — reconnect it in Settings');
+  });
+
   it('returns the stored token when it is not expired', async () => {
     stubFetch(() => {
       throw new Error('fetch must not be called');

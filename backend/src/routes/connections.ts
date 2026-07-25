@@ -46,6 +46,7 @@ const connectionSelect = {
   provider: true,
   baseUrl: true,
   username: true,
+  disconnectedAt: true,
 } as const;
 
 const connectBodySchema = z.object({
@@ -167,7 +168,14 @@ async function findPatIdentity(
 }
 
 // A PAT replaces any OAuth tokens: clear the refresh flow's fields.
-const PAT_TOKEN_FIELDS = { tokenType: 'pat', refreshTokenEnc: null, tokenExpiresAt: null } as const;
+// PAT (re)connect always reactivates the row (a soft-disconnected connection
+// becomes active again) and clears the OAuth-only refresh fields.
+const PAT_TOKEN_FIELDS = {
+  tokenType: 'pat',
+  refreshTokenEnc: null,
+  tokenExpiresAt: null,
+  disconnectedAt: null,
+} as const;
 
 // Authenticated path: the connection belongs to the session user. Returns
 // null when the PAT identity is already owned by a DIFFERENT user (the
@@ -307,16 +315,26 @@ async function deleteConnection(request: FastifyRequest, reply: FastifyReply) {
   const userId = authenticatedUserId(request);
   const params = parseOrReply(idParamsSchema, request.params, reply, 'Invalid connection id');
   if (params === null) return;
-  // Repositories cascade-delete with the connection.
-  const { count } = await prisma.gitConnection.deleteMany({
+  // Soft disconnect: the connection row (with its repositories, tasks, and
+  // configuration) is kept so reconnecting restores everything in place —
+  // only the stored tokens are scrubbed.
+  const { count } = await prisma.gitConnection.updateMany({
     where: { id: params.id, userId },
+    data: {
+      disconnectedAt: new Date(),
+      accessTokenEnc: null,
+      refreshTokenEnc: null,
+      tokenExpiresAt: null,
+    },
   });
   if (count === 0) {
     return reply.code(404).send({ error: 'Connection not found' });
   }
-  // Losing the last git connection ends the session: the PAT identity was
-  // the only way back in, so every outstanding token is revoked.
-  const remaining = await prisma.gitConnection.count({ where: { userId } });
+  // Losing the last ACTIVE git connection ends the session. The account is
+  // never lost: the tombstoned row lets the next login land on the same user.
+  const remaining = await prisma.gitConnection.count({
+    where: { userId, disconnectedAt: null },
+  });
   if (remaining === 0) {
     await bumpSessionVersion(userId);
   }

@@ -23,19 +23,26 @@ function ConnectionRow({
         <ProviderIcon provider={connection.provider} className="h-4 w-4 shrink-0" />
         <span className="truncate text-sm font-medium">{connection.username}</span>
         <Badge variant="outline">{providerLabel(connection.provider)}</Badge>
+        {connection.disconnectedAt && (
+          <Badge variant="outline" className="text-muted-foreground">
+            disconnected
+          </Badge>
+        )}
         {connection.baseUrl && (
           <span className="truncate text-xs text-muted-foreground">{connection.baseUrl}</span>
         )}
       </div>
-      <Button
-        variant="ghost"
-        size="sm"
-        onClick={() => onDisconnect(connection)}
-        disabled={deleting}
-      >
-        <Unplug className="h-4 w-4" />
-        Disconnect
-      </Button>
+      {!connection.disconnectedAt && (
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => onDisconnect(connection)}
+          disabled={deleting}
+        >
+          <Unplug className="h-4 w-4" />
+          Disconnect
+        </Button>
+      )}
     </li>
   );
 }
@@ -53,12 +60,8 @@ export function ConnectionsSection() {
     const label = providerLabel(connection.provider);
     const message =
       `Disconnect ${label} account "${connection.username}"?\n\n` +
-      'This PERMANENTLY deletes its repositories and all their tasks/proposals from Lemniscate ' +
-      '(they remain on the git host, but task history is lost).\n\n' +
-      'If this is your last connection you will also be logged out, and signing back in ' +
-      'creates a FRESH account that cannot see your LLM configs.\n\n' +
-      'Tip: to refresh a token, connect the same account again without disconnecting first — ' +
-      'the token is updated in place and nothing is lost.';
+      'Nothing is deleted: the repositories, tasks, proposals, and configuration ' +
+      'are kept and fully restored when you reconnect — only the stored token is removed.';
     if (window.confirm(message)) {
       deleteConnection.mutate(connection.id);
     }

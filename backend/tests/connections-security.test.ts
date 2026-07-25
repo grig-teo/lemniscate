@@ -16,7 +16,7 @@ const mocks = vi.hoisted(() => ({
   connFindFirst: vi.fn(),
   connCreate: vi.fn(),
   connUpdate: vi.fn(),
-  connDeleteMany: vi.fn(),
+  connUpdateMany: vi.fn(),
   connCount: vi.fn(),
   fetchProviderProfile: vi.fn(),
   syncBestEffort: vi.fn(),
@@ -29,7 +29,7 @@ vi.mock('../src/lib/prisma.js', () => ({
       findFirst: mocks.connFindFirst,
       create: mocks.connCreate,
       update: mocks.connUpdate,
-      deleteMany: mocks.connDeleteMany,
+      updateMany: mocks.connUpdateMany,
       count: mocks.connCount,
     },
     repository: { findFirst: vi.fn(), updateMany: vi.fn() },
@@ -167,9 +167,30 @@ describe('POST /api/connections PAT identity uniqueness', () => {
   });
 });
 
-describe('DELETE /api/connections/:id session revocation', () => {
-  it('bumps sessionVersion when the deleted connection was the last one', async () => {
-    mocks.connDeleteMany.mockResolvedValue({ count: 1 });
+describe('DELETE /api/connections/:id soft disconnect', () => {
+  it('tombstones the row and scrubs tokens instead of deleting', async () => {
+    mocks.connUpdateMany.mockResolvedValue({ count: 1 });
+    mocks.connCount.mockResolvedValue(1);
+    const app = await buildApp();
+    const response = await app.inject({
+      method: 'DELETE',
+      url: '/api/connections/c1',
+      cookies: authCookie(),
+    });
+    expect(response.statusCode).toBe(204);
+    expect(mocks.connUpdateMany).toHaveBeenCalledWith({
+      where: { id: 'c1', userId: 'user-1' },
+      data: {
+        disconnectedAt: expect.any(Date),
+        accessTokenEnc: null,
+        refreshTokenEnc: null,
+        tokenExpiresAt: null,
+      },
+    });
+  });
+
+  it('bumps sessionVersion when the disconnected connection was the last active one', async () => {
+    mocks.connUpdateMany.mockResolvedValue({ count: 1 });
     mocks.connCount.mockResolvedValue(0);
     const app = await buildApp();
     const response = await app.inject({
@@ -178,14 +199,17 @@ describe('DELETE /api/connections/:id session revocation', () => {
       cookies: authCookie(),
     });
     expect(response.statusCode).toBe(204);
+    expect(mocks.connCount).toHaveBeenCalledWith({
+      where: { userId: 'user-1', disconnectedAt: null },
+    });
     expect(mocks.userUpdate).toHaveBeenCalledWith({
       where: { id: 'user-1' },
       data: { sessionVersion: { increment: 1 } },
     });
   });
 
-  it('keeps the session when other connections remain', async () => {
-    mocks.connDeleteMany.mockResolvedValue({ count: 1 });
+  it('keeps the session when other active connections remain', async () => {
+    mocks.connUpdateMany.mockResolvedValue({ count: 1 });
     mocks.connCount.mockResolvedValue(2);
     const app = await buildApp();
     const response = await app.inject({

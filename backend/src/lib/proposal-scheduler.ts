@@ -51,7 +51,7 @@ export async function registerProposalAutoRunSchedule(): Promise<void> {
 // queued/running (one at a time per repo).
 export async function enqueueProposalAutoRuns(): Promise<void> {
   const repositories = await prisma.repository.findMany({
-    where: { autoRunProposals: true },
+    where: { autoRunProposals: true, connection: { disconnectedAt: null } },
     select: { id: true },
   });
   let started = 0;
@@ -93,7 +93,10 @@ async function pendingProposalCounts(): Promise<Map<string, number>> {
 // Bare repositories (README-only, no implementation) are skipped — there is
 // no codebase to analyze.
 export async function enqueueProposalTopUps(): Promise<void> {
-  const repositories = await prisma.repository.findMany({ select: { id: true, bare: true } });
+  const repositories = await prisma.repository.findMany({
+    where: { connection: { disconnectedAt: null } },
+    select: { id: true, bare: true },
+  });
   const counts = await pendingProposalCounts();
   let enqueued = 0;
   for (const repository of repositories) {

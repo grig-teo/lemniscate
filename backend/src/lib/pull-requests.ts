@@ -26,7 +26,8 @@ import { errorMessage, redactSecrets } from './utils.js';
 export interface PrConnectionInput {
   provider: ProviderName;
   baseUrl: string | null;
-  accessTokenEnc: string;
+  /** Null on soft-disconnected rows — token resolution rejects with a clear error. */
+  accessTokenEnc: string | null;
   /** 'pat' | 'oauth' — GitLab OAuth tokens need Bearer, everything else PRIVATE-TOKEN. */
   tokenType?: string | null;
   /** Refresh-flow fields (migration 0006); optional for partial selections. */

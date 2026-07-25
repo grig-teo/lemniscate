@@ -276,9 +276,11 @@ async function upsertOAuthConnection(
     where: { provider, username },
   });
   if (existing) {
+    // Reconnecting always reactivates a soft-disconnected row — same user,
+    // same repositories, fresh tokens.
     const connection = await prisma.gitConnection.update({
       where: { id: existing.id },
-      data: { ...tokenFields, tokenType: 'oauth' },
+      data: { ...tokenFields, tokenType: 'oauth', disconnectedAt: null },
     });
     return { userId: connection.userId, connectionId: connection.id };
   }
@@ -323,7 +325,7 @@ async function attachOAuthConnection(
   if (existing) {
     const connection = await prisma.gitConnection.update({
       where: { id: existing.id },
-      data: { ...tokenFields, tokenType: 'oauth', userId },
+      data: { ...tokenFields, tokenType: 'oauth', userId, disconnectedAt: null },
     });
     return connection.id;
   }

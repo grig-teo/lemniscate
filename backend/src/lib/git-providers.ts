@@ -824,7 +824,8 @@ export function getProviderClient(connection: {
   id?: string;
   provider: ProviderName;
   baseUrl: string | null;
-  accessTokenEnc: string;
+  /** Null on soft-disconnected rows — token resolution rejects with a clear error. */
+  accessTokenEnc: string | null;
   tokenType?: string | null;
   refreshTokenEnc?: string | null;
   tokenExpiresAt?: Date | null;

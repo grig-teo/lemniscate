@@ -29,6 +29,8 @@ export type Connection = {
   provider: GitProvider;
   username: string;
   baseUrl: string | null;
+  /** Set when disconnected — the row is kept, only the token was scrubbed. */
+  disconnectedAt?: string | null;
 };
 
 export type ConnectionPayload = {

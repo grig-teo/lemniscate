@@ -65,6 +65,7 @@ export async function syncMergedPullRequests(): Promise<void> {
       prUrl: { not: null },
       branchName: { not: null },
       archivedAt: null,
+      repository: { connection: { disconnectedAt: null } },
     },
     include: { repository: { include: { connection: true } } },
   });

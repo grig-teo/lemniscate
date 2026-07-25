@@ -182,11 +182,11 @@ describe('enqueueRunTask', () => {
 // pending proposal every 20 min — but only when no proposal of that repo is
 // queued/running yet.
 describe('enqueueProposalAutoRuns', () => {
-  it('queries only repos with the flag on', async () => {
+  it('queries only repos with the flag on an active connection', async () => {
     mocks.repositoryFindMany.mockResolvedValue([]);
     await enqueueProposalAutoRuns();
     expect(mocks.repositoryFindMany).toHaveBeenCalledWith({
-      where: { autoRunProposals: true },
+      where: { autoRunProposals: true, connection: { disconnectedAt: null } },
       select: { id: true },
     });
   });

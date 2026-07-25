@@ -22,11 +22,12 @@ export const GITLAB_REFRESH_FAILURE_MESSAGE =
 
 // A connection row as needed for token resolution. Fields beyond
 // accessTokenEnc are optional so partial selections (and tests) still work.
+// accessTokenEnc is null on soft-disconnected rows (tokens scrubbed).
 export interface StoredTokenConnection {
   id?: string;
   provider: string;
   tokenType?: string | null;
-  accessTokenEnc: string;
+  accessTokenEnc: string | null;
   refreshTokenEnc?: string | null;
   tokenExpiresAt?: Date | null;
 }
@@ -110,8 +111,13 @@ async function refreshAccessToken(connection: StoredTokenConnection): Promise<st
 
 // Resolves the access token for a connection, refreshing first when the
 // stored GitLab OAuth token is expired. Everything else gets the stored
-// token as-is.
+// token as-is. Soft-disconnected rows have no token — reconnect first.
 export async function getValidAccessToken(connection: StoredTokenConnection): Promise<string> {
+  if (!connection.accessTokenEnc) {
+    throw new ProviderError(
+      `${connection.provider}: connection is disconnected — reconnect it in Settings`,
+    );
+  }
   if (canRefresh(connection) && tokenIsExpired(connection.tokenExpiresAt)) {
     return refreshAccessToken(connection);
   }
