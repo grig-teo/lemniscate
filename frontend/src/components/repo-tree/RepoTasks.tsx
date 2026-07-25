@@ -144,7 +144,9 @@ function TaskRow({ task }: { task: Task }) {
           selectedTask?.id === task.id && 'bg-accent font-medium',
         )}
       >
-        <span className="min-w-0 flex-1 truncate">{task.title}</span>
+        <span className="min-w-0 flex-1 truncate" title={task.title}>
+          {task.title}
+        </span>
         {task.kind === 'proposal' && (
           <Badge variant="outline" className="shrink-0 px-1.5 py-0 text-[10px]">
             proposal

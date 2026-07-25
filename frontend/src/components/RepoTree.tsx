@@ -108,9 +108,9 @@ export function RepoTree({ width }: { width: number }) {
       </div>
 
       <ScrollArea className="flex-1" horizontal>
-        {/* Natural content width lets long names overflow into the
-            horizontal scrollbar instead of truncating. */}
-        <div className="w-max min-w-full">
+        {/* Bounded to the sidebar width so long names/titles truncate with
+            an ellipsis instead of pushing action icons into a scrollbar. */}
+        <div className="min-w-full">
           <RepoTreeBody
             reposQuery={reposQuery}
             groups={groups}

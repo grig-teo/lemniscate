@@ -8,7 +8,9 @@ import { Button } from '@/components/ui/button';
 export function ArchivedTaskRow({ task }: { task: Task }) {
   return (
     <li className="flex items-center gap-2 rounded-md px-2 py-1 text-xs text-muted-foreground/70">
-      <span className="min-w-0 flex-1 truncate">{task.title}</span>
+      <span className="min-w-0 flex-1 truncate" title={task.title}>
+        {task.title}
+      </span>
       <StatusBadge status={task.status} className="px-1.5 py-0 text-[10px] opacity-70" />
       <UnarchiveTaskButton task={task} />
     </li>

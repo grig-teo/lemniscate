@@ -141,7 +141,9 @@ function RepoToggle({
       aria-expanded={expanded}
     >
       <Chevron className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-      <span className="truncate font-medium">{repoDisplayName(repo)}</span>
+      <span className="truncate font-medium" title={repoDisplayName(repo)}>
+        {repoDisplayName(repo)}
+      </span>
     </button>
   );
 }
