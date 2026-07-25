@@ -12,7 +12,9 @@ import {
 import { useSkills, useStartTask, useTask, type Task, type TaskImage } from '@/lib/hooks';
 import { useLibraryAttachments } from '@/lib/library-attachments';
 import { IMAGE_ACCEPT, MAX_IMAGES } from '@/lib/prompt-composer';
+import { cn } from '@/lib/utils';
 import { LibraryAttachments } from '@/components/library/LibraryAttachments';
+import { MarkdownView } from '@/components/MarkdownView';
 import { PriorityBadge } from '@/components/PriorityBadge';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -39,6 +41,54 @@ function DetailMessage({ children }: { children: React.ReactNode }) {
       {children}
     </div>
   );
+}
+
+function ToggleButton({
+  active,
+  onClick,
+  label,
+}: {
+  active: boolean;
+  onClick: () => void;
+  label: string;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={active}
+      className={cn(
+        'rounded px-2 py-0.5 text-[11px] text-muted-foreground hover:text-foreground',
+        active && 'bg-accent font-medium text-foreground',
+      )}
+    >
+      {label}
+    </button>
+  );
+}
+
+/** Segmented Preview/Edit toggle for the prompt field. */
+function ViewToggle({
+  preview,
+  onChange,
+}: {
+  preview: boolean;
+  onChange: (preview: boolean) => void;
+}) {
+  return (
+    <div className="flex shrink-0 items-center gap-1 border-b px-2 py-1">
+      <ToggleButton active={preview} onClick={() => onChange(true)} label="Preview" />
+      <ToggleButton active={!preview} onClick={() => onChange(false)} label="Edit" />
+    </div>
+  );
+}
+
+/** Prompt rendered as markdown, or the plain-text fallback for an empty prompt. */
+function PromptPreview({ prompt }: { prompt: string }) {
+  if (!prompt.trim()) {
+    return <p className="text-sm text-muted-foreground">Nothing to preview.</p>;
+  }
+  return <MarkdownView>{prompt}</MarkdownView>;
 }
 
 /** Hidden file input plus a ghost button that opens it — one per accept kind. */
@@ -124,6 +174,7 @@ function TaskEditorInner({
   const patchTask = usePatchTask();
   const [title, setTitle] = React.useState(task.title);
   const [prompt, setPrompt] = React.useState(task.prompt ?? '');
+  const [preview, setPreview] = React.useState(true);
   const [images, setImages] = React.useState<TaskImage[]>([]);
   const [saved, setSaved] = React.useState(false);
   const textareaRef = useAutoResizeTextarea(prompt, 14);
@@ -179,16 +230,23 @@ function TaskEditorInner({
         </div>
       )}
       {actionError && <p className="shrink-0 text-xs text-destructive">{actionError.message}</p>}
-      <div className="max-h-[38%] shrink-0 overflow-y-auto rounded-lg border bg-background shadow-sm focus-within:ring-1 focus-within:ring-ring">
+      <div className="flex max-h-[38%] shrink-0 flex-col overflow-hidden rounded-lg border bg-background shadow-sm focus-within:ring-1 focus-within:ring-ring">
         <ImageThumbnails images={images} onRemove={removeImage} />
-        <Textarea
-          ref={textareaRef}
-          value={prompt}
-          onChange={(event) => setPrompt(event.target.value)}
-          placeholder="Prompt…"
-          aria-label="Task prompt"
-          className="resize-none overflow-y-auto border-0 shadow-none focus-visible:ring-0"
-        />
+        <ViewToggle preview={preview} onChange={setPreview} />
+        {preview ? (
+          <div className="overflow-y-auto px-3 py-2">
+            <PromptPreview prompt={prompt} />
+          </div>
+        ) : (
+          <Textarea
+            ref={textareaRef}
+            value={prompt}
+            onChange={(event) => setPrompt(event.target.value)}
+            placeholder="Prompt…"
+            aria-label="Task prompt"
+            className="resize-none overflow-y-auto border-0 shadow-none focus-visible:ring-0"
+          />
+        )}
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto">
         <LibraryAttachments state={attachments} columns repositoryId={task.repositoryId} />
