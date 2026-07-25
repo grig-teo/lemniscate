@@ -9,7 +9,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 
-export const AGENT_VERSION = '0.3.0';
+export const AGENT_VERSION = '0.3.1';
 
 /** install_apk downloads are refused beyond this size. */
 export const APK_MAX_BYTES = 100 * 1024 * 1024;
@@ -114,6 +114,19 @@ export function apkFileName(apkUrl, appName) {
 
 export function apkPathFor(apkUrl, appName) {
   return path.join(apksRoot(), apkFileName(apkUrl, appName));
+}
+
+/** Auth header for APK downloads from OUR server (artifacts need a device
+ * token); empty object for external URLs so no token leaks to third parties. */
+export function downloadHeaders(serverOrigin, url, deviceToken) {
+  try {
+    if (deviceToken && new URL(url).origin === new URL(serverOrigin).origin) {
+      return { authorization: `Device ${deviceToken}` };
+    }
+  } catch {
+    // unparseable URL — fetch will fail on its own
+  }
+  return {};
 }
 
 /** True on Termux (Android userland): node platform 'android' or TERMUX_VERSION set. */

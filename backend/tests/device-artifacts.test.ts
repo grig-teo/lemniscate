@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 // Pure helpers for the device artifact store (MinIO 'device-artifacts'
 // bucket): filename sanitizing and object-key building.
 
-import { artifactKeyFor, safeArtifactFilename } from '../src/lib/device-artifacts.js';
+import { artifactDownloadPath, artifactKeyFor, safeArtifactFilename } from '../src/lib/device-artifacts.js';
 
 describe('safeArtifactFilename', () => {
   it('keeps a plain apk name as-is', () => {
@@ -32,5 +32,11 @@ describe('artifactKeyFor', () => {
 
   it('sanitizes the filename part', () => {
     expect(artifactKeyFor('dev-1', '../my app.apk', 'abc123')).toBe('dev-1/abc123-my-app.apk');
+  });
+});
+
+describe('artifactDownloadPath', () => {
+  it('builds the backend-relative download path', () => {
+    expect(artifactDownloadPath('dev-1/abc-app.apk')).toBe('/api/devices/artifacts/dev-1/abc-app.apk');
   });
 });

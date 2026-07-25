@@ -2,8 +2,9 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type { Prisma } from '@prisma/client';
 import type { WebSocket } from 'ws';
 import { z } from 'zod';
-import { presignedArtifactUrl, storeDeviceArtifact } from '../lib/device-artifacts.js';
+import { artifactDownloadPath, deviceArtifactStream, storeDeviceArtifact } from '../lib/device-artifacts.js';
 import { nextCommandAfterBuild } from '../lib/device-commands.js';
+import { config } from '../config.js';
 import { dispatchCommand } from '../lib/device-dispatch.js';
 import { deviceHub } from '../lib/device-hub.js';
 import {
@@ -233,6 +234,22 @@ async function uploadArtifact(request: FastifyRequest, reply: FastifyReply) {
   }
 }
 
+// GET /artifacts/* — install-target agents download the built APK through
+// the backend (MinIO's own endpoint is internal-only). Same device-token
+// auth as uploads; keys are scoped to the builder's device id.
+async function downloadArtifact(request: FastifyRequest, reply: FastifyReply) {
+  const device = await deviceByToken(deviceTokenFromHeader(request.headers.authorization));
+  if (!device) return reply.code(401).send({ error: 'Invalid device token' });
+  const key = (request.params as { '*': string })['*'];
+  if (!key || key.includes('..')) return reply.code(400).send({ error: 'Invalid artifact key' });
+  const artifact = await deviceArtifactStream(key);
+  if (!artifact) return reply.code(404).send({ error: 'Artifact not found' });
+  return reply
+    .header('Content-Type', 'application/vnd.android.package-archive')
+    .header('Content-Length', artifact.size)
+    .send(artifact.stream);
+}
+
 // --- WebSocket gateway ----------------------------------------------------
 
 const agentMessageSchema = z.discriminatedUnion('type', [
@@ -269,9 +286,11 @@ async function mergeDeviceMeta(deviceId: string, meta: Record<string, unknown>):
   });
 }
 
-// A finished build_android chains into install_apk for the target device
-// with a FRESH presigned URL (generated now, not at upload time). Storage
-// failures must not break result handling — the build itself stays 'done'.
+// A finished build_android chains into install_apk for the target device.
+// The APK downloads THROUGH the backend (internal MinIO URLs would be
+// unreachable from the device); the target agent authenticates with its own
+// device token. Storage failures must not break result handling — the build
+// itself stays 'done'.
 async function chainInstallAfterBuild(
   deviceId: string,
   commandId: string,
@@ -281,7 +300,7 @@ async function chainInstallAfterBuild(
   const next = command ? nextCommandAfterBuild(command, result) : null;
   if (!next) return;
   try {
-    const apkUrl = await presignedArtifactUrl(next.artifactKey);
+    const apkUrl = `${config.BACKEND_URL}${artifactDownloadPath(next.artifactKey)}`;
     const install = await prisma.deviceCommand.create({
       data: {
         deviceId: next.installDeviceId,
@@ -384,6 +403,7 @@ export default async function devicesRoutes(app: FastifyInstance) {
   app.post('/pairings', { preHandler: requireAuth }, createPairing);
   app.post('/claim', { config: { rateLimit: CLAIM_RATE_LIMIT } }, claimPairing);
   app.post('/artifacts', uploadArtifact);
+  app.get('/artifacts/*', downloadArtifact);
   app.get('/', { preHandler: requireAuth }, listDevices);
   app.patch('/:id', { preHandler: requireAuth }, renameDevice);
   app.delete('/:id', { preHandler: requireAuth }, deleteDevice);

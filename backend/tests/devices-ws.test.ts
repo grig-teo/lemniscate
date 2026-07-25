@@ -23,10 +23,6 @@ vi.mock('../src/lib/prisma.js', () => ({
   },
 }));
 
-vi.mock('../src/lib/device-artifacts.js', () => ({
-  presignedArtifactUrl: vi.fn().mockResolvedValue('https://minio/device-artifacts/dev-1/a.apk?sig=1'),
-}));
-
 import { handleAgentMessage, parseAgentMessage } from '../src/routes/devices.js';
 
 beforeEach(() => {
@@ -105,7 +101,7 @@ describe('build→install chaining', () => {
     payload: { repoUrl: 'https://github.com/a/b', installDeviceId: 'dev-phone', appName: 'B' },
   };
 
-  it('creates and dispatches install_apk with a fresh presigned URL after a done build', async () => {
+  it('creates and dispatches install_apk with a backend download URL after a done build', async () => {
     mocks.commandFindFirst.mockResolvedValue(buildCommand);
     mocks.commandCreate.mockImplementation(async ({ data }: { data: object }) => ({
       id: 'cmd-install',
@@ -128,7 +124,7 @@ describe('build→install chaining', () => {
         deviceId: 'dev-phone',
         type: 'install_apk',
         payload: {
-          apkUrl: 'https://minio/device-artifacts/dev-1/a.apk?sig=1',
+          apkUrl: 'http://localhost:3000/api/devices/artifacts/dev-builder/u1-app.apk',
           appName: 'B',
         },
       },

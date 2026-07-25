@@ -1,6 +1,7 @@
 import Fastify from 'fastify';
 import cookie from '@fastify/cookie';
 import websocket from '@fastify/websocket';
+import { Readable } from 'node:stream';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 // Route tests for /api/devices: pairing, claim, device management and
@@ -23,6 +24,7 @@ const mocks = vi.hoisted(() => ({
   commandCreate: vi.fn(),
   commandUpdate: vi.fn(),
   storeDeviceArtifact: vi.fn(),
+  deviceArtifactStream: vi.fn(),
 }));
 
 vi.mock('../src/lib/prisma.js', () => ({
@@ -52,6 +54,8 @@ vi.mock('../src/lib/prisma.js', () => ({
 
 vi.mock('../src/lib/device-artifacts.js', () => ({
   storeDeviceArtifact: mocks.storeDeviceArtifact,
+  deviceArtifactStream: mocks.deviceArtifactStream,
+  artifactDownloadPath: (key: string) => `/api/devices/artifacts/${key}`,
 }));
 
 import devicesRoutes from '../src/routes/devices.js';
@@ -425,5 +429,45 @@ describe('POST /api/devices/artifacts', () => {
     mocks.storeDeviceArtifact.mockRejectedValue(new Error('MinIO is not configured'));
     const app = await buildApp();
     expect((await upload(app, 'good-token')).statusCode).toBe(503);
+  });
+});
+
+describe('GET /api/devices/artifacts/*', () => {
+  function download(app: Awaited<ReturnType<typeof buildApp>>, token?: string, key = 'dev-builder/u1-app.apk') {
+    return app.inject({
+      method: 'GET',
+      url: `/api/devices/artifacts/${key}`,
+      headers: token ? { authorization: `Device ${token}` } : {},
+    });
+  }
+
+  it('401s without a valid device token', async () => {
+    mocks.deviceFindUnique.mockResolvedValue(null);
+    const app = await buildApp();
+    expect((await download(app)).statusCode).toBe(401);
+    expect((await download(app, 'bad-token')).statusCode).toBe(401);
+    expect(mocks.deviceArtifactStream).not.toHaveBeenCalled();
+  });
+
+  it('400s on traversal keys and 404s when the artifact is missing', async () => {
+    mocks.deviceFindUnique.mockResolvedValue({ id: 'dev-1', userId: 'user-1' });
+    mocks.deviceArtifactStream.mockResolvedValue(null);
+    const app = await buildApp();
+    expect((await download(app, 'good-token', '..%2F..%2Fetc')).statusCode).toBe(400);
+    expect((await download(app, 'good-token')).statusCode).toBe(404);
+  });
+
+  it('streams the artifact for an authenticated device', async () => {
+    mocks.deviceFindUnique.mockResolvedValue({ id: 'dev-phone', userId: 'user-1' });
+    mocks.deviceArtifactStream.mockResolvedValue({
+      stream: Readable.from([Buffer.from('apk-bytes')]),
+      size: 9,
+    });
+    const app = await buildApp();
+    const response = await download(app, 'good-token');
+    expect(response.statusCode).toBe(200);
+    expect(response.headers['content-type']).toBe('application/vnd.android.package-archive');
+    expect(response.body).toBe('apk-bytes');
+    expect(mocks.deviceArtifactStream).toHaveBeenCalledWith('dev-builder/u1-app.apk');
   });
 });

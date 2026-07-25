@@ -309,3 +309,19 @@ test('parseServerMessage parses build_android commands', () => {
     payload: { repoUrl: 'https://x', branch: 'main' },
   });
 });
+
+test('downloadHeaders attaches the device token for same-origin downloads', () => {
+  assert.deepEqual(
+    lib.downloadHeaders('https://lemniscate.grig-teo.space', 'https://lemniscate.grig-teo.space/api/devices/artifacts/d/u-a.apk', 'tok'),
+    { authorization: 'Device tok' },
+  );
+});
+
+test('downloadHeaders never leaks the token to third-party origins', () => {
+  assert.deepEqual(lib.downloadHeaders('https://lemniscate.grig-teo.space', 'https://evil.example.com/a.apk', 'tok'), {});
+});
+
+test('downloadHeaders returns empty headers without a token or on unparseable URLs', () => {
+  assert.deepEqual(lib.downloadHeaders('https://x.space', 'https://x.space/a.apk', null), {});
+  assert.deepEqual(lib.downloadHeaders('not a url', 'also not', 'tok'), {});
+});

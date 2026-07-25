@@ -1,13 +1,13 @@
 // Device artifact store: APKs built by builder devices are uploaded to the
-// MinIO 'device-artifacts' bucket under <deviceId>/<uuid>-<name>.apk and
-// handed to install targets as 24h presigned GET URLs (generated fresh at
-// dispatch time so they never expire mid-queue).
+// MinIO 'device-artifacts' bucket under <deviceId>/<uuid>-<name>.apk. Install
+// targets download them THROUGH the backend (GET /api/devices/artifacts/*,
+// device-token auth) — presigned MinIO URLs would point at the internal
+// endpoint, unreachable from devices.
 
 import { randomUUID } from 'node:crypto';
 import { getMinioBucket } from './minio-client.js';
 
 export const DEVICE_ARTIFACTS_BUCKET = 'device-artifacts';
-export const PRESIGNED_URL_TTL_SECONDS = 24 * 60 * 60;
 
 /** Filesystem/hostile characters out, path traversal stripped to basename. */
 export function safeArtifactFilename(name: string): string {
@@ -36,9 +36,20 @@ export async function storeDeviceArtifact(
   return { key };
 }
 
-/** Fresh 24h GET URL for a stored artifact; throws when MinIO is not configured. */
-export async function presignedArtifactUrl(key: string): Promise<string> {
+/** Backend-relative download path for a stored artifact (device-token auth). */
+export function artifactDownloadPath(key: string): string {
+  return `/api/devices/artifacts/${key}`;
+}
+
+/** Stream one stored artifact; null when MinIO is down or the key is missing. */
+export async function deviceArtifactStream(key: string) {
   const ctx = await getMinioBucket(DEVICE_ARTIFACTS_BUCKET);
-  if (!ctx) throw new Error('MinIO is not configured');
-  return ctx.client.presignedGetObject(DEVICE_ARTIFACTS_BUCKET, key, PRESIGNED_URL_TTL_SECONDS);
+  if (!ctx) return null;
+  try {
+    const stat = await ctx.client.statObject(DEVICE_ARTIFACTS_BUCKET, key);
+    const stream = await ctx.client.getObject(DEVICE_ARTIFACTS_BUCKET, key);
+    return { stream, size: stat.size };
+  } catch {
+    return null;
+  }
 }

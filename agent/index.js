@@ -170,8 +170,8 @@ async function executeRunWeb(send, { id, payload }) {
 // --- install_apk execution ----------------------------------------------------
 
 /** Stream the APK to disk (redirects followed), enforcing the size cap. */
-async function downloadApk(log, apkUrl, destPath) {
-  const response = await fetch(apkUrl, { redirect: 'follow' });
+async function downloadApk(log, apkUrl, destPath, headers = {}) {
+  const response = await fetch(apkUrl, { redirect: 'follow', headers });
   if (!response.ok || !response.body) throw new Error(`APK download failed (HTTP ${response.status})`);
   fs.mkdirSync(path.dirname(destPath), { recursive: true });
   let received = 0;
@@ -201,12 +201,13 @@ async function launchInstallIntent(log, apkPath) {
   return fallback.ok;
 }
 
-async function executeInstallApk(send, { id, payload }) {
+async function executeInstallApk(send, config, { id, payload }) {
   const log = { text: '' };
   send(lib.commandResultMessage(id, 'running'));
   try {
     const destPath = lib.apkPathFor(payload.apkUrl, payload.appName);
-    await downloadApk(log, payload.apkUrl, destPath);
+    const headers = lib.downloadHeaders(config.server, payload.apkUrl, config.deviceToken);
+    await downloadApk(log, payload.apkUrl, destPath, headers);
     const installIntentLaunched = lib.isTermux() ? await launchInstallIntent(log, destPath) : false;
     send(lib.commandResultMessage(id, 'done', { savedTo: destPath, installIntentLaunched }));
   } catch (error) {
@@ -270,7 +271,7 @@ async function executeBuildAndroid(send, config, { id, payload }) {
 }
 
 function executeCommand(send, config, command) {
-  if (command.commandType === 'install_apk') return executeInstallApk(send, command);
+  if (command.commandType === 'install_apk') return executeInstallApk(send, config, command);
   if (command.commandType === 'build_android') return executeBuildAndroid(send, config, command);
   return executeRunWeb(send, command);
 }
