@@ -8,7 +8,7 @@ import {
 } from '@/lib/hooks';
 import { initialFlags, setAutoReview, type RepoFlags } from '@/lib/repo-flags';
 
-import { FlagSwitch } from '@/components/repo-tree/RepoRow';
+import { FlagSwitch } from '@/components/repo-tree/FlagSwitch';
 
 type FlagSwitchProps = Parameters<typeof FlagSwitch>[0];
 

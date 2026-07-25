@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { initialFlags, setAutoReview, type RepoFlags } from '@/lib/repo-flags';
+import { initialFlags, REPO_FLAG_INFO, setAutoReview, type RepoFlags } from '@/lib/repo-flags';
 import type { Repository } from '@/lib/hooks';
 
 function makeRepo(overrides: Partial<Repository> = {}): Repository {
@@ -57,5 +57,23 @@ describe('initialFlags', () => {
       makeRepo({ id: 'r2', autoCreatePr: true, autoReviewPr: false, autoMergePr: false }),
     ]);
     expect(flags).toEqual({ autoCreatePr: false, autoReviewPr: true, autoMergePr: true });
+  });
+});
+
+describe('REPO_FLAG_INFO', () => {
+  it('covers every repository automation flag exactly once', () => {
+    expect(REPO_FLAG_INFO.map((info) => info.key)).toEqual([
+      'autoCreatePr',
+      'autoReviewPr',
+      'autoMergePr',
+      'autoRunProposals',
+    ]);
+  });
+
+  it('has a non-empty label and description for each flag', () => {
+    for (const info of REPO_FLAG_INFO) {
+      expect(info.label.trim()).not.toBe('');
+      expect(info.description.trim()).not.toBe('');
+    }
   });
 });
