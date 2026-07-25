@@ -607,3 +607,133 @@ export function useUpdateSkill() {
     },
   });
 }
+
+// ---------------------------------------------------------------------------
+// Devices (agent CLI pairing + run-on-device commands)
+// ---------------------------------------------------------------------------
+
+export type DevicePlatform = 'android' | 'ios' | 'desktop' | 'web';
+
+export type DeviceMeta = {
+  os?: string;
+  arch?: string;
+  hostname?: string;
+  agentVersion?: string;
+  dockerAvailable?: boolean;
+};
+
+/** GET /api/devices item — a paired device running the agent CLI. */
+export type Device = {
+  id: string;
+  name: string;
+  platform: DevicePlatform;
+  meta: DeviceMeta | null;
+  online: boolean;
+  lastSeenAt: string | null;
+  createdAt: string;
+};
+
+/** POST /api/devices/pairings response — 10-min TTL code for the agent CLI. */
+export type DevicePairing = {
+  code: string;
+  expiresAt: string;
+};
+
+export type DeviceCommandStatus = 'queued' | 'sent' | 'running' | 'done' | 'failed';
+
+export type RunWebPayload = {
+  repoUrl: string;
+  branch: string;
+  port: number;
+  composePath?: string;
+};
+
+/** GET /api/devices/:id/commands item. */
+export type DeviceCommand = {
+  id: string;
+  type: 'run_web' | (string & {});
+  payload: RunWebPayload;
+  status: DeviceCommandStatus;
+  result: {
+    url?: string;
+    port?: number;
+    projectDir?: string;
+    error?: string;
+    log?: string;
+  } | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+/** Paired devices; polls every 15s by default so presence stays fresh. */
+export function useDevices(options?: { refetchInterval?: number | false }) {
+  return useQuery({
+    queryKey: ['devices'],
+    queryFn: () => api.get<{ devices: Device[] }>('/api/devices').then((res) => res.devices),
+    refetchInterval: options?.refetchInterval ?? 15_000,
+  });
+}
+
+/** POST /api/devices/pairings — creating a new code invalidates the prior one. */
+export function useCreatePairing() {
+  return useMutation({
+    mutationFn: () => api.post<DevicePairing>('/api/devices/pairings'),
+  });
+}
+
+/** PATCH /api/devices/:id — rename a device. */
+export function useRenameDevice() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, name }: { id: string; name: string }) =>
+      api.patch<{ device: Device }>(`/api/devices/${id}`, { name }).then((res) => res.device),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['devices'] });
+    },
+  });
+}
+
+/** DELETE /api/devices/:id — unpair and remove a device. */
+export function useDeleteDevice() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => api.del(`/api/devices/${id}`),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['devices'] });
+    },
+  });
+}
+
+/** Recent commands for one device; polls while the details modal is open. */
+export function useDeviceCommands(
+  deviceId: string | null,
+  options?: { refetchInterval?: number | false },
+) {
+  return useQuery({
+    queryKey: ['device-commands', deviceId],
+    queryFn: () =>
+      api
+        .get<{ commands: DeviceCommand[] }>(`/api/devices/${deviceId}/commands`)
+        .then((res) => res.commands),
+    enabled: deviceId !== null,
+    refetchInterval: options?.refetchInterval ?? 5_000,
+  });
+}
+
+/** POST /api/devices/:id/commands — queue a run_web command for the agent. */
+export function useRunOnDevice() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ deviceId, payload }: { deviceId: string; payload: RunWebPayload }) =>
+      api
+        .post<{ command: DeviceCommand }>(`/api/devices/${deviceId}/commands`, {
+          type: 'run_web',
+          payload,
+        })
+        .then((res) => res.command),
+    onSuccess: (_command, { deviceId }) => {
+      void queryClient.invalidateQueries({ queryKey: ['device-commands', deviceId] });
+      void queryClient.invalidateQueries({ queryKey: ['devices'] });
+    },
+  });
+}
