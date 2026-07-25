@@ -20,12 +20,12 @@ function DeviceButton({ device, onClick }: { device: Device; onClick: () => void
       onClick={onClick}
       title={`${device.name} (${device.online ? 'online' : 'offline'})`}
       aria-label={`Device ${device.name}`}
-      className="relative rounded-full p-2 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+      className="relative rounded-full p-1.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
     >
       <Icon className="h-4 w-4" />
       <span
         className={cn(
-          'absolute right-1 top-1 h-2 w-2 rounded-full',
+          'absolute right-0.5 top-0.5 h-2 w-2 rounded-full',
           device.online ? 'bg-green-500' : 'bg-gray-400',
         )}
       />
@@ -34,9 +34,11 @@ function DeviceButton({ device, onClick }: { device: Device; onClick: () => void
 }
 
 /**
- * Dock strip anchored to the bottom-right of the shell: one icon button per
- * paired device (opening its details modal) plus a "+" that opens the
- * pairing dialog. The "+" is always shown so pairing is discoverable.
+ * Static strip pinned to the bottom of the left sidebar (rendered by RepoTree
+ * after the scrollable repo list): a "Devices" label, one icon button per
+ * paired device (opening its details modal) and a trailing "+" that opens the
+ * pairing dialog. Icons wrap to extra rows when the sidebar is narrow.
+ * The "+" is always shown so pairing is discoverable.
  */
 export function DeviceBar() {
   const devices = useDevices();
@@ -46,7 +48,10 @@ export function DeviceBar() {
 
   return (
     <>
-      <div className="fixed bottom-4 right-4 z-40 flex items-center gap-1 rounded-full border bg-background/95 px-2 py-1 shadow-lg backdrop-blur">
+      <div className="flex shrink-0 flex-wrap items-center gap-1 border-t bg-card px-2 py-1.5">
+        <span className="mr-1 shrink-0 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+          Devices
+        </span>
         {(devices.data ?? []).map((device) => (
           <DeviceButton key={device.id} device={device} onClick={() => setSelectedId(device.id)} />
         ))}
@@ -55,7 +60,7 @@ export function DeviceBar() {
           onClick={() => setPairingOpen(true)}
           title="Pair a device"
           aria-label="Pair a device"
-          className="rounded-full p-2 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+          className="rounded-full p-1.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
         >
           <Plus className="h-4 w-4" />
         </button>

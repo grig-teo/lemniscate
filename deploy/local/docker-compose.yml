@@ -1,0 +1,156 @@
+# Lemniscate LOCAL instance — standalone stack for running the app on your
+# own machine (separate DB/login from any cloud deploy), so devices on the
+# same Wi-Fi can pair over LAN. Installed/updated by scripts/install-local.sh.
+#
+# Differences from the root docker-compose.yml (cloud deploy):
+# - project name `lemniscate-local` => containers/volumes are prefixed
+#   lemniscate-local-* and never clash with a prod stack on the same host;
+# - only the frontend is exposed (${FRONTEND_PORT:-8280}:80). The backend
+#   stays internal: the frontend nginx proxies /api (incl. the device
+#   WebSocket tunnel and the SSE task stream) to it — see frontend/nginx.conf;
+# - postgres / redis / minio are internal-only (no host ports);
+# - all configuration comes from deploy/local/.env (created by the installer).
+name: lemniscate-local
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-lemniscate}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in deploy/local/.env}
+      POSTGRES_DB: ${POSTGRES_DB:-lemniscate}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  minio:
+    # Pinned release (never :latest); see https://github.com/minio/minio/releases
+    image: minio/minio:RELEASE.2025-09-07T16-13-09Z
+    restart: unless-stopped
+    command: ["server", "/data", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-lemniscate}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?set MINIO_ROOT_PASSWORD in deploy/local/.env}
+    volumes:
+      - miniodata:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build:
+      context: ../../backend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      # Public origin the UI is opened on; also the OAuth callback base —
+      # /api/* is reachable through the frontend nginx proxy.
+      FRONTEND_URL: ${PUBLIC_URL:-http://localhost:8280}
+      BACKEND_URL: ${PUBLIC_URL:-http://localhost:8280}
+      OAUTH_CALLBACK_URL: ${PUBLIC_URL:-http://localhost:8280}/api/auth
+      DATABASE_URL: postgresql://${POSTGRES_USER:-lemniscate}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-lemniscate}
+      REDIS_URL: redis://redis:6379
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET in deploy/local/.env}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:?set ENCRYPTION_KEY in deploy/local/.env}
+      MINIO_ENDPOINT: minio
+      MINIO_PORT: 9000
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-lemniscate}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+      MINIO_BUCKET: ${MINIO_BUCKET:-lemniscate-library}
+      # Local instances commonly point at a LAN/loopback LLM (Ollama) or a
+      # self-hosted git server — the SSRF guard allows private URLs here.
+      ALLOW_PRIVATE_URLS: ${ALLOW_PRIVATE_URLS:-true}
+      # OAuth app credentials are optional — PAT git connections and LLM
+      # configs are created in the UI. Set them in deploy/local/.env to
+      # enable one-click OAuth login.
+      GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID:-}
+      GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET:-}
+      GITLAB_CLIENT_ID: ${GITLAB_CLIENT_ID:-}
+      GITLAB_CLIENT_SECRET: ${GITLAB_CLIENT_SECRET:-}
+      GITVERSE_CLIENT_ID: ${GITVERSE_CLIENT_ID:-}
+      GITVERSE_CLIENT_SECRET: ${GITVERSE_CLIENT_SECRET:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+
+  worker:
+    build:
+      context: ../../backend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    command: ["node", "dist/worker.js"]
+    environment:
+      NODE_ENV: production
+      FRONTEND_URL: ${PUBLIC_URL:-http://localhost:8280}
+      BACKEND_URL: ${PUBLIC_URL:-http://localhost:8280}
+      OAUTH_CALLBACK_URL: ${PUBLIC_URL:-http://localhost:8280}/api/auth
+      DATABASE_URL: postgresql://${POSTGRES_USER:-lemniscate}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-lemniscate}
+      REDIS_URL: redis://redis:6379
+      JWT_SECRET: ${JWT_SECRET}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY}
+      MINIO_ENDPOINT: minio
+      MINIO_PORT: 9000
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-lemniscate}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+      MINIO_BUCKET: ${MINIO_BUCKET:-lemniscate-library}
+      ALLOW_PRIVATE_URLS: ${ALLOW_PRIVATE_URLS:-true}
+      GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID:-}
+      GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET:-}
+      GITLAB_CLIENT_ID: ${GITLAB_CLIENT_ID:-}
+      GITLAB_CLIENT_SECRET: ${GITLAB_CLIENT_SECRET:-}
+      GITVERSE_CLIENT_ID: ${GITVERSE_CLIENT_ID:-}
+      GITVERSE_CLIENT_SECRET: ${GITVERSE_CLIENT_SECRET:-}
+    volumes:
+      # Persistent task clones: a redeploy mid-run leaves the workdir intact
+      # so the recovered task resumes instead of restarting.
+      - agentworkdir:/tmp/lemniscate-repos
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+
+  frontend:
+    build:
+      context: ../../frontend
+      dockerfile: Dockerfile
+      args:
+        VITE_BASE_PATH: /
+        # Same-origin: the nginx proxy forwards /api to the backend.
+        VITE_API_URL: ""
+    restart: unless-stopped
+    ports:
+      - "${FRONTEND_PORT:-8280}:80"
+    depends_on:
+      - backend
+
+volumes:
+  pgdata:
+  redisdata:
+  miniodata:
+  agentworkdir:

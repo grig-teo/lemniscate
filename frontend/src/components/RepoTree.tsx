@@ -9,6 +9,7 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { ConnectionGroup } from '@/components/repo-tree/ConnectionGroup';
 import { CreateRepoDialog } from '@/components/repo-tree/CreateRepoDialog';
 import { useExpandedMap } from '@/components/repo-tree/useExpandedMap';
+import { DeviceBar } from '@/components/devices/DeviceBar';
 
 type ReposQuery = ReturnType<typeof useRepositories>;
 
@@ -80,7 +81,8 @@ function RepoTreeBody({
  * each repo expandable to show its tasks; per-repo toggles (autoCreatePr,
  * autoReviewPr, autoMergePr); per-group Sync. The header + button opens the
  * create-repository dialog. New prompt tasks are started from the + button
- * in the console pane (opens the composer dialog).
+ * in the console pane (opens the composer dialog). The DeviceBar strip is
+ * pinned below the scrollable list, always visible.
  */
 export function RepoTree({ width }: { width: number }) {
   const reposQuery = useRepositories();
@@ -119,6 +121,10 @@ export function RepoTree({ width }: { width: number }) {
           onToggleRepo={toggle}
         />
       </ScrollArea>
+
+      {/* Paired devices: a constant, non-scrolling strip pinned to the
+          bottom of the sidebar while the repo list scrolls above it. */}
+      <DeviceBar />
 
       <CreateRepoDialog open={createOpen} onOpenChange={setCreateOpen} />
     </aside>

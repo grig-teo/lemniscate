@@ -1,5 +1,4 @@
 import { ConsolePane } from '@/components/ConsolePane';
-import { DeviceBar } from '@/components/devices/DeviceBar';
 import { RepoTree } from '@/components/RepoTree';
 import { TopNav } from '@/components/TopNav';
 import { WorkspaceSelectionProvider } from '@/lib/selection';
@@ -30,7 +29,6 @@ export function ShellPage() {
           />
           <ConsolePane />
         </div>
-        <DeviceBar />
       </div>
     </WorkspaceSelectionProvider>
   );
