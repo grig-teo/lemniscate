@@ -3,6 +3,11 @@ import type { Repository, Task } from '@/lib/hooks';
 /** Statuses shown in the landing "Running processes" section. */
 const RUNNING_STATUSES: ReadonlySet<string> = new Set(['queued', 'running']);
 
+/** A task in flight — queued or running. */
+export function isRunningStatus(status: string): boolean {
+  return RUNNING_STATUSES.has(status);
+}
+
 export interface RepositoryTaskGroup {
   repositoryName: string;
   tasks: Task[];
@@ -10,7 +15,7 @@ export interface RepositoryTaskGroup {
 
 /** Tasks currently in flight (queued or running), order preserved. */
 export function selectRunningTasks(tasks: Task[]): Task[] {
-  return tasks.filter((task) => RUNNING_STATUSES.has(task.status));
+  return tasks.filter((task) => isRunningStatus(task.status));
 }
 
 /**

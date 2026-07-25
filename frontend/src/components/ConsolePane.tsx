@@ -1,6 +1,7 @@
 import { Terminal } from 'lucide-react';
 
 import { isStartableTask } from '@/lib/repo-tasks';
+import { isRunningStatus } from '@/lib/running-tasks';
 import { useWorkspaceSelection } from '@/lib/selection';
 
 import { ConsoleHeader } from '@/components/console/ConsoleHeader';
@@ -43,7 +44,8 @@ function EmptyConsole() {
  * the log view takes over.
  * With no task selected the composer (ComposerCard) renders inline in the
  * empty console; once a task is selected, the floating + button opens the
- * same composer as the TaskComposerDialog modal. When the repo tree's
+ * same composer as the TaskComposerDialog modal. The + button is hidden
+ * while the selected task is in flight (queued or running). When the repo tree's
  * "show more" opens a repo's archived view (selection.archivedRepoId),
  * ArchivedPane replaces the console/composer until closed or a task is
  * selected.
@@ -71,7 +73,7 @@ export function ConsolePane() {
             liveLogs={consoleState.liveLogs}
             streamError={consoleState.streamError}
           />
-          <TaskComposerFab />
+          {!isRunningStatus(status) && <TaskComposerFab />}
         </>
       )}
     </section>
