@@ -87,6 +87,11 @@ services:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-lemniscate}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-lemniscate-minio}
       MINIO_BUCKET: ${MINIO_BUCKET:-lemniscate-library}
+    volumes:
+      # Persistent task clones: a redeploy mid-run leaves the workdir intact
+      # so the recovered task resumes instead of restarting. Must match
+      # AGENT_WORKDIR in backend/.env.
+      - agentworkdir:/tmp/lemniscate-repos
     depends_on:
       postgres:
         condition: service_healthy
@@ -113,3 +118,4 @@ volumes:
   pgdata:
   redisdata:
   miniodata:
+  agentworkdir:

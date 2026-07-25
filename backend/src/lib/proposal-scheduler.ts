@@ -133,6 +133,21 @@ export async function recoverQueuedTasks(): Promise<void> {
   }
 }
 
+// Worker-startup recovery: tasks left in 'running' by a killed worker
+// (redeploy mid-run) are re-queued. Their clones survive on the persistent
+// workdir volume, so the re-run resumes from the saved state instead of
+// starting over. jobId dedupe covers jobs still tracked as stalled.
+export async function recoverInterruptedTasks(): Promise<void> {
+  const stuck = await prisma.task.findMany({ where: { status: 'running' }, select: { id: true } });
+  for (const task of stuck) {
+    await prisma.task.update({ where: { id: task.id }, data: { status: 'queued' } });
+    await enqueueRunTask(task.id);
+  }
+  if (stuck.length > 0) {
+    console.log(`recovery: re-queued ${stuck.length} interrupted running task(s)`);
+  }
+}
+
 // Enqueues a one-shot 'generate-proposals' job (round button / top-up).
 // jobId dedupes enqueues only while a job is waiting/active: finished jobs
 // are removed immediately, otherwise BullMQ would keep them and silently

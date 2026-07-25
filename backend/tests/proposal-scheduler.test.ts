@@ -40,6 +40,7 @@ import {
   enqueueGenerateProposalsNow,
   enqueueProposalAutoRuns,
   enqueueProposalTopUps,
+  recoverInterruptedTasks,
   recoverQueuedTasks,
   registerProposalAutoRunSchedule,
   registerProposalTopUpSchedule,
@@ -128,6 +129,36 @@ describe('recoverQueuedTasks', () => {
   it('is a no-op when nothing is queued', async () => {
     mocks.taskFindMany.mockResolvedValue([]);
     await recoverQueuedTasks();
+    expect(mocks.add).not.toHaveBeenCalled();
+  });
+});
+
+// Worker-startup recovery: tasks left in 'running' by a killed worker are
+// re-queued so their runs resume from the persisted workdir.
+describe('recoverInterruptedTasks', () => {
+  it('re-queues every running task and enqueues its run job', async () => {
+    mocks.taskFindMany.mockResolvedValue([{ id: 't1' }, { id: 't2' }]);
+    await recoverInterruptedTasks();
+    expect(mocks.taskFindMany).toHaveBeenCalledWith({
+      where: { status: 'running' },
+      select: { id: true },
+    });
+    expect(mocks.taskUpdate).toHaveBeenCalledWith({
+      where: { id: 't1' },
+      data: { status: 'queued' },
+    });
+    expect(mocks.add).toHaveBeenCalledTimes(2);
+    expect(mocks.add).toHaveBeenCalledWith(
+      'run-task',
+      { taskId: 't2' },
+      expect.objectContaining({ jobId: 'run-task-t2' }),
+    );
+  });
+
+  it('is a no-op when nothing is running', async () => {
+    mocks.taskFindMany.mockResolvedValue([]);
+    await recoverInterruptedTasks();
+    expect(mocks.taskUpdate).not.toHaveBeenCalled();
     expect(mocks.add).not.toHaveBeenCalled();
   });
 });

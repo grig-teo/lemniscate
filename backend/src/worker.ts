@@ -11,6 +11,7 @@ import {
   AGENT_QUEUE_NAME,
   enqueueProposalAutoRuns,
   enqueueProposalTopUps,
+  recoverInterruptedTasks,
   recoverQueuedTasks,
   registerProposalAutoRunSchedule,
   registerProposalTopUpSchedule,
@@ -108,6 +109,10 @@ await registerPrStateSyncSchedule();
 // Re-enqueue any tasks left in 'queued' without a job (crashed/failed
 // enqueues from before the worker came up).
 await recoverQueuedTasks();
+
+// Re-queue tasks left in 'running' by a killed worker (redeploy mid-run);
+// their persisted workdirs let the re-runs resume where they stopped.
+await recoverInterruptedTasks();
 
 for (const signal of ['SIGINT', 'SIGTERM'] as const) {
   process.once(signal, () => {

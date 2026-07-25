@@ -193,13 +193,17 @@ async function finalizeRunTask(
 const HERMES_INSTRUCTIONS =
   'Work in the current directory (a freshly cloned repository). Implement the task completely, including tests if the project has a test setup. Do NOT git commit, push, or create branches — git is handled externally.';
 
-function hermesPrompt(task: TaskWithRepo, rt: LlmRuntime): string {
+const RESUME_INSTRUCTIONS =
+  'RESUMED RUN: a previous attempt was interrupted (redeploy). The current directory already contains the task branch with its uncommitted work — inspect the current state and CONTINUE the implementation from where it stopped; do not start over or redo completed work.';
+
+function hermesPrompt(task: TaskWithRepo, rt: LlmRuntime, resume = false): string {
   return [
     `# Task\n${task.title}`,
     task.prompt ? `\n${task.prompt}` : '',
     ...(rt.cfg.systemPromptExtra
       ? ['', 'Additional instructions from the repository owner:', rt.cfg.systemPromptExtra]
       : []),
+    ...(resume ? ['', RESUME_INSTRUCTIONS] : []),
     '',
     HERMES_INSTRUCTIONS,
   ].join('\n');
@@ -210,11 +214,12 @@ async function runHermesForTask(
   rt: LlmRuntime,
   workdir: string,
   secrets: string[],
+  resume: boolean,
 ): Promise<void> {
-  await logEvent(task.id, 'running hermes agent');
+  await logEvent(task.id, resume ? 'resuming hermes agent' : 'running hermes agent');
   await runHermesTask({
     workdir,
-    prompt: hermesPrompt(task, rt),
+    prompt: hermesPrompt(task, rt, resume),
     llm: {
       baseUrl: rt.cfg.baseUrl,
       apiKey: rt.apiKey,
@@ -234,9 +239,10 @@ async function implementTask(
   rt: LlmRuntime,
   workdir: string,
   secrets: string[],
+  resume: boolean,
 ): Promise<string | null> {
   if (config.AGENT_EXECUTOR === 'hermes') {
-    await runHermesForTask(task, rt, workdir, secrets);
+    await runHermesForTask(task, rt, workdir, secrets, resume);
     return (await hasDirtyWorkdir(workdir)) ? task.title : null;
   }
   const { summary, changes } = await proposeTaskChanges(task, rt, workdir);
@@ -244,6 +250,33 @@ async function implementTask(
   await logEvent(task.id, `applied ${applied} of ${changes.length} proposed change(s)`);
   if (applied === 0 || !(await hasDirtyWorkdir(workdir))) return null;
   return summary;
+}
+
+// A run interrupted mid-implementation (a redeploy killed the worker) leaves
+// its clone on the persistent workdir volume; the saved task branch plus that
+// workdir let the next attempt continue instead of starting over.
+export async function resumableWorkdir(task: TaskWithRepo, workdir: string): Promise<boolean> {
+  if (!task.branchName) return false;
+  const stat = await fs.stat(path.join(workdir, '.git')).catch(() => null);
+  return stat?.isDirectory() ?? false;
+}
+
+// Fresh attempt: drop any stale leftovers from a crashed earlier attempt,
+// clone, and create (or bootstrap) the task branch.
+async function prepareFreshRun(
+  task: TaskWithRepo,
+  workdir: string,
+  cloneUrl: string,
+  secrets: string[],
+  auth: GitAuth,
+  rt: LlmRuntime,
+): Promise<{ branchName: string; emptyRepo: boolean }> {
+  await cleanupWorkdir(workdir);
+  const emptyRepo = await cloneForTask(task, workdir, cloneUrl, secrets, auth);
+  const branchName = emptyRepo
+    ? await prepareEmptyRepoBranch(task)
+    : await createTaskBranch(task, rt, workdir);
+  return { branchName, emptyRepo };
 }
 
 // Returns the runtime so the caller can persist cumulative token usage.
@@ -260,13 +293,23 @@ async function executeRunTask(
     task.llmTokensUsed,
   );
   await setTaskStatus(task.id, 'running');
-  await logEvent(task.id, `starting task "${task.title}" on ${task.repository.fullName}`);
-  const emptyRepo = await cloneForTask(task, workdir, cloneUrl, secrets, gitAuth);
-  const branchName = emptyRepo
-    ? await prepareEmptyRepoBranch(task)
-    : await createTaskBranch(task, rt, workdir);
+  const resume = await resumableWorkdir(task, workdir);
+  await logEvent(
+    task.id,
+    resume
+      ? `resuming task "${task.title}" on ${task.repository.fullName} from the saved workdir (${task.branchName})`
+      : `starting task "${task.title}" on ${task.repository.fullName}`,
+  );
+  // Empty-repo tasks work on the default branch (no task branch, no PR) —
+  // on a resume that is exactly the branchName === defaultBranch case.
+  const { branchName, emptyRepo } = resume
+    ? {
+        branchName: task.branchName as string,
+        emptyRepo: task.branchName === task.repository.defaultBranch,
+      }
+    : await prepareFreshRun(task, workdir, cloneUrl, secrets, gitAuth, rt);
   await writeTaskAttachments(task, workdir);
-  const summary = await implementTask(task, rt, workdir, secrets);
+  const summary = await implementTask(task, rt, workdir, secrets, resume);
   if (summary === null) {
     await logEvent(task.id, 'no changes produced; nothing to commit');
     await setTaskStatus(task.id, 'done');

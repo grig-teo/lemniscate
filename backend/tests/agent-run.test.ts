@@ -1,3 +1,4 @@
+import fs from 'node:fs/promises';
 import path from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -202,5 +203,52 @@ describe('runTask on an empty repository', () => {
     });
     expect(mocks.openPullRequest).not.toHaveBeenCalled();
     expect(mocks.setTaskStatus).toHaveBeenCalledWith('task-1', 'done');
+  });
+});
+
+describe('runTask resumption after an interrupted run', () => {
+  const workdir = path.join('/tmp/test-workdirs', 'task-1');
+
+  it('resumes from the saved workdir instead of cloning when branch and clone exist', async () => {
+    mocks.loadTaskWithRepo.mockResolvedValue({
+      ...stubTask(),
+      status: 'queued',
+      branchName: 'lemniscate/add-feature-x',
+    });
+    await fs.mkdir(path.join(workdir, '.git'), { recursive: true });
+    try {
+      await runTask('task-1');
+    } finally {
+      await fs.rm('/tmp/test-workdirs', { recursive: true, force: true });
+    }
+
+    expect(mocks.cloneRepository).not.toHaveBeenCalled();
+    expect(mocks.generateBranchName).not.toHaveBeenCalled();
+    expect(mocks.logEvent).toHaveBeenCalledWith(
+      'task-1',
+      expect.stringContaining('resuming task'),
+    );
+    const opts = mocks.runHermesTask.mock.calls[0]?.[0];
+    expect(opts.prompt).toContain('RESUMED RUN');
+    expect(mocks.commitAndPush).toHaveBeenCalled();
+    expect(mocks.openPullRequest).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ headBranch: 'lemniscate/add-feature-x' }),
+    );
+  });
+
+  it('starts fresh when the task has a branch but no saved workdir', async () => {
+    mocks.loadTaskWithRepo.mockResolvedValue({
+      ...stubTask(),
+      status: 'queued',
+      branchName: 'lemniscate/add-feature-x',
+    });
+    await fs.rm('/tmp/test-workdirs', { recursive: true, force: true });
+    await runTask('task-1');
+
+    expect(mocks.cloneRepository).toHaveBeenCalled();
+    expect(mocks.generateBranchName).toHaveBeenCalled();
+    const opts = mocks.runHermesTask.mock.calls[0]?.[0];
+    expect(opts.prompt).not.toContain('RESUMED RUN');
   });
 });
