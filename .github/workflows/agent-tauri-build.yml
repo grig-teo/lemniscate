@@ -1,0 +1,74 @@
+name: agent-tauri-build
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'agent-tauri/**'
+      - '.github/workflows/agent-tauri-build.yml'
+  pull_request:
+    paths:
+      - 'agent-tauri/**'
+      - '.github/workflows/agent-tauri-build.yml'
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Linux system dependencies (webkit2gtk etc.)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: agent-tauri/src-tauri
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: agent-tauri/package-lock.json
+
+      - name: Install frontend dependencies
+        run: npm ci
+        working-directory: agent-tauri
+
+      - name: Rust unit tests (protocol + config)
+        run: cargo test
+        working-directory: agent-tauri/src-tauri
+
+      - name: Rust release build (compile check)
+        run: cargo build --release
+        working-directory: agent-tauri/src-tauri
+
+      - name: Bundle installers (tauri build)
+        run: npm run tauri build
+        working-directory: agent-tauri
+
+      - name: Upload bundles
+        uses: actions/upload-artifact@v4
+        with:
+          name: lemniscate-agent-${{ matrix.os }}
+          path: |
+            agent-tauri/src-tauri/target/release/bundle/**
+          if-no-files-found: warn

@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Lemniscate Agent</title>
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <main class="panel">
+      <h1>Lemniscate Agent</h1>
+      <p id="status" class="status">Status: starting…</p>
+
+      <form id="pair-form">
+        <label>
+          Server URL
+          <input id="server" type="url" placeholder="https://lemniscate.example.com" required />
+        </label>
+        <label>
+          Pairing code
+          <input id="code" type="text" placeholder="ABC123" minlength="6" maxlength="6" required />
+        </label>
+        <label>
+          Device name
+          <input id="name" type="text" placeholder="My Mac" />
+        </label>
+        <button id="pair-button" type="submit">Pair &amp; connect</button>
+      </form>
+
+      <p id="paired-note" class="note" hidden>
+        This device is paired. The tunnel runs in the background; you can close this window.
+      </p>
+    </main>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
