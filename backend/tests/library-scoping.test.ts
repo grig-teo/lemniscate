@@ -103,6 +103,15 @@ describe('scoped reads', () => {
     );
   });
 
+  it('includes userId in the list select so clients can tell own rows from global', async () => {
+    const app = await buildApp();
+    const response = await authed(app, 'GET', '/api/skills/');
+    expect(response.statusCode).toBe(200);
+    expect(mocks.skillFindMany).toHaveBeenCalledWith(
+      expect.objectContaining({ select: expect.objectContaining({ userId: true }) }),
+    );
+  });
+
   it('lists MCP servers visible to the requester (global + own)', async () => {
     const app = await buildApp();
     const response = await authed(app, 'GET', '/api/mcp-servers/');

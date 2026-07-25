@@ -2,6 +2,7 @@ import { ChevronDown, ChevronRight, X } from 'lucide-react';
 
 import type { Skill } from '@/lib/hooks';
 import { filterSelectedChips, groupSkillsByCategory } from '@/lib/skills';
+import { SkillPreviewButton } from '@/components/skills/SkillPreviewDialog';
 import { Badge } from '@/components/ui/badge';
 
 /**
@@ -60,6 +61,9 @@ function SkillRow({
         <span className="block truncate text-sm font-medium">{skill.name}</span>
         <span className="block truncate text-xs text-muted-foreground">{skill.description}</span>
         <span className="block truncate text-xs text-muted-foreground/70">{skill.slug}</span>
+      </span>
+      <span className="ml-auto mt-0.5 shrink-0">
+        <SkillPreviewButton slug={skill.slug} />
       </span>
     </label>
   );

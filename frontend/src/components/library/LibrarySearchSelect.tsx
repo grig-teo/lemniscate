@@ -25,33 +25,46 @@ export interface LibrarySearchSelectProps {
   onToggle: (item: LibraryItem) => void;
   /** Rendered instead of "Nothing matches." — e.g. an inline create form. */
   emptyContent?: ReactNode;
+  /** Extra per-row actions on the right; clicks there must not select the row. */
+  renderItemActions?: (item: LibraryItem) => ReactNode;
 }
 
 function ResultRow({
   item,
   selected,
   onToggle,
+  actions,
 }: {
   item: LibraryItem;
   selected: boolean;
   onToggle: () => void;
+  actions?: ReactNode;
 }) {
   return (
-    <button
-      type="button"
-      role="option"
-      aria-selected={selected}
-      onClick={onToggle}
-      className={`flex w-full min-w-0 items-start gap-2 rounded-md px-2 py-1.5 text-left hover:bg-accent ${
+    <div
+      className={`flex w-full min-w-0 items-start gap-2 rounded-md px-2 py-1.5 hover:bg-accent ${
         selected ? 'bg-accent/60' : ''
       }`}
     >
-      <span className="min-w-0 flex-1">
-        <span className="block truncate text-sm font-medium">{item.name}</span>
-        <span className="block truncate text-xs text-muted-foreground">{item.description}</span>
-      </span>
-      {selected && <span className="shrink-0 text-xs font-medium text-primary">✓</span>}
-    </button>
+      <button
+        type="button"
+        role="option"
+        aria-selected={selected}
+        onClick={onToggle}
+        className="flex min-w-0 flex-1 items-start gap-2 text-left"
+      >
+        <span className="min-w-0 flex-1">
+          <span className="block truncate text-sm font-medium">{item.name}</span>
+          <span className="block truncate text-xs text-muted-foreground">{item.description}</span>
+        </span>
+        {selected && <span className="shrink-0 text-xs font-medium text-primary">✓</span>}
+      </button>
+      {actions !== undefined && (
+        <span className="mt-0.5 flex shrink-0 items-center" onClick={(e) => e.stopPropagation()}>
+          {actions}
+        </span>
+      )}
+    </div>
   );
 }
 
@@ -148,6 +161,7 @@ export function LibrarySearchSelect(props: LibrarySearchSelectProps) {
                 item={item}
                 selected={props.isSelected(item)}
                 onToggle={() => props.onToggle(item)}
+                actions={props.renderItemActions?.(item)}
               />
             ))}
           </div>

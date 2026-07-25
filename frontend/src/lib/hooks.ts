@@ -128,6 +128,13 @@ export type Skill = {
   description: string;
   tags: string[];
   kind: 'skill' | 'agents_md';
+  /** Owner id; null = global library entry (read-only). */
+  userId: string | null;
+};
+
+/** GET /api/skills/:slug — list fields plus the full markdown content. */
+export type SkillDetail = Skill & {
+  content: string;
 };
 
 /** GET /api/skills/categories item. */
@@ -576,5 +583,27 @@ export function useTestLlmConfig() {
       'id' in args
         ? api.post<LlmTestResult>(`/api/llm-configs/${args.id}/test`)
         : api.post<LlmTestResult>('/api/llm-configs/test', args.payload),
+  });
+}
+
+/** GET /api/skills/:slug — full row incl. content; disabled until a slug is set. */
+export function useSkill(slug: string | null) {
+  return useQuery({
+    queryKey: ['skill', slug],
+    queryFn: () => api.get<SkillDetail>(`/api/skills/${slug}`),
+    enabled: slug !== null,
+  });
+}
+
+/** PUT /api/skills/:slug — edit own library entry (content and/or name/description). */
+export function useUpdateSkill() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ slug, patch }: { slug: string; patch: { content?: string; name?: string; description?: string } }) =>
+      api.put<{ skill: SkillDetail }>(`/api/skills/${slug}`, patch).then((res) => res.skill),
+    onSuccess: (_skill, { slug }) => {
+      void queryClient.invalidateQueries({ queryKey: ['skills'] });
+      void queryClient.invalidateQueries({ queryKey: ['skill', slug] });
+    },
   });
 }

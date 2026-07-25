@@ -11,6 +11,7 @@ import { useMcpLibrary, useRepoFolders, useSkillLibrary } from '@/lib/library';
 import type { LibraryAttachmentsState } from '@/lib/library-attachments';
 import { McpCreateEntry, SkillUploadEntry } from '@/components/library/LibraryCreateEntry';
 import { LibrarySearchSelect } from '@/components/library/LibrarySearchSelect';
+import { SkillPreviewButton } from '@/components/skills/SkillPreviewDialog';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -70,6 +71,7 @@ function SkillsSection({ state }: { state: LibraryAttachmentsState }) {
         isLoading={result.isFetching}
         isSelected={(item) => state.skills.selected.has(item.slug)}
         onToggle={state.skills.toggle}
+        renderItemActions={(item) => <SkillPreviewButton slug={item.slug} />}
         emptyContent={<SkillUploadEntry onCreated={state.skills.toggle} />}
       />
     </section>
@@ -170,6 +172,7 @@ function FolderRow({ folder, state }: { folder: string; state: LibraryAttachment
                 choice?.skillId === item.id ? null : { skillId: item.id, label: item.name },
               )
             }
+            renderItemActions={(item) => <SkillPreviewButton slug={item.slug} />}
           />
           <OrDivider />
           <FolderUploadInput

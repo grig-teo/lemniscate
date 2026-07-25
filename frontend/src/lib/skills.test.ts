@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { filterSelectedChips, groupSkillsByCategory, toggleSlug } from '@/lib/skills';
+import { canEditSkill, filterSelectedChips, groupSkillsByCategory, toggleSlug } from '@/lib/skills';
 import type { Skill } from '@/lib/hooks';
 
 function makeSkill(slug: string, category: string, kind: Skill['kind'] = 'skill'): Skill {
@@ -12,8 +12,27 @@ function makeSkill(slug: string, category: string, kind: Skill['kind'] = 'skill'
     description: `Description ${slug}`,
     tags: [],
     kind,
+    userId: null,
   };
 }
+
+describe('canEditSkill', () => {
+  it('allows editing the user’s own entry', () => {
+    expect(canEditSkill({ userId: 'user-1' }, 'user-1')).toBe(true);
+  });
+
+  it('forbids editing a global entry (userId null)', () => {
+    expect(canEditSkill({ userId: null }, 'user-1')).toBe(false);
+  });
+
+  it('forbids editing another user’s entry', () => {
+    expect(canEditSkill({ userId: 'user-2' }, 'user-1')).toBe(false);
+  });
+
+  it('forbids editing when the current user is unknown', () => {
+    expect(canEditSkill({ userId: 'user-1' }, undefined)).toBe(false);
+  });
+});
 
 describe('groupSkillsByCategory', () => {
   it('groups skills by category preserving in-category order', () => {

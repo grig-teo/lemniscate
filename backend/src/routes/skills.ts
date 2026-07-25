@@ -51,11 +51,12 @@ const summarySelect = {
   description: true,
   tags: true,
   kind: true,
+  userId: true,
 } satisfies Prisma.SkillSelect;
 
 type SkillSummary = Pick<
   Skill,
-  'id' | 'slug' | 'name' | 'category' | 'description' | 'tags' | 'kind'
+  'id' | 'slug' | 'name' | 'category' | 'description' | 'tags' | 'kind' | 'userId'
 >;
 
 // Maps the list query to a Prisma where clause. `search` matches name,

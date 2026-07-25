@@ -24,6 +24,17 @@ export function toggleSlug(slugs: string[], slug: string): string[] {
   return slugs.includes(slug) ? slugs.filter((s) => s !== slug) : [...slugs, slug];
 }
 
+/**
+ * Only the owner may edit a library entry: global rows (userId null) are
+ * read-only for everyone, and the current user must be known and match.
+ */
+export function canEditSkill(
+  skill: { userId: string | null },
+  currentUserId: string | undefined,
+): boolean {
+  return currentUserId !== undefined && skill.userId === currentUserId;
+}
+
 export interface SelectedChip {
   slug: string;
   label: string;
