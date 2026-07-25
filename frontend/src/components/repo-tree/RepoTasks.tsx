@@ -8,7 +8,7 @@ import {
   useTasks,
   type Task,
 } from '@/lib/hooks';
-import { groupRepoTasks, isArchivable, isStartableTask, sortByArchivedAtDesc } from '@/lib/repo-tasks';
+import { groupRepoTasks, isArchivable, isPendingProposal, isStartableTask, sortByArchivedAtDesc } from '@/lib/repo-tasks';
 import { useWorkspaceSelection } from '@/lib/selection';
 import { cn } from '@/lib/utils';
 import { ArchivedTaskRow } from '@/components/repo-tree/ArchivedTaskRow';
@@ -156,7 +156,7 @@ function TaskRow({ task }: { task: Task }) {
             {task.category ?? 'proposal'}
           </Badge>
         )}
-        <StatusBadge status={task.status} className="px-1.5 py-0 text-[10px]" />
+        {!isPendingProposal(task) && <StatusBadge status={task.status} className="px-1.5 py-0 text-[10px]" />}
         {isStartableTask(task) && <StartTaskButton task={task} />}
         {task.status === 'failed' && <RerunTaskButton task={task} />}
         {isArchivable(task.status) && <ArchiveTaskButton task={task} />}
