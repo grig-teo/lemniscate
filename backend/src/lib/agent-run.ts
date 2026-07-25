@@ -348,6 +348,17 @@ export async function runTask(taskId: string): Promise<void> {
     await setTaskStatus(taskId, 'failed', { error: message }).catch(() => {});
   } finally {
     await persistTokenUsage(taskId, rt?.usedTokens ?? task.llmTokensUsed);
-    await cleanupWorkdir(workdir, taskId);
+    // The workdir outlives the run only while the PR awaits review/merge —
+    // it is removed once the task is done (merged), failed, or cancelled.
+    if (await isAwaitingReview(taskId)) {
+      await logEvent(taskId, 'workdir kept until the pull request is merged').catch(() => {});
+    } else {
+      await cleanupWorkdir(workdir, taskId);
+    }
   }
+}
+
+async function isAwaitingReview(taskId: string): Promise<boolean> {
+  const task = await prisma.task.findUnique({ where: { id: taskId }, select: { status: true } });
+  return task?.status === 'awaiting_review';
 }

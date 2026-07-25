@@ -31,12 +31,16 @@ const connection = new Redis(config.REDIS_URL, {
   maxRetriesPerRequest: null,
 });
 
-// Boot-time sweep: remove AGENT_WORKDIR subdirectories no queued/running
-// task owns — stale clones (with .git dirs) left behind by a SIGKILLed
-// worker. Runs before the Worker starts consuming so nothing races it.
+// Boot-time sweep: remove AGENT_WORKDIR subdirectories no active task owns —
+// stale clones (with .git dirs) left behind by a SIGKILLed worker. Workdirs
+// of awaiting_review tasks are kept: they are removed on merge, not at run
+// end. Runs before the Worker starts consuming so nothing races it.
 async function sweepOrphanedWorkdirs(): Promise<void> {
   const active = await prisma.task.findMany({
-    where: { status: { in: ['queued', 'running'] } },
+    where: {
+      status: { in: ['queued', 'running', 'awaiting_review'] },
+      archivedAt: null,
+    },
     select: { id: true },
   });
   const activeIds = new Set(active.map((task) => task.id));

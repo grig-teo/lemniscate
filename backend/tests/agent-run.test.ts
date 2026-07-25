@@ -24,6 +24,7 @@ const mocks = vi.hoisted(() => ({
   loadTaskWithRepo: vi.fn(),
   prepareAgentRuntime: vi.fn(),
   taskUpdate: vi.fn(),
+  taskFindUnique: vi.fn(),
   enqueueReviewTask: vi.fn(),
   openPullRequest: vi.fn(),
   buildRepoContext: vi.fn(),
@@ -52,7 +53,9 @@ vi.mock('../src/lib/agent-runtime.js', () => ({
   loadTaskWithRepo: mocks.loadTaskWithRepo,
   prepareAgentRuntime: mocks.prepareAgentRuntime,
 }));
-vi.mock('../src/lib/prisma.js', () => ({ prisma: { task: { update: mocks.taskUpdate } } }));
+vi.mock('../src/lib/prisma.js', () => ({
+  prisma: { task: { update: mocks.taskUpdate, findUnique: mocks.taskFindUnique } },
+}));
 vi.mock('../src/lib/proposal-scheduler.js', () => ({ enqueueReviewTask: mocks.enqueueReviewTask }));
 vi.mock('../src/lib/pull-requests.js', () => ({ openPullRequest: mocks.openPullRequest }));
 vi.mock('../src/lib/repo-context.js', () => ({ buildRepoContext: mocks.buildRepoContext }));
@@ -113,6 +116,9 @@ beforeEach(() => {
   mocks.cleanupWorkdir.mockResolvedValue(undefined);
   mocks.logEvent.mockResolvedValue(undefined);
   mocks.runHermesTask.mockResolvedValue(undefined);
+  // Post-run status read for the workdir-retention check: the happy-path
+  // flows above end in awaiting_review.
+  mocks.taskFindUnique.mockResolvedValue({ status: 'awaiting_review' });
 });
 
 describe('runTask with AGENT_EXECUTOR=hermes', () => {
@@ -250,5 +256,52 @@ describe('runTask resumption after an interrupted run', () => {
     expect(mocks.generateBranchName).toHaveBeenCalled();
     const opts = mocks.runHermesTask.mock.calls[0]?.[0];
     expect(opts.prompt).not.toContain('RESUMED RUN');
+  });
+});
+
+describe('runTask workdir retention', () => {
+  it('keeps the workdir while the task awaits review', async () => {
+    await runTask('task-1');
+
+    // The only cleanupWorkdir call is the pre-clone sweep (no taskId); the
+    // owned workdir itself is kept for the review window.
+    expect(mocks.cleanupWorkdir).not.toHaveBeenCalledWith(
+      path.join('/tmp/test-workdirs', 'task-1'),
+      'task-1',
+    );
+    expect(mocks.logEvent).toHaveBeenCalledWith(
+      'task-1',
+      'workdir kept until the pull request is merged',
+    );
+  });
+
+  it('removes the workdir when the task finishes done without a PR', async () => {
+    mocks.loadTaskWithRepo.mockResolvedValue({
+      ...stubTask(),
+      repository: { ...stubTask().repository, autoCreatePr: false },
+    });
+    mocks.taskFindUnique.mockResolvedValue({ status: 'done' });
+    await runTask('task-1');
+
+    expect(mocks.cleanupWorkdir).toHaveBeenCalledWith(
+      path.join('/tmp/test-workdirs', 'task-1'),
+      'task-1',
+    );
+  });
+
+  it('removes the workdir when the run fails', async () => {
+    mocks.runHermesTask.mockRejectedValue(new Error('agent crashed'));
+    mocks.taskFindUnique.mockResolvedValue({ status: 'failed' });
+    await runTask('task-1');
+
+    expect(mocks.setTaskStatus).toHaveBeenCalledWith(
+      'task-1',
+      'failed',
+      expect.objectContaining({ error: 'recorded failure' }),
+    );
+    expect(mocks.cleanupWorkdir).toHaveBeenCalledWith(
+      path.join('/tmp/test-workdirs', 'task-1'),
+      'task-1',
+    );
   });
 });

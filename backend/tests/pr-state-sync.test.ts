@@ -9,14 +9,19 @@ const mocks = vi.hoisted(() => ({
   taskFindMany: vi.fn(),
   setTaskStatus: vi.fn().mockResolvedValue(undefined),
   logEvent: vi.fn().mockResolvedValue(undefined),
+  cleanupWorkdir: vi.fn().mockResolvedValue(undefined),
   pullRequestState: vi.fn(),
 }));
 
+vi.mock('../src/config.js', () => ({ config: { AGENT_WORKDIR: '/tmp/test-workdirs' } }));
 vi.mock('../src/lib/prisma.js', () => ({
   prisma: { task: { findMany: mocks.taskFindMany } },
 }));
 vi.mock('../src/lib/task-events.js', () => ({ setTaskStatus: mocks.setTaskStatus }));
-vi.mock('../src/lib/agent-git.js', () => ({ logEvent: mocks.logEvent }));
+vi.mock('../src/lib/agent-git.js', () => ({
+  logEvent: mocks.logEvent,
+  cleanupWorkdir: mocks.cleanupWorkdir,
+}));
 vi.mock('../src/lib/pull-requests.js', () => ({ pullRequestState: mocks.pullRequestState }));
 vi.mock('../src/lib/proposal-scheduler.js', () => ({ getAgentTasksQueue: vi.fn() }));
 vi.mock('ioredis', () => ({ Redis: vi.fn() }));
@@ -66,6 +71,8 @@ describe('syncMergedPullRequests', () => {
       't1',
       'pull request merged on the git host — task marked done',
     );
+    // The kept run workdir is removed once the task is merged.
+    expect(mocks.cleanupWorkdir).toHaveBeenCalledWith('/tmp/test-workdirs/t1', 't1');
   });
 
   it('leaves tasks with open or closed PRs unchanged', async () => {
@@ -79,6 +86,7 @@ describe('syncMergedPullRequests', () => {
 
     expect(mocks.setTaskStatus).not.toHaveBeenCalled();
     expect(mocks.logEvent).not.toHaveBeenCalled();
+    expect(mocks.cleanupWorkdir).not.toHaveBeenCalled();
   });
 
   it('skips provider failures and keeps syncing the remaining tasks', async () => {

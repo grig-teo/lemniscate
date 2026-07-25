@@ -246,6 +246,9 @@ async function mergeWithConflictResolution(
     if (result.merged) {
       await logEvent(task.id, `merged pull request: ${result.prUrl}`);
       await setTaskStatus(task.id, 'done');
+      // The task's run workdir was kept for the review window — merged means
+      // it is no longer needed.
+      await cleanupWorkdir(path.join(config.AGENT_WORKDIR, task.id), task.id);
       return;
     }
     if (!result.conflict || conflictAttempt >= MAX_CONFLICT_RESOLUTIONS) {

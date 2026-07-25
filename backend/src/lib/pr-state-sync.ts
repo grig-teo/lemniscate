@@ -1,5 +1,7 @@
+import path from 'node:path';
 import type { Prisma } from '@prisma/client';
-import { logEvent } from './agent-git.js';
+import { config } from '../config.js';
+import { cleanupWorkdir, logEvent } from './agent-git.js';
 import { pullRequestState, type PrState } from './pull-requests.js';
 import { getAgentTasksQueue } from './proposal-scheduler.js';
 import { prisma } from './prisma.js';
@@ -45,6 +47,8 @@ async function syncTaskPrState(task: TaskWithConnection): Promise<boolean> {
     if (taskStatusForPrState(state) !== 'done') return false;
     await setTaskStatus(task.id, 'done');
     await logEvent(task.id, 'pull request merged on the git host — task marked done');
+    // The run workdir was kept for the review window — merged means cleanup.
+    await cleanupWorkdir(path.join(config.AGENT_WORKDIR, task.id), task.id);
     return true;
   } catch (err) {
     console.warn(`pr-state-sync: check failed for task ${task.id}: ${errorMessage(err)}`);
