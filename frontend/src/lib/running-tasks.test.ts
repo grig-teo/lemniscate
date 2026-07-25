@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import type { Repository, Task, TaskStatus } from '@/lib/hooks';
-import { groupTasksByRepository, selectRunningTasks } from '@/lib/running-tasks';
+import { groupTasksByRepository, isRunningStatus, selectRunningTasks } from '@/lib/running-tasks';
 
 function makeTask(id: string, repositoryId: string, status: TaskStatus): Task {
   return {
@@ -35,6 +35,16 @@ function makeRepo(id: string, name: string): Repository {
     connection: { provider: 'github', username: 'user' },
   };
 }
+
+describe('isRunningStatus', () => {
+  it('is true only for queued and running', () => {
+    expect(isRunningStatus('queued')).toBe(true);
+    expect(isRunningStatus('running')).toBe(true);
+    for (const status of ['pending', 'awaiting_review', 'done', 'failed', 'archived']) {
+      expect(isRunningStatus(status)).toBe(false);
+    }
+  });
+});
 
 describe('selectRunningTasks', () => {
   it('keeps only queued and running tasks, preserving order', () => {
