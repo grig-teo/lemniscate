@@ -55,6 +55,8 @@ export interface GitProviderClient {
   createFile(input: CreateFileInput): Promise<void>;
   createPullRequest(input: CreatePullRequestInput): Promise<PullRequestResult>;
   isBare(repoFullName: string): Promise<boolean>;
+  /** Root-level entry names (files and dirs) — feeds bare/platform detection. */
+  listRootEntries(repoFullName: string): Promise<string[]>;
 }
 
 export type ProviderName = 'github' | 'gitverse' | 'gitlab' | 'gitee';
@@ -183,6 +185,18 @@ export function isBareRootListing(names: string[]): boolean {
   return names.every((name) => BARE_ROOT_ENTRY.test(name));
 }
 
+// Shared root-listing fetch for every provider: entry names (files and
+// dirs) of the repository root. Throws ProviderError on API failure.
+async function fetchRootEntryNames(
+  url: string,
+  headers: Record<string, string>,
+  provider: string,
+): Promise<string[]> {
+  const data = (await requestJson(url, headers, provider)) as Array<{ name?: unknown }>;
+  if (!Array.isArray(data)) return [];
+  return data.map((entry) => String(entry?.name ?? ''));
+}
+
 // Bare-repo probe shared by every provider: fetch the root listing and judge
 // the entry names. Any API error (404/403/…) returns false so a failed
 // check never breaks repository sync.
@@ -192,9 +206,7 @@ async function rootListingIsBare(
   provider: string,
 ): Promise<boolean> {
   try {
-    const data = (await requestJson(url, headers, provider)) as Array<{ name?: unknown }>;
-    if (!Array.isArray(data)) return false;
-    return isBareRootListing(data.map((entry) => String(entry?.name ?? '')));
+    return isBareRootListing(await fetchRootEntryNames(url, headers, provider));
   } catch {
     return false;
   }
@@ -729,6 +741,12 @@ interface ProviderApi {
     tokenType: ProviderTokenType,
     repoFullName: string,
   ): Promise<boolean>;
+  listRoot(
+    token: string,
+    baseUrl: string | null | undefined,
+    tokenType: ProviderTokenType,
+    repoFullName: string,
+  ): Promise<string[]>;
 }
 
 // GitVerse's public API documents no repository-creation endpoint — the
@@ -746,6 +764,8 @@ const providerApis: Record<ProviderName, ProviderApi> = {
     createFile: (token, _baseUrl, _tokenType, input) => githubCreateFile(token, input),
     isBare: (token, _baseUrl, _tokenType, repoFullName) =>
       rootListingIsBare(contentsUrl(GITHUB_API, repoFullName), githubHeaders(token), 'github'),
+    listRoot: (token, _baseUrl, _tokenType, repoFullName) =>
+      fetchRootEntryNames(contentsUrl(GITHUB_API, repoFullName), githubHeaders(token), 'github'),
   },
   gitlab: {
     profile: (token, _baseUrl, tokenType) => gitlabProfile(token, tokenType),
@@ -757,6 +777,12 @@ const providerApis: Record<ProviderName, ProviderApi> = {
       gitlabCreateFile(token, tokenType, baseUrl, input),
     isBare: (token, baseUrl, tokenType, repoFullName) =>
       rootListingIsBare(
+        gitlabTreeUrl(baseUrl, repoFullName),
+        gitlabHeaders(token, tokenType),
+        'gitlab',
+      ),
+    listRoot: (token, baseUrl, tokenType, repoFullName) =>
+      fetchRootEntryNames(
         gitlabTreeUrl(baseUrl, repoFullName),
         gitlabHeaders(token, tokenType),
         'gitlab',
@@ -778,6 +804,12 @@ const providerApis: Record<ProviderName, ProviderApi> = {
         gitverseHeaders(token),
         'gitverse',
       ),
+    listRoot: (token, baseUrl, _tokenType, repoFullName) =>
+      fetchRootEntryNames(
+        contentsUrl(gitverseApiBase(baseUrl), repoFullName),
+        gitverseHeaders(token),
+        'gitverse',
+      ),
   },
   gitee: {
     profile: (token) => giteeProfile(token),
@@ -788,6 +820,8 @@ const providerApis: Record<ProviderName, ProviderApi> = {
     createFile: (token, _baseUrl, _tokenType, input) => giteeCreateFile(token, input),
     isBare: (token, _baseUrl, _tokenType, repoFullName) =>
       rootListingIsBare(contentsUrl(GITEE_API, repoFullName), giteeHeaders(token), 'gitee'),
+    listRoot: (token, _baseUrl, _tokenType, repoFullName) =>
+      fetchRootEntryNames(contentsUrl(GITEE_API, repoFullName), giteeHeaders(token), 'gitee'),
   },
 };
 
@@ -853,6 +887,10 @@ export function getProviderClient(connection: {
     isBare: (repoFullName) =>
       withGitlabRefreshRetry(connection, (token) =>
         api.isBare(token, connection.baseUrl, tokenType, repoFullName),
+      ),
+    listRootEntries: (repoFullName) =>
+      withGitlabRefreshRetry(connection, (token) =>
+        api.listRoot(token, connection.baseUrl, tokenType, repoFullName),
       ),
   };
 }

@@ -296,3 +296,48 @@ describe('device commands', () => {
     expect(response.statusCode).toBe(400);
   });
 });
+
+describe('install_apk commands', () => {
+  const APK_BODY = {
+    type: 'install_apk',
+    payload: { apkUrl: 'https://example.com/app-release.apk', appName: 'My App' },
+  };
+
+  function postApk(app: Awaited<ReturnType<typeof buildApp>>, body: unknown = APK_BODY) {
+    return app.inject({ method: 'POST', url: '/api/devices/dev-1/commands', ...AUTH, payload: body });
+  }
+
+  it('queues install_apk for an android device', async () => {
+    mocks.deviceFindFirst.mockResolvedValue({ id: 'dev-1', userId: 'user-1', platform: 'android' });
+    const app = await buildApp();
+    const response = await postApk(app);
+    expect(response.statusCode).toBe(201);
+    expect(mocks.commandCreate).toHaveBeenCalledWith({
+      data: { deviceId: 'dev-1', type: 'install_apk', payload: APK_BODY.payload },
+    });
+  });
+
+  it('accepts install_apk for a desktop device (download only)', async () => {
+    mocks.deviceFindFirst.mockResolvedValue({ id: 'dev-1', userId: 'user-1', platform: 'desktop' });
+    const app = await buildApp();
+    expect((await postApk(app)).statusCode).toBe(201);
+  });
+
+  it('400s install_apk on ios and web devices with a clear message', async () => {
+    for (const platform of ['ios', 'web']) {
+      mocks.deviceFindFirst.mockResolvedValue({ id: 'dev-1', userId: 'user-1', platform });
+      const app = await buildApp();
+      const response = await postApk(app);
+      expect(response.statusCode).toBe(400);
+      expect(response.json().error).toContain(platform);
+      expect(mocks.commandCreate).not.toHaveBeenCalled();
+    }
+  });
+
+  it('400s an invalid apkUrl', async () => {
+    mocks.deviceFindFirst.mockResolvedValue({ id: 'dev-1', userId: 'user-1', platform: 'android' });
+    const app = await buildApp();
+    const response = await postApk(app, { type: 'install_apk', payload: { apkUrl: 'not-a-url' } });
+    expect(response.statusCode).toBe(400);
+  });
+});

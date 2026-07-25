@@ -4,9 +4,10 @@ import path from 'node:path';
 import { z } from 'zod';
 import { config } from '../config.js';
 import { cleanupWorkdir, cloneRepository } from '../lib/agent-git.js';
-import { GIT_HTTP_AUTH_USERNAME, tokenlessCloneUrl } from '../lib/git-providers.js';
+import { GIT_HTTP_AUTH_USERNAME, getProviderClient, tokenlessCloneUrl } from '../lib/git-providers.js';
 import { prisma } from '../lib/prisma.js';
 import { listWorkdirFolders, filterFoldersBySearch } from '../lib/repo-folders.js';
+import { detectRepoPlatform } from '../lib/repo-platform.js';
 import { findUnknownSkillSlugs, isAgentsMdSkill } from '../lib/task-skills.js';
 import { withGitlabRefreshRetry } from '../lib/token-refresh.js';
 import { authenticatedUserId, requireAuth } from '../plugins/auth.js';
@@ -176,6 +177,31 @@ const repositoriesRoutes: FastifyPluginAsync = async (app) => {
       return { folders };
     } finally {
       await cleanupWorkdir(workdir);
+    }
+  });
+
+  // On-demand platform (re)detection: fetches the provider root listing,
+  // classifies it (lib/repo-platform.ts) and stores the result. Sync also
+  // refreshes the platform; this endpoint lets the UI force a refresh.
+  app.post('/repositories/:id/detect-platform', async (request, reply) => {
+    const userId = authenticatedUserId(request);
+    const params = parseOrReply(idParamsSchema, request.params, reply, 'Invalid repository id');
+    if (params === null) return;
+    const repository = await prisma.repository.findFirst({
+      where: { id: params.id, connection: { userId } },
+      include: { connection: true },
+    });
+    if (!repository) {
+      return reply.code(404).send({ error: 'Repository not found' });
+    }
+    try {
+      const client = getProviderClient(repository.connection);
+      const platform = detectRepoPlatform(await client.listRootEntries(repository.fullName));
+      await prisma.repository.update({ where: { id: repository.id }, data: { platform } });
+      return { platform };
+    } catch (err) {
+      request.log.error({ err }, 'platform detection failed');
+      return reply.code(502).send({ error: 'Failed to fetch the repository tree' });
     }
   });
 

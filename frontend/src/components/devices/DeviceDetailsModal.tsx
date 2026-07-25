@@ -1,15 +1,25 @@
 import * as React from 'react';
 
 import { describeApiError } from '@/lib/api';
-import { defaultRunPort, devicePlatformLabel, formatLastSeen, runWebBlocker } from '@/lib/devices';
+import {
+  canInstallApk,
+  commandTypeLabel,
+  defaultRunPort,
+  devicePlatformLabel,
+  formatLastSeen,
+  repoPlatformLabel,
+  runWebBlocker,
+} from '@/lib/devices';
 import {
   useDeleteDevice,
   useDeviceCommands,
+  useInstallApk,
   useRenameDevice,
   useRepositories,
   useRunOnDevice,
   type Device,
   type DeviceCommand,
+  type Repository,
 } from '@/lib/hooks';
 import { StatusBadge } from '@/components/StatusBadge';
 import { Button } from '@/components/ui/button';
@@ -98,6 +108,21 @@ function DeleteDeviceButton({ device, onDeleted }: { device: Device; onDeleted: 
   );
 }
 
+/** Repo fullName with a small platform badge when detection ran. */
+function RepoSelectLabel({ repo }: { repo: Repository }) {
+  const label = repoPlatformLabel(repo.platform);
+  return (
+    <span className="flex items-center gap-2">
+      {repo.fullName}
+      {label && (
+        <span className="rounded bg-muted px-1 py-0.5 text-[10px] font-medium uppercase text-muted-foreground">
+          {label}
+        </span>
+      )}
+    </span>
+  );
+}
+
 /** "Run a repository on this device" form → POST run_web command. */
 function RunOnDeviceSection({ device }: { device: Device }) {
   const repos = useRepositories();
@@ -143,7 +168,7 @@ function RunOnDeviceSection({ device }: { device: Device }) {
               <SelectContent>
                 {(repos.data ?? []).map((r) => (
                   <SelectItem key={r.id} value={r.id}>
-                    {r.fullName}
+                    <RepoSelectLabel repo={r} />
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -188,16 +213,74 @@ function RunOnDeviceSection({ device }: { device: Device }) {
   );
 }
 
+/** "Install an APK on this device" form → POST install_apk command. */
+function InstallApkSection({ device }: { device: Device }) {
+  const install = useInstallApk();
+  const [apkUrl, setApkUrl] = React.useState('');
+  const [appName, setAppName] = React.useState('');
+
+  const urlValid = /^https?:\/\/.+/.test(apkUrl.trim());
+  const canSubmit = urlValid && !install.isPending;
+
+  function submit(event: React.FormEvent) {
+    event.preventDefault();
+    if (!canSubmit) return;
+    install.mutate({
+      deviceId: device.id,
+      payload: { apkUrl: apkUrl.trim(), appName: appName.trim() || undefined },
+    });
+  }
+
+  return (
+    <form onSubmit={submit} className="flex min-w-0 flex-col gap-3">
+      <p className="text-sm font-medium">Install an APK on this device</p>
+      <FormField label="APK URL">
+        <Input
+          value={apkUrl}
+          onChange={(event) => setApkUrl(event.target.value)}
+          placeholder="https://…/app-release.apk"
+          autoComplete="off"
+        />
+      </FormField>
+      <FormField label="App name (optional)">
+        <Input
+          value={appName}
+          onChange={(event) => setAppName(event.target.value)}
+          placeholder="My App"
+          autoComplete="off"
+        />
+      </FormField>
+
+      {install.isError && (
+        <p className="break-words text-sm text-destructive">{describeApiError(install.error)}</p>
+      )}
+      {install.isSuccess && !install.isPending && (
+        <p className="text-sm text-muted-foreground">Command sent — see history below.</p>
+      )}
+
+      <Button type="submit" disabled={!canSubmit}>
+        {install.isPending ? 'Sending…' : 'Install APK'}
+      </Button>
+    </form>
+  );
+}
+
 function CommandRow({ command }: { command: DeviceCommand }) {
+  const isRunWeb = command.payload.repoUrl !== undefined;
+  const title = command.payload.repoUrl ?? command.payload.apkUrl ?? '';
+  const detail = isRunWeb
+    ? `${command.payload.branch} · port ${command.payload.port}`
+    : (command.payload.appName ?? 'APK package');
   return (
     <li className="flex min-w-0 flex-col gap-1 rounded-md border p-2 text-sm">
       <div className="flex items-center justify-between gap-2">
-        <span className="truncate font-mono text-xs">{command.payload.repoUrl}</span>
-        <StatusBadge status={command.status} />
+        <span className="truncate font-mono text-xs">{title}</span>
+        <span className="flex shrink-0 items-center gap-2">
+          <span className="text-xs text-muted-foreground">{commandTypeLabel(command.type)}</span>
+          <StatusBadge status={command.status} />
+        </span>
       </div>
-      <span className="text-xs text-muted-foreground">
-        {command.payload.branch} · port {command.payload.port}
-      </span>
+      <span className="text-xs text-muted-foreground">{detail}</span>
       {command.status === 'done' && command.result?.url && (
         <a
           href={command.result.url}
@@ -207,6 +290,12 @@ function CommandRow({ command }: { command: DeviceCommand }) {
         >
           {command.result.url}
         </a>
+      )}
+      {command.status === 'done' && command.result?.savedTo && (
+        <span className="break-all text-xs text-muted-foreground">
+          Saved to {command.result.savedTo}
+          {command.result.installIntentLaunched ? ' · install intent launched' : ''}
+        </span>
       )}
       {command.status === 'failed' && command.result?.error && (
         <p className="break-words text-xs text-destructive">{command.result.error}</p>
@@ -232,7 +321,8 @@ function CommandHistory({ deviceId }: { deviceId: string }) {
 
 /**
  * Details modal for one paired device: rename, presence + meta, delete, the
- * run-on-device form (desktop + docker only) and its command history.
+ * run-on-device form (desktop + docker only), the APK install form
+ * (android/desktop) and the shared command history.
  */
 export function DeviceDetailsModal({
   device,
@@ -261,6 +351,7 @@ export function DeviceDetailsModal({
             <DeviceMeta device={device} />
             <DeleteDeviceButton device={device} onDeleted={() => onOpenChange(false)} />
             <RunOnDeviceSection device={device} />
+            {canInstallApk(device) && <InstallApkSection device={device} />}
             <div className="flex min-w-0 flex-col gap-2">
               <p className="text-sm font-medium">Command history</p>
               <CommandHistory deviceId={device.id} />

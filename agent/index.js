@@ -14,6 +14,8 @@ import os from 'node:os';
 import fs from 'node:fs';
 import path from 'node:path';
 import { execFile } from 'node:child_process';
+import { Readable, Transform } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
 import { WebSocket } from 'ws';
 import * as lib from './lib.js';
 
@@ -164,12 +166,64 @@ async function executeRunWeb(send, { id, payload }) {
   }
 }
 
+// --- install_apk execution ----------------------------------------------------
+
+/** Stream the APK to disk (redirects followed), enforcing the size cap. */
+async function downloadApk(log, apkUrl, destPath) {
+  const response = await fetch(apkUrl, { redirect: 'follow' });
+  if (!response.ok || !response.body) throw new Error(`APK download failed (HTTP ${response.status})`);
+  fs.mkdirSync(path.dirname(destPath), { recursive: true });
+  let received = 0;
+  const counter = new Transform({
+    transform(chunk, _enc, cb) {
+      received += chunk.length;
+      cb(received > lib.APK_MAX_BYTES ? new Error('APK exceeds the 100MB limit') : null, chunk);
+    },
+  });
+  try {
+    await pipeline(Readable.fromWeb(response.body), counter, fs.createWriteStream(destPath));
+  } catch (error) {
+    await fs.promises.rm(destPath, { force: true });
+    throw error;
+  }
+  log.text += `Downloaded ${received} bytes → ${destPath}\n`;
+}
+
+/** Try the `am start` install intent, falling back to termux-open. */
+async function launchInstallIntent(log, apkPath) {
+  const { command, args } = lib.installIntentCommand(apkPath);
+  const intent = await run(command, args, { timeout: 15_000 });
+  log.text += `$ ${command} ${args.join(' ')}\n${intent.output}`;
+  if (intent.ok) return true;
+  const fallback = await run('termux-open', [apkPath], { timeout: 15_000 });
+  log.text += `$ termux-open ${apkPath}\n${fallback.output}`;
+  return fallback.ok;
+}
+
+async function executeInstallApk(send, { id, payload }) {
+  const log = { text: '' };
+  send(lib.commandResultMessage(id, 'running'));
+  try {
+    const destPath = lib.apkPathFor(payload.apkUrl, payload.appName);
+    await downloadApk(log, payload.apkUrl, destPath);
+    const installIntentLaunched = lib.isTermux() ? await launchInstallIntent(log, destPath) : false;
+    send(lib.commandResultMessage(id, 'done', { savedTo: destPath, installIntentLaunched }));
+  } catch (error) {
+    send(lib.commandResultMessage(id, 'failed', { error: error.message, log: lib.tailLog(log.text) }));
+  }
+}
+
+function executeCommand(send, command) {
+  if (command.commandType === 'install_apk') return executeInstallApk(send, command);
+  return executeRunWeb(send, command);
+}
+
 // --- WebSocket tunnel ---------------------------------------------------------
 
 function createCommandQueue(send) {
   let tail = Promise.resolve();
   return (command) => {
-    tail = tail.then(() => executeRunWeb(send, command)).catch(() => {});
+    tail = tail.then(() => executeCommand(send, command)).catch(() => {});
     return tail;
   };
 }

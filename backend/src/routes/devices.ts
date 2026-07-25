@@ -31,15 +31,33 @@ const idParamSchema = z.object({ id: z.string().min(1).max(100) });
 
 const renameBodySchema = z.object({ name: z.string().min(1).max(80) });
 
-const commandBodySchema = z.object({
-  type: z.literal('run_web'),
-  payload: z.object({
-    repoUrl: z.string().url(),
-    branch: z.string().min(1).max(200),
-    port: z.number().int().min(1).max(65535),
-    composePath: z.string().min(1).max(500).optional(),
+const commandBodySchema = z.discriminatedUnion('type', [
+  z.object({
+    type: z.literal('run_web'),
+    payload: z.object({
+      repoUrl: z.string().url(),
+      branch: z.string().min(1).max(200),
+      port: z.number().int().min(1).max(65535),
+      composePath: z.string().min(1).max(500).optional(),
+    }),
   }),
-});
+  z.object({
+    type: z.literal('install_apk'),
+    payload: z.object({
+      apkUrl: z.string().url(),
+      appName: z.string().min(1).max(120).optional(),
+    }),
+  }),
+]);
+
+// install_apk launches an install intent on Android; on desktop the agent
+// only downloads the file. iOS/web devices cannot receive APKs at all.
+const INSTALL_APK_PLATFORMS = new Set(['android', 'desktop']);
+
+function installApkBlock(platform: string): string | null {
+  if (INSTALL_APK_PLATFORMS.has(platform)) return null;
+  return `install_apk is only available on android and desktop devices (this device is ${platform})`;
+}
 
 // tokenHash is never selected — the token is shown once at claim time.
 const deviceSelect = {
@@ -168,7 +186,12 @@ async function createCommand(request: FastifyRequest, reply: FastifyReply) {
   if (params === null) return;
   const body = parseOrReply(commandBodySchema, request.body, reply, 'Invalid body', { request });
   if (body === null) return;
-  if (!(await ownedDevice(request, reply, params.id))) return;
+  const device = await ownedDevice(request, reply, params.id);
+  if (!device) return;
+  if (body.type === 'install_apk') {
+    const block = installApkBlock(device.platform);
+    if (block) return reply.code(400).send({ error: block });
+  }
   const command = await prisma.deviceCommand.create({
     data: { deviceId: params.id, type: body.type, payload: body.payload },
   });

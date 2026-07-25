@@ -137,6 +137,10 @@ model Repository {
   // bare = near-empty repository (README-only, no implementation), refreshed
   // on every repo sync; a failed check keeps the previous value.
   bare          Boolean      @default(false)
+  // Detected app platform ('android'|'ios'|'web'|'desktop'|'unknown'),
+  // refreshed on every repo sync from the provider root listing; null until
+  // the first successful detection (see lib/repo-platform.ts).
+  platform      String?
   llmConfigId   String?
   connection    GitConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
   llmConfig     LlmConfig?    @relation(fields: [llmConfigId], references: [id], onDelete: SetNull)

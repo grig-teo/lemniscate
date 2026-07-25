@@ -36,6 +36,27 @@ export function canRunWeb(device: Pick<Device, 'platform' | 'meta'>): boolean {
   return device.platform === 'desktop' && device.meta?.dockerAvailable === true;
 }
 
+/** install_apk works on android (install intent) and desktop (download only). */
+export function canInstallApk(device: Pick<Device, 'platform'>): boolean {
+  return device.platform === 'android' || device.platform === 'desktop';
+}
+
+const COMMAND_TYPE_LABELS: Record<string, string> = {
+  run_web: 'Run web app',
+  install_apk: 'Install APK',
+};
+
+/** Display label for a device command type; unknown types pass through. */
+export function commandTypeLabel(type: string): string {
+  return COMMAND_TYPE_LABELS[type] ?? type;
+}
+
+/** Badge label for a repository's detected platform; null = show no badge. */
+export function repoPlatformLabel(platform: string | null | undefined): string | null {
+  if (!platform || platform === 'unknown') return null;
+  return devicePlatformLabel(platform);
+}
+
 /** Why the run-on-device form is disabled, or null when it is usable. */
 export function runWebBlocker(device: Pick<Device, 'platform' | 'meta'>): string | null {
   if (device.platform !== 'desktop') return 'Only desktop devices can run web apps';

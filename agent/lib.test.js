@@ -186,3 +186,62 @@ test('collectMeta reports os, arch, hostname and agent version', () => {
   assert.equal(meta.dockerAvailable, true);
   assert.equal(typeof meta.agentVersion, 'string');
 });
+
+// --- install_apk helpers --------------------------------------------------------
+
+test('apkFileName prefers the app name slug', () => {
+  const name = lib.apkFileName('https://x.space/files/v1/app-release.apk?sig=1', 'My Cool App');
+  assert.match(name, /^my-cool-app-[0-9a-f]{8}\.apk$/);
+});
+
+test('apkFileName falls back to the URL basename, stripping .apk and query', () => {
+  const name = lib.apkFileName('https://x.space/files/app-release.apk?sig=1');
+  assert.match(name, /^app-release-[0-9a-f]{8}\.apk$/);
+});
+
+test('apkFileName falls back to "app" for opaque URLs and is deterministic', () => {
+  const url = 'https://x.space/?id=42';
+  assert.match(lib.apkFileName(url), /^app-[0-9a-f]{8}\.apk$/);
+  assert.equal(lib.apkFileName(url), lib.apkFileName(url));
+  assert.notEqual(lib.apkFileName(url), lib.apkFileName('https://x.space/?id=43'));
+});
+
+test('apkPathFor nests the file under the apks root', () => {
+  const dest = lib.apkPathFor('https://x.space/a.apk', 'demo');
+  assert.equal(path.dirname(dest), lib.apksRoot());
+  assert.match(dest, /demo-[0-9a-f]{8}\.apk$/);
+});
+
+test('isTermux detects android platform or the TERMUX_VERSION env', () => {
+  assert.equal(lib.isTermux('android', {}), true);
+  assert.equal(lib.isTermux('linux', { TERMUX_VERSION: '0.118' }), true);
+  assert.equal(lib.isTermux('darwin', {}), false);
+});
+
+test('installIntentCommand builds the am start VIEW intent for the APK', () => {
+  assert.deepEqual(lib.installIntentCommand('/data/local/tmp/app.apk'), {
+    command: 'am',
+    args: [
+      'start',
+      '-a', 'android.intent.action.VIEW',
+      '-d', 'file:///data/local/tmp/app.apk',
+      '-t', 'application/vnd.android.package-archive',
+    ],
+  });
+});
+
+test('parseServerMessage parses install_apk commands', () => {
+  const raw = JSON.stringify({
+    id: 'cmd2',
+    type: 'install_apk',
+    payload: { apkUrl: 'https://x.space/a.apk', appName: 'Demo' },
+  });
+  const message = lib.parseServerMessage(raw);
+  assert.equal(message.kind, 'command');
+  assert.equal(message.commandType, 'install_apk');
+  assert.equal(message.payload.apkUrl, 'https://x.space/a.apk');
+});
+
+test('APK downloads are capped at 100MB', () => {
+  assert.equal(lib.APK_MAX_BYTES, 100 * 1024 * 1024);
+});

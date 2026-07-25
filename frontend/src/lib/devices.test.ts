@@ -2,11 +2,14 @@ import { describe, expect, it } from 'vitest';
 
 import {
   agentPairCommand,
+  canInstallApk,
   canRunWeb,
+  commandTypeLabel,
   defaultRunPort,
   devicePlatformLabel,
   formatLastSeen,
   pairingExpirySeconds,
+  repoPlatformLabel,
   runWebBlocker,
 } from '@/lib/devices';
 import type { Device } from '@/lib/hooks';
@@ -112,5 +115,40 @@ describe('agentPairCommand', () => {
     expect(agentPairCommand('https://lemniscate.grig-teo.space', 'ABC123')).toBe(
       'cd agent && npm install && node index.js --server https://lemniscate.grig-teo.space --pair ABC123',
     );
+  });
+});
+
+describe('canInstallApk', () => {
+  it('allows android and desktop devices', () => {
+    expect(canInstallApk(makeDevice({ platform: 'android' }))).toBe(true);
+    expect(canInstallApk(makeDevice({ platform: 'desktop' }))).toBe(true);
+  });
+
+  it('blocks ios and web devices', () => {
+    expect(canInstallApk(makeDevice({ platform: 'ios' }))).toBe(false);
+    expect(canInstallApk(makeDevice({ platform: 'web' }))).toBe(false);
+  });
+});
+
+describe('commandTypeLabel', () => {
+  it('labels known command types and passes through unknown ones', () => {
+    expect(commandTypeLabel('run_web')).toBe('Run web app');
+    expect(commandTypeLabel('install_apk')).toBe('Install APK');
+    expect(commandTypeLabel('future_type')).toBe('future_type');
+  });
+});
+
+describe('repoPlatformLabel', () => {
+  it('labels detected platforms', () => {
+    expect(repoPlatformLabel('android')).toBe('Android');
+    expect(repoPlatformLabel('ios')).toBe('iOS');
+    expect(repoPlatformLabel('web')).toBe('Web');
+    expect(repoPlatformLabel('desktop')).toBe('Desktop');
+  });
+
+  it('returns null when no badge should be shown', () => {
+    expect(repoPlatformLabel('unknown')).toBeNull();
+    expect(repoPlatformLabel(null)).toBeNull();
+    expect(repoPlatformLabel(undefined)).toBeNull();
   });
 });

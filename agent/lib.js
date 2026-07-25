@@ -9,7 +9,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 
-export const AGENT_VERSION = '0.1.0';
+export const AGENT_VERSION = '0.2.0';
+
+/** install_apk downloads are refused beyond this size. */
+export const APK_MAX_BYTES = 100 * 1024 * 1024;
 
 /** Default compose file names, in priority order. */
 export const COMPOSE_CANDIDATES = [
@@ -81,6 +84,56 @@ export function repoDirFor(repoUrl) {
   return path.join(reposRoot(), repoDirName(repoUrl));
 }
 
+// --- install_apk helpers ------------------------------------------------------
+
+export function apksRoot() {
+  return path.join(os.homedir(), '.lemniscate-agent', 'apks');
+}
+
+/** Slug base for a downloaded APK: the app name when given, else the URL basename. */
+function apkSlugBase(apkUrl, appName) {
+  let text = appName ?? '';
+  if (!text) {
+    try {
+      text = path.posix.basename(new URL(apkUrl).pathname);
+    } catch {
+      text = '';
+    }
+  }
+  return text
+    .replace(/\.apk$/i, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+}
+
+/** Deterministic APK file name: slug plus a short hash of the URL. */
+export function apkFileName(apkUrl, appName) {
+  return `${apkSlugBase(apkUrl, appName) || 'app'}-${shortHash(apkUrl)}.apk`;
+}
+
+export function apkPathFor(apkUrl, appName) {
+  return path.join(apksRoot(), apkFileName(apkUrl, appName));
+}
+
+/** True on Termux (Android userland): node platform 'android' or TERMUX_VERSION set. */
+export function isTermux(platform = process.platform, env = process.env) {
+  return platform === 'android' || typeof env.TERMUX_VERSION === 'string';
+}
+
+/** `am start` VIEW intent that opens the system package installer for an APK. */
+export function installIntentCommand(apkPath) {
+  return {
+    command: 'am',
+    args: [
+      'start',
+      '-a', 'android.intent.action.VIEW',
+      '-d', `file://${apkPath}`,
+      '-t', 'application/vnd.android.package-archive',
+    ],
+  };
+}
+
 // --- URLs / messages ----------------------------------------------------------
 
 /** http(s) server base URL → ws(s) device-tunnel URL for a device token. */
@@ -112,6 +165,8 @@ export function commandResultMessage(id, status, result) {
  * Parse a raw server frame. Returns
  * {kind:'welcome', deviceId} | {kind:'command', id, commandType, payload} | null.
  */
+const COMMAND_TYPES = ['run_web', 'install_apk'];
+
 export function parseServerMessage(raw) {
   let message;
   try {
@@ -121,8 +176,8 @@ export function parseServerMessage(raw) {
   }
   if (!message || typeof message.type !== 'string') return null;
   if (message.type === 'welcome') return { kind: 'welcome', deviceId: message.deviceId };
-  if (message.type === 'run_web' && message.payload) {
-    return { kind: 'command', id: message.id, commandType: 'run_web', payload: message.payload };
+  if (COMMAND_TYPES.includes(message.type) && message.payload) {
+    return { kind: 'command', id: message.id, commandType: message.type, payload: message.payload };
   }
   return null;
 }

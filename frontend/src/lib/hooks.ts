@@ -108,6 +108,8 @@ export type Repository = {
   hidden: boolean;
   /** True for near-empty (README-only) repositories — the composer invites a from-scratch app prompt. */
   bare: boolean;
+  /** Detected app platform ('android'|'ios'|'web'|'desktop'|'unknown'); null until first detection. */
+  platform?: string | null;
   llmConfigId?: string | null;
   /** Repository-level skill slugs injected into the agent's system prompt. */
   skillSlugs?: string[];
@@ -648,16 +650,23 @@ export type RunWebPayload = {
   composePath?: string;
 };
 
+export type InstallApkPayload = {
+  apkUrl: string;
+  appName?: string;
+};
+
 /** GET /api/devices/:id/commands item. */
 export type DeviceCommand = {
   id: string;
-  type: 'run_web' | (string & {});
-  payload: RunWebPayload;
+  type: 'run_web' | 'install_apk' | (string & {});
+  payload: Partial<RunWebPayload> & Partial<InstallApkPayload>;
   status: DeviceCommandStatus;
   result: {
     url?: string;
     port?: number;
     projectDir?: string;
+    savedTo?: string;
+    installIntentLaunched?: boolean;
     error?: string;
     log?: string;
   } | null;
@@ -728,6 +737,24 @@ export function useRunOnDevice() {
       api
         .post<{ command: DeviceCommand }>(`/api/devices/${deviceId}/commands`, {
           type: 'run_web',
+          payload,
+        })
+        .then((res) => res.command),
+    onSuccess: (_command, { deviceId }) => {
+      void queryClient.invalidateQueries({ queryKey: ['device-commands', deviceId] });
+      void queryClient.invalidateQueries({ queryKey: ['devices'] });
+    },
+  });
+}
+
+/** POST /api/devices/:id/commands — queue an install_apk command for the agent. */
+export function useInstallApk() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ deviceId, payload }: { deviceId: string; payload: InstallApkPayload }) =>
+      api
+        .post<{ command: DeviceCommand }>(`/api/devices/${deviceId}/commands`, {
+          type: 'install_apk',
           payload,
         })
         .then((res) => res.command),
