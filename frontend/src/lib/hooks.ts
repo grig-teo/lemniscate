@@ -655,11 +655,21 @@ export type InstallApkPayload = {
   appName?: string;
 };
 
+export type BuildAndroidPayload = {
+  repoUrl: string;
+  branch: string;
+  gradleTask?: string;
+  gradleModule?: string;
+  image?: string;
+  installDeviceId?: string;
+  appName?: string;
+};
+
 /** GET /api/devices/:id/commands item. */
 export type DeviceCommand = {
   id: string;
-  type: 'run_web' | 'install_apk' | (string & {});
-  payload: Partial<RunWebPayload> & Partial<InstallApkPayload>;
+  type: 'run_web' | 'install_apk' | 'build_android' | (string & {});
+  payload: Partial<RunWebPayload> & Partial<InstallApkPayload> & Partial<BuildAndroidPayload>;
   status: DeviceCommandStatus;
   result: {
     url?: string;
@@ -667,6 +677,9 @@ export type DeviceCommand = {
     projectDir?: string;
     savedTo?: string;
     installIntentLaunched?: boolean;
+    artifactKey?: string;
+    apkName?: string;
+    sizeBytes?: number;
     error?: string;
     log?: string;
   } | null;
@@ -760,6 +773,27 @@ export function useInstallApk() {
         .then((res) => res.command),
     onSuccess: (_command, { deviceId }) => {
       void queryClient.invalidateQueries({ queryKey: ['device-commands', deviceId] });
+      void queryClient.invalidateQueries({ queryKey: ['devices'] });
+    },
+  });
+}
+
+/** POST body for the android build+install pipeline (builder + target device). */
+export type DeployAndroidBody = {
+  buildDeviceId: string;
+  installDeviceId: string;
+};
+
+/** POST /api/repositories/:id/deploy-android — build on a builder, install on the target. */
+export function useDeployAndroid() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ repositoryId, ...body }: DeployAndroidBody & { repositoryId: string }) =>
+      api
+        .post<{ command: DeviceCommand }>(`/api/repositories/${repositoryId}/deploy-android`, body)
+        .then((res) => res.command),
+    onSuccess: (_command, { repositoryId: _ignored, ...body }) => {
+      void queryClient.invalidateQueries({ queryKey: ['device-commands', body.buildDeviceId] });
       void queryClient.invalidateQueries({ queryKey: ['devices'] });
     },
   });

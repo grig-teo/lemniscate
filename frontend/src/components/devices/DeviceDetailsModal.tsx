@@ -2,6 +2,8 @@ import * as React from 'react';
 
 import { describeApiError } from '@/lib/api';
 import {
+  androidRepos,
+  builderDevices,
   canInstallApk,
   commandTypeLabel,
   defaultRunPort,
@@ -12,7 +14,9 @@ import {
 } from '@/lib/devices';
 import {
   useDeleteDevice,
+  useDeployAndroid,
   useDeviceCommands,
+  useDevices,
   useInstallApk,
   useRenameDevice,
   useRepositories,
@@ -213,6 +217,76 @@ function RunOnDeviceSection({ device }: { device: Device }) {
   );
 }
 
+/** "Build & install from repository" form → POST deploy-android (build→install chain). */
+function BuildInstallSection({ device }: { device: Device }) {
+  const repos = useRepositories();
+  const devices = useDevices();
+  const deploy = useDeployAndroid();
+  const [repoId, setRepoId] = React.useState('');
+  const [builderId, setBuilderId] = React.useState('');
+
+  const candidates = androidRepos(repos.data ?? []);
+  const builders = builderDevices(devices.data ?? []);
+  const canSubmit = repoId !== '' && builderId !== '' && !deploy.isPending;
+
+  function submit(event: React.FormEvent) {
+    event.preventDefault();
+    if (!canSubmit) return;
+    deploy.mutate({ repositoryId: repoId, buildDeviceId: builderId, installDeviceId: device.id });
+  }
+
+  return (
+    <form onSubmit={submit} className="flex min-w-0 flex-col gap-3">
+      <p className="text-sm font-medium">Build &amp; install from repository</p>
+      <FormField label="Repository">
+        <Select value={repoId} onValueChange={setRepoId}>
+          <SelectTrigger aria-label="Repository to build">
+            <SelectValue placeholder="Pick an android repository" />
+          </SelectTrigger>
+          <SelectContent>
+            {candidates.map((r) => (
+              <SelectItem key={r.id} value={r.id}>
+                <RepoSelectLabel repo={r} />
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </FormField>
+      <FormField label="Builder device">
+        <Select value={builderId} onValueChange={setBuilderId}>
+          <SelectTrigger aria-label="Builder device">
+            <SelectValue placeholder="Pick a builder (desktop + docker)" />
+          </SelectTrigger>
+          <SelectContent>
+            {builders.map((d) => (
+              <SelectItem key={d.id} value={d.id}>
+                {d.name}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </FormField>
+      {candidates.length === 0 && (
+        <p className="text-sm text-muted-foreground">No android-platform repositories yet.</p>
+      )}
+      {builders.length === 0 && (
+        <p className="text-sm text-muted-foreground">
+          No online builder devices (desktop with docker) available.
+        </p>
+      )}
+      {deploy.isError && (
+        <p className="break-words text-sm text-destructive">{describeApiError(deploy.error)}</p>
+      )}
+      {deploy.isSuccess && !deploy.isPending && (
+        <p className="text-sm text-muted-foreground">Build queued — see history below.</p>
+      )}
+      <Button type="submit" disabled={!canSubmit}>
+        {deploy.isPending ? 'Sending…' : 'Build & Install'}
+      </Button>
+    </form>
+  );
+}
+
 /** "Install an APK on this device" form → POST install_apk command. */
 function InstallApkSection({ device }: { device: Device }) {
   const install = useInstallApk();
@@ -265,12 +339,17 @@ function InstallApkSection({ device }: { device: Device }) {
   );
 }
 
+function commandRowDetail(command: DeviceCommand): string {
+  if (command.type === 'run_web') {
+    return `${command.payload.branch} · port ${command.payload.port}`;
+  }
+  if (command.type === 'build_android') return command.payload.branch ?? 'gradle build';
+  return command.payload.appName ?? 'APK package';
+}
+
 function CommandRow({ command }: { command: DeviceCommand }) {
-  const isRunWeb = command.payload.repoUrl !== undefined;
   const title = command.payload.repoUrl ?? command.payload.apkUrl ?? '';
-  const detail = isRunWeb
-    ? `${command.payload.branch} · port ${command.payload.port}`
-    : (command.payload.appName ?? 'APK package');
+  const detail = commandRowDetail(command);
   return (
     <li className="flex min-w-0 flex-col gap-1 rounded-md border p-2 text-sm">
       <div className="flex items-center justify-between gap-2">
@@ -295,6 +374,13 @@ function CommandRow({ command }: { command: DeviceCommand }) {
         <span className="break-all text-xs text-muted-foreground">
           Saved to {command.result.savedTo}
           {command.result.installIntentLaunched ? ' · install intent launched' : ''}
+        </span>
+      )}
+      {command.status === 'done' && command.result?.artifactKey && (
+        <span className="break-all text-xs text-muted-foreground">
+          Built {command.result.apkName ?? 'APK'}
+          {command.result.sizeBytes ? ` · ${(command.result.sizeBytes / 1_000_000).toFixed(1)} MB` : ''}
+          {' · install queued'}
         </span>
       )}
       {command.status === 'failed' && command.result?.error && (
@@ -351,6 +437,9 @@ export function DeviceDetailsModal({
             <DeviceMeta device={device} />
             <DeleteDeviceButton device={device} onDeleted={() => onOpenChange(false)} />
             <RunOnDeviceSection device={device} />
+            {device.platform === 'android' && device.online && (
+              <BuildInstallSection device={device} />
+            )}
             {canInstallApk(device) && <InstallApkSection device={device} />}
             <div className="flex min-w-0 flex-col gap-2">
               <p className="text-sm font-medium">Command history</p>

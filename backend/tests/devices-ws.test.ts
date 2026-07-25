@@ -8,13 +8,23 @@ const mocks = vi.hoisted(() => ({
   deviceFindUnique: vi.fn(),
   deviceUpdate: vi.fn(),
   commandUpdateMany: vi.fn(),
+  commandFindFirst: vi.fn(),
+  commandCreate: vi.fn(),
 }));
 
 vi.mock('../src/lib/prisma.js', () => ({
   prisma: {
     device: { findUnique: mocks.deviceFindUnique, update: mocks.deviceUpdate },
-    deviceCommand: { updateMany: mocks.commandUpdateMany },
+    deviceCommand: {
+      updateMany: mocks.commandUpdateMany,
+      findFirst: mocks.commandFindFirst,
+      create: mocks.commandCreate,
+    },
   },
+}));
+
+vi.mock('../src/lib/device-artifacts.js', () => ({
+  presignedArtifactUrl: vi.fn().mockResolvedValue('https://minio/device-artifacts/dev-1/a.apk?sig=1'),
 }));
 
 import { handleAgentMessage, parseAgentMessage } from '../src/routes/devices.js';
@@ -84,5 +94,61 @@ describe('handleAgentMessage', () => {
       data: { status: 'done', result: { url: 'http://x' } },
     });
     expect(touch).not.toHaveBeenCalled();
+  });
+});
+
+describe('build→install chaining', () => {
+  const buildCommand = {
+    id: 'cmd-build',
+    deviceId: 'dev-builder',
+    type: 'build_android',
+    payload: { repoUrl: 'https://github.com/a/b', installDeviceId: 'dev-phone', appName: 'B' },
+  };
+
+  it('creates and dispatches install_apk with a fresh presigned URL after a done build', async () => {
+    mocks.commandFindFirst.mockResolvedValue(buildCommand);
+    mocks.commandCreate.mockImplementation(async ({ data }: { data: object }) => ({
+      id: 'cmd-install',
+      status: 'queued',
+      ...data,
+    }));
+    const touch = vi.fn().mockResolvedValue(undefined);
+    await handleAgentMessage(
+      'dev-builder',
+      {
+        type: 'command_result',
+        id: 'cmd-build',
+        status: 'done',
+        result: { artifactKey: 'dev-builder/u1-app.apk' },
+      },
+      touch,
+    );
+    expect(mocks.commandCreate).toHaveBeenCalledWith({
+      data: {
+        deviceId: 'dev-phone',
+        type: 'install_apk',
+        payload: {
+          apkUrl: 'https://minio/device-artifacts/dev-1/a.apk?sig=1',
+          appName: 'B',
+        },
+      },
+    });
+  });
+
+  it('does not chain on failed builds or non-build commands', async () => {
+    mocks.commandFindFirst.mockResolvedValue(buildCommand);
+    const touch = vi.fn().mockResolvedValue(undefined);
+    await handleAgentMessage(
+      'dev-builder',
+      { type: 'command_result', id: 'cmd-build', status: 'failed', result: { error: 'x' } },
+      touch,
+    );
+    mocks.commandFindFirst.mockResolvedValue({ ...buildCommand, type: 'run_web' });
+    await handleAgentMessage(
+      'dev-builder',
+      { type: 'command_result', id: 'cmd-build', status: 'done', result: { artifactKey: 'k' } },
+      touch,
+    );
+    expect(mocks.commandCreate).not.toHaveBeenCalled();
   });
 });

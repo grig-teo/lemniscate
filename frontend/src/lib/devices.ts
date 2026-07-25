@@ -2,7 +2,7 @@
  * Pure helpers for the device-tunnel UI (DeviceBar / PairingDialog /
  * DeviceDetailsModal). Tested in devices.test.ts — keep them dependency-free.
  */
-import type { Device } from '@/lib/hooks';
+import type { Device, Repository } from '@/lib/hooks';
 
 const MINUTE_MS = 60_000;
 const HOUR_MS = 3_600_000;
@@ -41,9 +41,20 @@ export function canInstallApk(device: Pick<Device, 'platform'>): boolean {
   return device.platform === 'android' || device.platform === 'desktop';
 }
 
+/** Repositories an android APK can be built from (detected platform 'android'). */
+export function androidRepos<T extends Pick<Repository, 'platform'>>(repos: T[]): T[] {
+  return repos.filter((repo) => repo.platform === 'android');
+}
+
+/** Devices that can build APKs: online desktop agents with docker. */
+export function builderDevices(devices: Device[]): Device[] {
+  return devices.filter((device) => device.online && canRunWeb(device));
+}
+
 const COMMAND_TYPE_LABELS: Record<string, string> = {
   run_web: 'Run web app',
   install_apk: 'Install APK',
+  build_android: 'Build Android APK',
 };
 
 /** Display label for a device command type; unknown types pass through. */

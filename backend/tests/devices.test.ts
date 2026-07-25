@@ -14,6 +14,7 @@ const mocks = vi.hoisted(() => ({
   pairingFindUnique: vi.fn(),
   pairingDelete: vi.fn(),
   deviceCreate: vi.fn(),
+  deviceFindUnique: vi.fn(),
   deviceFindMany: vi.fn(),
   deviceFindFirst: vi.fn(),
   deviceUpdate: vi.fn(),
@@ -21,6 +22,7 @@ const mocks = vi.hoisted(() => ({
   commandFindMany: vi.fn(),
   commandCreate: vi.fn(),
   commandUpdate: vi.fn(),
+  storeDeviceArtifact: vi.fn(),
 }));
 
 vi.mock('../src/lib/prisma.js', () => ({
@@ -34,6 +36,7 @@ vi.mock('../src/lib/prisma.js', () => ({
     },
     device: {
       create: mocks.deviceCreate,
+      findUnique: mocks.deviceFindUnique,
       findMany: mocks.deviceFindMany,
       findFirst: mocks.deviceFindFirst,
       update: mocks.deviceUpdate,
@@ -45,6 +48,10 @@ vi.mock('../src/lib/prisma.js', () => ({
       update: mocks.commandUpdate,
     },
   },
+}));
+
+vi.mock('../src/lib/device-artifacts.js', () => ({
+  storeDeviceArtifact: mocks.storeDeviceArtifact,
 }));
 
 import devicesRoutes from '../src/routes/devices.js';
@@ -339,5 +346,84 @@ describe('install_apk commands', () => {
     const app = await buildApp();
     const response = await postApk(app, { type: 'install_apk', payload: { apkUrl: 'not-a-url' } });
     expect(response.statusCode).toBe(400);
+  });
+});
+
+describe('build_android commands', () => {
+  it('queues build_android with the user payload (server enriches at dispatch)', async () => {
+    mocks.deviceFindFirst.mockResolvedValue({ id: 'dev-1', userId: 'user-1', platform: 'desktop' });
+    const app = await buildApp();
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/devices/dev-1/commands',
+      ...AUTH,
+      payload: { type: 'build_android', payload: { repoUrl: 'https://github.com/a/b', branch: 'main' } },
+    });
+    expect(response.statusCode).toBe(201);
+    expect(mocks.commandCreate).toHaveBeenCalledWith({
+      data: {
+        deviceId: 'dev-1',
+        type: 'build_android',
+        payload: { repoUrl: 'https://github.com/a/b', branch: 'main' },
+      },
+    });
+  });
+
+  it('400s shell-hostile gradle names', async () => {
+    mocks.deviceFindFirst.mockResolvedValue({ id: 'dev-1', userId: 'user-1', platform: 'desktop' });
+    const app = await buildApp();
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/devices/dev-1/commands',
+      ...AUTH,
+      payload: {
+        type: 'build_android',
+        payload: { repoUrl: 'https://github.com/a/b', branch: 'main', gradleTask: 'x; rm -rf /' },
+      },
+    });
+    expect(response.statusCode).toBe(400);
+  });
+});
+
+describe('POST /api/devices/artifacts', () => {
+  function upload(app: Awaited<ReturnType<typeof buildApp>>, token?: string) {
+    return app.inject({
+      method: 'POST',
+      url: '/api/devices/artifacts?filename=my%20app.apk',
+      headers: {
+        'content-type': 'application/octet-stream',
+        ...(token ? { authorization: `Device ${token}` } : {}),
+      },
+      payload: Buffer.from('fake-apk-bytes'),
+    });
+  }
+
+  it('401s without a valid device token', async () => {
+    mocks.deviceFindUnique.mockResolvedValue(null);
+    const app = await buildApp();
+    expect((await upload(app)).statusCode).toBe(401);
+    expect((await upload(app, 'bad-token')).statusCode).toBe(401);
+    expect(mocks.storeDeviceArtifact).not.toHaveBeenCalled();
+  });
+
+  it('stores the body under the authenticated device and returns the key', async () => {
+    mocks.deviceFindUnique.mockResolvedValue({ id: 'dev-builder', userId: 'user-1' });
+    mocks.storeDeviceArtifact.mockResolvedValue({ key: 'dev-builder/u1-my-app.apk' });
+    const app = await buildApp();
+    const response = await upload(app, 'good-token');
+    expect(response.statusCode).toBe(201);
+    expect(response.json()).toEqual({ key: 'dev-builder/u1-my-app.apk' });
+    expect(mocks.storeDeviceArtifact).toHaveBeenCalledWith(
+      'dev-builder',
+      'my app.apk',
+      Buffer.from('fake-apk-bytes'),
+    );
+  });
+
+  it('503s when artifact storage is unavailable', async () => {
+    mocks.deviceFindUnique.mockResolvedValue({ id: 'dev-builder', userId: 'user-1' });
+    mocks.storeDeviceArtifact.mockRejectedValue(new Error('MinIO is not configured'));
+    const app = await buildApp();
+    expect((await upload(app, 'good-token')).statusCode).toBe(503);
   });
 });

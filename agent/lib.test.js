@@ -245,3 +245,67 @@ test('parseServerMessage parses install_apk commands', () => {
 test('APK downloads are capped at 100MB', () => {
   assert.equal(lib.APK_MAX_BYTES, 100 * 1024 * 1024);
 });
+
+// --- build_android helpers -----------------------------------------------------
+
+test('gradleDockerArgs builds the docker run invocation', () => {
+  assert.deepEqual(
+    lib.gradleDockerArgs({
+      repoDir: '/repos/app',
+      image: 'mingc/android-build-box:1.29.0',
+      gradleModule: 'app',
+      gradleTask: 'assembleDebug',
+    }),
+    [
+      'run', '--rm',
+      '-v', '/repos/app:/project',
+      '-w', '/project',
+      'mingc/android-build-box:1.29.0',
+      'sh', '-c', './gradlew --no-daemon app:assembleDebug',
+    ],
+  );
+});
+
+test('pickNewestApk picks the most recent candidate, null when empty', () => {
+  const candidates = [
+    { path: '/a/old.apk', mtimeMs: 100 },
+    { path: '/a/new.apk', mtimeMs: 300 },
+    { path: '/a/mid.apk', mtimeMs: 200 },
+  ];
+  assert.equal(lib.pickNewestApk(candidates), '/a/new.apk');
+  assert.equal(lib.pickNewestApk([]), null);
+});
+
+test('findApkCandidates walks the module apk output tree', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'apk-glob-'));
+  const nested = path.join(root, 'app', 'build', 'outputs', 'apk', 'debug');
+  fs.mkdirSync(nested, { recursive: true });
+  fs.writeFileSync(path.join(nested, 'app-debug.apk'), 'x');
+  fs.writeFileSync(path.join(nested, 'notes.txt'), 'x');
+  const candidates = lib.findApkCandidates(root, 'app');
+  assert.equal(candidates.length, 1);
+  assert.match(candidates[0].path, /app-debug\.apk$/);
+  assert.ok(candidates[0].mtimeMs > 0);
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
+test('findApkCandidates returns [] when the output dir does not exist', () => {
+  assert.deepEqual(lib.findApkCandidates(os.tmpdir(), 'no-such-module'), []);
+});
+
+test('artifactUploadUrl appends the encoded filename query', () => {
+  assert.equal(
+    lib.artifactUploadUrl('https://api.x/', 'my app.apk'),
+    'https://api.x/api/devices/artifacts?filename=my%20app.apk',
+  );
+});
+
+test('parseServerMessage parses build_android commands', () => {
+  const raw = '{"type":"build_android","id":"c1","payload":{"repoUrl":"https://x","branch":"main"}}';
+  assert.deepEqual(lib.parseServerMessage(raw), {
+    kind: 'command',
+    id: 'c1',
+    commandType: 'build_android',
+    payload: { repoUrl: 'https://x', branch: 'main' },
+  });
+});

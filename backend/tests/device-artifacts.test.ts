@@ -1,0 +1,36 @@
+import { describe, expect, it } from 'vitest';
+
+// Pure helpers for the device artifact store (MinIO 'device-artifacts'
+// bucket): filename sanitizing and object-key building.
+
+import { artifactKeyFor, safeArtifactFilename } from '../src/lib/device-artifacts.js';
+
+describe('safeArtifactFilename', () => {
+  it('keeps a plain apk name as-is', () => {
+    expect(safeArtifactFilename('app-debug.apk')).toBe('app-debug.apk');
+  });
+
+  it('strips path traversal and keeps only the basename', () => {
+    expect(safeArtifactFilename('../../etc/passwd.apk')).toBe('passwd.apk');
+    expect(safeArtifactFilename('C:\\builds\\app release.apk')).toBe('app-release.apk');
+  });
+
+  it('replaces unsafe characters with dashes', () => {
+    expect(safeArtifactFilename('my app (v2) [debug].apk')).toBe('my-app-v2-debug-.apk');
+  });
+
+  it('falls back to app.apk when nothing safe remains', () => {
+    expect(safeArtifactFilename('')).toBe('app.apk');
+    expect(safeArtifactFilename('///')).toBe('app.apk');
+  });
+});
+
+describe('artifactKeyFor', () => {
+  it('scopes the key under the device id with a unique prefix', () => {
+    expect(artifactKeyFor('dev-1', 'app.apk', 'abc123')).toBe('dev-1/abc123-app.apk');
+  });
+
+  it('sanitizes the filename part', () => {
+    expect(artifactKeyFor('dev-1', '../my app.apk', 'abc123')).toBe('dev-1/abc123-my-app.apk');
+  });
+});

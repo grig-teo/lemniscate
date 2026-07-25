@@ -4,7 +4,7 @@
 // Everything here is best-effort — when MinIO is not configured or
 // unreachable the caller logs a warning and continues.
 
-import { Client } from 'minio';
+import { getMinioBucket } from './minio-client.js';
 
 export type LibraryKind = 'skill' | 'agents_md' | 'mcp_server';
 
@@ -31,32 +31,12 @@ export function libraryObjectKey(kind: LibraryKind, slug: string): string {
   return `${FOLDERS[kind]}/${slug}${EXTENSIONS[kind]}`;
 }
 
-let client: Client | null = null;
-let bucketReady = false;
-
-// Lazy so importing this module (e.g. in unit tests) never touches env
-// validation or the network.
-async function getClient(): Promise<{ client: Client; bucket: string } | null> {
+// Bucket from config (default 'lemniscate-library'); the client itself lives
+// in minio-client.ts (single home, shared with device-artifacts).
+async function getClient(): Promise<{ client: import('minio').Client; bucket: string } | null> {
   const { config } = await import('../config.js');
-  if (!config.MINIO_ENDPOINT || !config.MINIO_ROOT_USER || !config.MINIO_ROOT_PASSWORD) {
-    return null;
-  }
-  if (client === null) {
-    client = new Client({
-      endPoint: config.MINIO_ENDPOINT,
-      port: config.MINIO_PORT,
-      useSSL: false,
-      accessKey: config.MINIO_ROOT_USER,
-      secretKey: config.MINIO_ROOT_PASSWORD,
-    });
-  }
-  if (!bucketReady) {
-    if (!(await client.bucketExists(config.MINIO_BUCKET))) {
-      await client.makeBucket(config.MINIO_BUCKET);
-    }
-    bucketReady = true;
-  }
-  return { client, bucket: config.MINIO_BUCKET };
+  const ctx = await getMinioBucket(config.MINIO_BUCKET);
+  return ctx ? { client: ctx.client, bucket: config.MINIO_BUCKET } : null;
 }
 
 /** Mirror one library entry to MinIO; failures are logged, never thrown. */

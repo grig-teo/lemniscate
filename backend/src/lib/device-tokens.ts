@@ -21,3 +21,9 @@ export function generateDeviceToken(): string {
 export function hashDeviceToken(token: string): string {
   return createHash('sha256').update(token, 'utf8').digest('hex');
 }
+
+/** Token from an `Authorization: Device <token>` header; null when absent/wrong scheme. */
+export function deviceTokenFromHeader(header: string | undefined): string | null {
+  const match = /^Device (\S+)$/.exec(header ?? '');
+  return match?.[1] ?? null;
+}

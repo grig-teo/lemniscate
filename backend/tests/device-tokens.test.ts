@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import {
+  deviceTokenFromHeader,
   generateDeviceToken,
   generatePairingCode,
   hashDeviceToken,
@@ -44,5 +45,17 @@ describe('hashDeviceToken', () => {
   it('is deterministic and input-sensitive', () => {
     expect(hashDeviceToken('abc')).toBe(hashDeviceToken('abc'));
     expect(hashDeviceToken('abc')).not.toBe(hashDeviceToken('abd'));
+  });
+});
+
+describe('deviceTokenFromHeader', () => {
+  it('extracts the token from an Authorization: Device header', () => {
+    expect(deviceTokenFromHeader('Device abc123')).toBe('abc123');
+  });
+
+  it('returns null for missing or wrong-scheme headers', () => {
+    expect(deviceTokenFromHeader(undefined)).toBeNull();
+    expect(deviceTokenFromHeader('Bearer abc')).toBeNull();
+    expect(deviceTokenFromHeader('Device')).toBeNull();
   });
 });

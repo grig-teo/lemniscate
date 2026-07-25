@@ -2,8 +2,16 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type { Prisma } from '@prisma/client';
 import type { WebSocket } from 'ws';
 import { z } from 'zod';
+import { presignedArtifactUrl, storeDeviceArtifact } from '../lib/device-artifacts.js';
+import { nextCommandAfterBuild } from '../lib/device-commands.js';
+import { dispatchCommand } from '../lib/device-dispatch.js';
 import { deviceHub } from '../lib/device-hub.js';
-import { generateDeviceToken, generatePairingCode, hashDeviceToken } from '../lib/device-tokens.js';
+import {
+  deviceTokenFromHeader,
+  generateDeviceToken,
+  generatePairingCode,
+  hashDeviceToken,
+} from '../lib/device-tokens.js';
 import { prisma } from '../lib/prisma.js';
 import { authenticatedUserId, requireAuth } from '../plugins/auth.js';
 import { parseOrReply } from './helpers.js';
@@ -19,6 +27,11 @@ const PAIRING_TTL_MS = 10 * 60 * 1000;
 const CLAIM_RATE_LIMIT = { max: 20, timeWindow: '1 minute' } as const;
 const HEARTBEAT_WRITE_MS = 20_000;
 const RECENT_COMMANDS_LIMIT = 20;
+const ARTIFACT_BODY_LIMIT = 200 * 1024 * 1024;
+
+// Gradle module/task names land inside a `sh -c` script on the builder —
+// keep them strictly alphanumeric so no shell injection is possible.
+const gradleName = z.string().regex(/^[a-zA-Z0-9_-]+$/);
 
 const claimBodySchema = z.object({
   code: z.string().length(6),
@@ -46,6 +59,19 @@ const commandBodySchema = z.discriminatedUnion('type', [
     payload: z.object({
       apkUrl: z.string().url(),
       appName: z.string().min(1).max(120).optional(),
+    }),
+  }),
+  // User-facing part of a build request; the server adds gradle/docker
+  // defaults and uploadBaseUrl at dispatch (lib/device-dispatch.ts), and the
+  // install chaining fields via POST /api/repositories/:id/deploy-android.
+  z.object({
+    type: z.literal('build_android'),
+    payload: z.object({
+      repoUrl: z.string().url(),
+      branch: z.string().min(1).max(200),
+      gradleTask: gradleName.optional(),
+      gradleModule: gradleName.optional(),
+      image: z.string().min(1).max(200).optional(),
     }),
   }),
 ]);
@@ -151,22 +177,9 @@ async function deleteDevice(request: FastifyRequest, reply: FastifyReply) {
 
 // --- Commands -------------------------------------------------------------
 
-// Pushes the command to the connected agent and marks it sent; false when
-// the device is offline (command then stays 'queued' until the WS flush).
-async function dispatchCommand(command: {
-  id: string;
-  deviceId: string;
-  type: string;
-  payload: unknown;
-}): Promise<boolean> {
-  const sent = deviceHub.sendCommand(command.deviceId, {
-    id: command.id,
-    type: command.type,
-    payload: command.payload,
-  });
-  if (!sent) return false;
-  await prisma.deviceCommand.update({ where: { id: command.id }, data: { status: 'sent' } });
-  return true;
+// The device behind a raw token (WS query param or Authorization header).
+function deviceByToken(token: string | null | undefined) {
+  return token ? prisma.device.findUnique({ where: { tokenHash: hashDeviceToken(token) } }) : null;
 }
 
 async function listCommands(request: FastifyRequest, reply: FastifyReply) {
@@ -197,6 +210,27 @@ async function createCommand(request: FastifyRequest, reply: FastifyReply) {
   });
   const sent = await dispatchCommand(command);
   return reply.code(201).send({ command: { ...command, status: sent ? 'sent' : command.status } });
+}
+
+// --- Artifact upload (builder agents) --------------------------------------
+
+// POST /artifacts?filename=app.apk — the builder agent uploads the APK it
+// produced, authenticating with its own device token
+// (`Authorization: Device <token>`); the raw token is never stored server-side.
+async function uploadArtifact(request: FastifyRequest, reply: FastifyReply) {
+  const device = await deviceByToken(deviceTokenFromHeader(request.headers.authorization));
+  if (!device) return reply.code(401).send({ error: 'Invalid device token' });
+  const filename = (request.query as { filename?: string }).filename ?? 'app.apk';
+  const body = request.body;
+  if (!Buffer.isBuffer(body) || body.length === 0) {
+    return reply.code(400).send({ error: 'Expected an octet-stream body' });
+  }
+  try {
+    return reply.code(201).send(await storeDeviceArtifact(device.id, filename, body));
+  } catch (err) {
+    request.log.error({ err }, 'artifact upload failed');
+    return reply.code(503).send({ error: 'Artifact storage unavailable' });
+  }
 }
 
 // --- WebSocket gateway ----------------------------------------------------
@@ -235,6 +269,32 @@ async function mergeDeviceMeta(deviceId: string, meta: Record<string, unknown>):
   });
 }
 
+// A finished build_android chains into install_apk for the target device
+// with a FRESH presigned URL (generated now, not at upload time). Storage
+// failures must not break result handling — the build itself stays 'done'.
+async function chainInstallAfterBuild(
+  deviceId: string,
+  commandId: string,
+  result: unknown,
+): Promise<void> {
+  const command = await prisma.deviceCommand.findFirst({ where: { id: commandId, deviceId } });
+  const next = command ? nextCommandAfterBuild(command, result) : null;
+  if (!next) return;
+  try {
+    const apkUrl = await presignedArtifactUrl(next.artifactKey);
+    const install = await prisma.deviceCommand.create({
+      data: {
+        deviceId: next.installDeviceId,
+        type: 'install_apk',
+        payload: { apkUrl, appName: next.appName },
+      },
+    });
+    await dispatchCommand(install);
+  } catch (err) {
+    console.error(`build→install chaining failed for command ${commandId}:`, err);
+  }
+}
+
 /**
  * Applies one validated agent message. `touch` updates Device.lastSeenAt —
  * the caller picks the throttled variant for heartbeats.
@@ -257,6 +317,9 @@ export async function handleAgentMessage(
     where: { id: message.id, deviceId },
     data: { status: message.status, result: message.result as Prisma.InputJsonValue },
   });
+  if (message.status === 'done') {
+    await chainInstallAfterBuild(deviceId, message.id, message.result);
+  }
 }
 
 // lastSeenAt writer: heartbeats throttle DB writes to one per 20s.
@@ -294,10 +357,7 @@ async function onSocketMessage(
 }
 
 async function handleDeviceSocket(socket: WebSocket, request: FastifyRequest): Promise<void> {
-  const token = (request.query as { token?: string }).token;
-  const device = token
-    ? await prisma.device.findUnique({ where: { tokenHash: hashDeviceToken(token) } })
-    : null;
+  const device = await deviceByToken((request.query as { token?: string }).token);
   if (!device) {
     socket.close(4001, 'invalid device token');
     return;
@@ -315,8 +375,15 @@ async function handleDeviceSocket(socket: WebSocket, request: FastifyRequest): P
 }
 
 export default async function devicesRoutes(app: FastifyInstance) {
+  // APK uploads from builder agents: raw bytes, capped at 200MB.
+  app.addContentTypeParser(
+    'application/octet-stream',
+    { parseAs: 'buffer', bodyLimit: ARTIFACT_BODY_LIMIT },
+    (_request, body, done) => done(null, body),
+  );
   app.post('/pairings', { preHandler: requireAuth }, createPairing);
   app.post('/claim', { config: { rateLimit: CLAIM_RATE_LIMIT } }, claimPairing);
+  app.post('/artifacts', uploadArtifact);
   app.get('/', { preHandler: requireAuth }, listDevices);
   app.patch('/:id', { preHandler: requireAuth }, renameDevice);
   app.delete('/:id', { preHandler: requireAuth }, deleteDevice);

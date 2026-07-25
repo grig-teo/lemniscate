@@ -23,6 +23,7 @@ const HEARTBEAT_MS = 25_000;
 const BACKOFF_BASE_MS = 1_000;
 const BACKOFF_CAP_MS = 30_000;
 const HTTP_READY_TIMEOUT_MS = 30_000;
+const GRADLE_BUILD_TIMEOUT_MS = 30 * 60_000;
 
 const USAGE = `Lemniscate device agent
 
@@ -213,17 +214,73 @@ async function executeInstallApk(send, { id, payload }) {
   }
 }
 
-function executeCommand(send, command) {
+// --- build_android execution --------------------------------------------------
+
+/** gradlew must be executable inside the container; best-effort chmod. */
+async function ensureGradlewExecutable(log, projectDir) {
+  const gradlew = path.join(projectDir, 'gradlew');
+  if (!fs.existsSync(gradlew)) throw new Error('gradlew not found at repo root');
+  await fs.promises.chmod(gradlew, 0o755);
+  log.text += 'chmod +x gradlew\n';
+}
+
+/** Run the gradle build inside the android build box image. */
+async function buildApkInDocker(log, projectDir, payload) {
+  const args = lib.gradleDockerArgs({
+    repoDir: projectDir,
+    image: payload.image ?? 'mingc/android-build-box:1.29.0',
+    gradleModule: payload.gradleModule ?? 'app',
+    gradleTask: payload.gradleTask ?? 'assembleDebug',
+  });
+  await step(log, 'docker', args, { timeout: GRADLE_BUILD_TIMEOUT_MS });
+}
+
+/** POST the APK to the server, authenticated with this device's own token. */
+async function uploadApk(log, config, payload, apkPath) {
+  const apkName = path.basename(apkPath);
+  const body = await fs.promises.readFile(apkPath);
+  const response = await fetch(lib.artifactUploadUrl(payload.uploadBaseUrl, apkName), {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/octet-stream',
+      authorization: `Device ${config.deviceToken}`,
+    },
+    body,
+  });
+  if (!response.ok) throw new Error(`APK upload failed (HTTP ${response.status})`);
+  const { key } = await response.json();
+  log.text += `Uploaded ${apkName} (${body.length} bytes) → ${key}\n`;
+  return { artifactKey: key, apkName, sizeBytes: body.length };
+}
+
+async function executeBuildAndroid(send, config, { id, payload }) {
+  const log = { text: '' };
+  send(lib.commandResultMessage(id, 'running'));
+  try {
+    const projectDir = await ensureRepo(log, payload.repoUrl, payload.branch);
+    await ensureGradlewExecutable(log, projectDir);
+    await buildApkInDocker(log, projectDir, payload);
+    const apkPath = lib.pickNewestApk(lib.findApkCandidates(projectDir, payload.gradleModule ?? 'app'));
+    if (!apkPath) throw new Error('Build succeeded but no APK was found in the outputs');
+    const result = await uploadApk(log, config, payload, apkPath);
+    send(lib.commandResultMessage(id, 'done', result));
+  } catch (error) {
+    send(lib.commandResultMessage(id, 'failed', { error: error.message, log: lib.tailLog(log.text) }));
+  }
+}
+
+function executeCommand(send, config, command) {
   if (command.commandType === 'install_apk') return executeInstallApk(send, command);
+  if (command.commandType === 'build_android') return executeBuildAndroid(send, config, command);
   return executeRunWeb(send, command);
 }
 
 // --- WebSocket tunnel ---------------------------------------------------------
 
-function createCommandQueue(send) {
+function createCommandQueue(send, config) {
   let tail = Promise.resolve();
   return (command) => {
-    tail = tail.then(() => executeCommand(send, command)).catch(() => {});
+    tail = tail.then(() => executeCommand(send, config, command)).catch(() => {});
     return tail;
   };
 }
@@ -239,7 +296,7 @@ function connect(config, meta, attempt = 0) {
   const ws = new WebSocket(wsUrl);
   let heartbeat = null;
   const send = (message) => ws.readyState === WebSocket.OPEN && ws.send(JSON.stringify(message));
-  const enqueue = createCommandQueue(send);
+  const enqueue = createCommandQueue(send, config);
 
   ws.on('open', () => {
     console.log(`Connected to ${config.server} as "${config.name}".`);

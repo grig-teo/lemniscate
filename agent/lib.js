@@ -9,7 +9,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 
-export const AGENT_VERSION = '0.2.0';
+export const AGENT_VERSION = '0.3.0';
 
 /** install_apk downloads are refused beyond this size. */
 export const APK_MAX_BYTES = 100 * 1024 * 1024;
@@ -134,6 +134,51 @@ export function installIntentCommand(apkPath) {
   };
 }
 
+// --- build_android helpers ----------------------------------------------------
+
+/** docker run args for a gradle build inside the android build box image. */
+export function gradleDockerArgs({ repoDir, image, gradleModule, gradleTask }) {
+  return [
+    'run', '--rm',
+    '-v', `${repoDir}:/project`,
+    '-w', '/project',
+    image,
+    'sh', '-c', `./gradlew --no-daemon ${gradleModule}:${gradleTask}`,
+  ];
+}
+
+/** Newest APK by mtime among candidates ({path, mtimeMs}), null when empty. */
+export function pickNewestApk(candidates) {
+  let newest = null;
+  for (const candidate of candidates) {
+    if (!newest || candidate.mtimeMs > newest.mtimeMs) newest = candidate;
+  }
+  return newest?.path ?? null;
+}
+
+/** All *.apk files under <repoDir>/<module>/build/outputs/apk, with mtimes. */
+export function findApkCandidates(repoDir, gradleModule) {
+  const root = path.join(repoDir, gradleModule, 'build', 'outputs', 'apk');
+  const candidates = [];
+  const walk = (dir) => {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) walk(full);
+      else if (entry.name.endsWith('.apk')) {
+        candidates.push({ path: full, mtimeMs: fs.statSync(full).mtimeMs });
+      }
+    }
+  };
+  if (fs.existsSync(root)) walk(root);
+  return candidates;
+}
+
+/** Upload endpoint for a built APK on the Lemniscate server. */
+export function artifactUploadUrl(uploadBaseUrl, filename) {
+  const base = uploadBaseUrl.replace(/\/+$/, '');
+  return `${base}/api/devices/artifacts?filename=${encodeURIComponent(filename)}`;
+}
+
 // --- URLs / messages ----------------------------------------------------------
 
 /** http(s) server base URL → ws(s) device-tunnel URL for a device token. */
@@ -165,7 +210,7 @@ export function commandResultMessage(id, status, result) {
  * Parse a raw server frame. Returns
  * {kind:'welcome', deviceId} | {kind:'command', id, commandType, payload} | null.
  */
-const COMMAND_TYPES = ['run_web', 'install_apk'];
+const COMMAND_TYPES = ['run_web', 'install_apk', 'build_android'];
 
 export function parseServerMessage(raw) {
   let message;

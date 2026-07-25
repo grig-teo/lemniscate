@@ -3,6 +3,7 @@ import crypto from 'node:crypto';
 import path from 'node:path';
 import { z } from 'zod';
 import { config } from '../config.js';
+import { dispatchCommand } from '../lib/device-dispatch.js';
 import { cleanupWorkdir, cloneRepository } from '../lib/agent-git.js';
 import { GIT_HTTP_AUTH_USERNAME, getProviderClient, tokenlessCloneUrl } from '../lib/git-providers.js';
 import { prisma } from '../lib/prisma.js';
@@ -16,6 +17,11 @@ import { parseOrReply } from './helpers.js';
 const idParamsSchema = z.object({ id: z.string().min(1) });
 
 const foldersQuerySchema = z.object({ search: z.string().max(200).optional() });
+
+const deployAndroidBodySchema = z.object({
+  buildDeviceId: z.string().min(1).max(100),
+  installDeviceId: z.string().min(1).max(100),
+});
 
 const patchBodySchema = z
   .object({
@@ -203,6 +209,50 @@ const repositoriesRoutes: FastifyPluginAsync = async (app) => {
       request.log.error({ err }, 'platform detection failed');
       return reply.code(502).send({ error: 'Failed to fetch the repository tree' });
     }
+  });
+
+  // Kick off the android build+install pipeline: a build_android command for
+  // the builder device; when it finishes, the WS result handler chains an
+  // install_apk command to installDeviceId (see routes/devices.ts).
+  app.post('/repositories/:id/deploy-android', async (request, reply) => {
+    const userId = authenticatedUserId(request);
+    const params = parseOrReply(idParamsSchema, request.params, reply, 'Invalid repository id');
+    if (params === null) return;
+    const data = parseOrReply(deployAndroidBodySchema, request.body, reply, 'Invalid body');
+    if (data === null) return;
+
+    const repository = await prisma.repository.findFirst({
+      where: { id: params.id, connection: { userId } },
+      select: { id: true, name: true, cloneUrl: true, defaultBranch: true, platform: true },
+    });
+    if (!repository) {
+      return reply.code(404).send({ error: 'Repository not found' });
+    }
+    if (repository.platform !== 'android') {
+      return reply.code(400).send({ error: 'Repository platform is not android' });
+    }
+    const devices = await prisma.device.findMany({
+      where: { userId, id: { in: [data.buildDeviceId, data.installDeviceId] } },
+      select: { id: true },
+    });
+    if (devices.length !== 2) {
+      return reply.code(404).send({ error: 'Device not found' });
+    }
+
+    const command = await prisma.deviceCommand.create({
+      data: {
+        deviceId: data.buildDeviceId,
+        type: 'build_android',
+        payload: {
+          repoUrl: repository.cloneUrl,
+          branch: repository.defaultBranch,
+          installDeviceId: data.installDeviceId,
+          appName: repository.name,
+        },
+      },
+    });
+    const sent = await dispatchCommand(command);
+    return reply.code(201).send({ command: { ...command, status: sent ? 'sent' : command.status } });
   });
 
   app.patch('/repositories/:id', async (request, reply) => {

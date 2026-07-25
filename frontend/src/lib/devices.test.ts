@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 
 import {
   agentPairCommand,
+  androidRepos,
+  builderDevices,
   canInstallApk,
   canRunWeb,
   commandTypeLabel,
@@ -150,5 +152,36 @@ describe('repoPlatformLabel', () => {
     expect(repoPlatformLabel('unknown')).toBeNull();
     expect(repoPlatformLabel(null)).toBeNull();
     expect(repoPlatformLabel(undefined)).toBeNull();
+  });
+});
+
+describe('androidRepos', () => {
+  it('keeps only android-platform repositories', () => {
+    const repos = [
+      { platform: 'android' },
+      { platform: 'ios' },
+      { platform: 'web' },
+      { platform: null },
+      { platform: 'unknown' },
+    ];
+    expect(androidRepos(repos)).toEqual([{ platform: 'android' }]);
+  });
+});
+
+describe('builderDevices', () => {
+  it('keeps only online desktop devices with docker', () => {
+    const devices = [
+      makeDevice({ id: 'ok', platform: 'desktop', meta: { dockerAvailable: true }, online: true }),
+      makeDevice({ id: 'offline', platform: 'desktop', meta: { dockerAvailable: true }, online: false }),
+      makeDevice({ id: 'no-docker', platform: 'desktop', meta: { dockerAvailable: false } }),
+      makeDevice({ id: 'phone', platform: 'android', online: true }),
+    ];
+    expect(builderDevices(devices).map((d) => d.id)).toEqual(['ok']);
+  });
+});
+
+describe('commandTypeLabel build_android', () => {
+  it('labels build_android', () => {
+    expect(commandTypeLabel('build_android')).toBe('Build Android APK');
   });
 });
