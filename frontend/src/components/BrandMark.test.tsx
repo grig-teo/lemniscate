@@ -10,14 +10,25 @@ describe('BrandMark', () => {
     expect(html).not.toContain('>Lemniscate<');
   });
 
-  it('sizes the animated logo to the label font size (1em box)', () => {
+  it('sizes the animated logo to twice the label font size (2em box)', () => {
     const html = renderToStaticMarkup(<BrandMark />);
-    expect(html).toContain('h-[1em]');
-    expect(html).toContain('w-[1em]');
+    expect(html).toContain('h-[2em]');
+    expect(html).toContain('w-[2em]');
   });
 
-  it('sets the label font size on the lockup so the 1em mark matches it', () => {
+  it('sets the label font size on the lockup so the 2em mark scales with it', () => {
     const html = renderToStaticMarkup(<BrandMark />);
     expect(html).toContain('text-lg');
+  });
+
+  it('animates the swarm by default', () => {
+    const html = renderToStaticMarkup(<BrandMark />);
+    expect(html).toContain('animateMotion');
+  });
+
+  it('shows only the static mark (no swarm) when animate is false', () => {
+    const html = renderToStaticMarkup(<BrandMark animate={false} />);
+    expect(html).not.toContain('animateMotion');
+    expect(html).toContain('h-[2em]');
   });
 });

@@ -6,8 +6,10 @@ import type { CreateTaskBody, StartTaskBody, Task } from '@/lib/api-types';
 // Mutations whose callers already render the error inline (dialogs, settings
 // forms) opt out of the global MutationCache error toast with this meta.
 import { SUPPRESS_ERROR_TOAST_META } from '@/lib/mutation-error-toast';
+import { useMe } from '@/lib/queries/auth';
 import { useInvalidator } from '@/lib/queries/invalidate';
 import type { TaskRunTarget } from '@/lib/queries/devices';
+import { activityPollInterval, hasActiveProcesses } from '@/lib/running-tasks';
 
 function tasksPath(repositoryId: string | null | undefined, archived?: boolean): string {
   const params = new URLSearchParams();
@@ -47,6 +49,22 @@ export function useTask(
     enabled: Boolean(id),
     refetchInterval: options?.refetchInterval,
   });
+}
+
+/**
+ * True while any of the user's tasks is running or awaiting review — drives the
+ * animated brand mark and favicon. The shared ['tasks', null, 'active'] list is
+ * only fetched for authenticated visitors (so the public landing page stays
+ * 401-free) and polls while anything is in flight or active so the animation
+ * starts/stops in sync with task transitions.
+ */
+export function useHasActiveProcesses(): boolean {
+  const me = useMe();
+  const tasks = useTasks(null, {
+    enabled: Boolean(me.data),
+    refetchInterval: (query) => activityPollInterval(query.state.data as Task[] | undefined),
+  });
+  return hasActiveProcesses(tasks.data);
 }
 
 /** POST /api/tasks — create a prompt task. */

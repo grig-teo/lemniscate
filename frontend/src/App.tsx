@@ -2,7 +2,9 @@ import type { ReactNode } from 'react';
 import { Loader2 } from 'lucide-react';
 import { createBrowserRouter, Navigate, RouterProvider } from 'react-router-dom';
 
+import { useFaviconActivity } from '@/lib/favicon-activity';
 import { useMe } from '@/lib/hooks';
+import { useHasActiveProcesses } from '@/lib/queries/tasks';
 import { LandingPage } from '@/pages/LandingPage';
 import { LoginPage } from '@/pages/LoginPage';
 import { ShellPage } from '@/pages/ShellPage';
@@ -45,5 +47,8 @@ const router = createBrowserRouter(
 );
 
 export function App() {
+  // Animate the browser tab icon while any task is running or in review, so
+  // the activity is visible even on backgrounded tabs.
+  useFaviconActivity(useHasActiveProcesses());
   return <RouterProvider router={router} />;
 }
