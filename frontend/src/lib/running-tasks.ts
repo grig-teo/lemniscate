@@ -8,6 +8,23 @@ export function isRunningStatus(status: string): boolean {
   return RUNNING_STATUSES.has(status);
 }
 
+/** Tasks-query poll cadence while any task is queued or running. */
+export const IN_FLIGHT_POLL_INTERVAL_MS = 5_000;
+
+/** True while any task in the list is queued or running. */
+export function hasInFlightTasks(tasks: Task[] | undefined): boolean {
+  return (tasks ?? []).some((task) => isRunningStatus(task.status));
+}
+
+/**
+ * Refetch interval for a tasks list: poll while any task is in flight so
+ * status badges converge even without SSE (task not selected), stop once
+ * everything reached a terminal state.
+ */
+export function inFlightPollInterval(tasks: Task[] | undefined): number | false {
+  return hasInFlightTasks(tasks) ? IN_FLIGHT_POLL_INTERVAL_MS : false;
+}
+
 export interface RepositoryTaskGroup {
   repositoryName: string;
   tasks: Task[];

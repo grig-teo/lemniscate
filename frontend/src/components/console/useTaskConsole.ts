@@ -3,12 +3,13 @@
  * SSE stream, with replayed-history dedupe shared between the two.
  */
 import * as React from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { API_BASE_URL, type TaskEventItem } from '@/lib/hooks';
 import { api } from '@/lib/api';
 import { payloadToDiffText, payloadToLogText, statusFromPayload } from '@/lib/event-payload';
 import { useWorkspaceSelection } from '@/lib/selection';
+import { applyTaskStatusToCaches } from '@/lib/task-status-cache';
 
 export interface LogLine {
   key: string;
@@ -58,12 +59,12 @@ function eventToLogText(kind: string, payload: unknown): string | null {
 function createEventDispatcher(
   logCounter: React.MutableRefObject<number>,
   setLiveLogs: React.Dispatch<React.SetStateAction<LogLine[]>>,
-  setLiveStatus: (status: string | null) => void,
+  onStatus: (status: string) => void,
 ) {
   return (event: StreamEvent) => {
     if (event.kind === 'status') {
       const status = statusFromPayload(event.payload);
-      if (status) setLiveStatus(status);
+      if (status) onStatus(status);
       return;
     }
     const text = eventToLogText(event.kind, event.payload);
@@ -105,16 +106,23 @@ function useTaskEventStream(
   seenEventIds: SeenEventIds,
   setLiveStatus: (status: string | null) => void,
 ) {
+  const queryClient = useQueryClient();
   const [liveLogs, setLiveLogs] = React.useState<LogLine[]>([]);
   const [streamError, setStreamError] = React.useState(false);
   const logCounter = React.useRef(0);
 
   React.useEffect(() => {
     if (!taskId) return;
-    const dispatch = createEventDispatcher(logCounter, setLiveLogs, setLiveStatus);
+    // Status events feed both the console header badge and the task-list
+    // caches, so the repo tree / landing rows can't stay stuck on 'queued'.
+    const onStatus = (status: string) => {
+      setLiveStatus(status);
+      applyTaskStatusToCaches(queryClient, taskId, status);
+    };
+    const dispatch = createEventDispatcher(logCounter, setLiveLogs, onStatus);
     const source = openEventStream(taskId, seenEventIds, dispatch, setStreamError);
     return () => source.close();
-  }, [taskId, seenEventIds, setLiveStatus]);
+  }, [taskId, seenEventIds, setLiveStatus, queryClient]);
 
   return { liveLogs, streamError, setLiveLogs, setStreamError };
 }

@@ -9,6 +9,7 @@ import {
   type Task,
 } from '@/lib/hooks';
 import { groupRepoTasks, isArchivable, isRerunnable, isStartableTask, showsStatusBadge, sortByArchivedAtDesc } from '@/lib/repo-tasks';
+import { inFlightPollInterval } from '@/lib/running-tasks';
 import { useWorkspaceSelection } from '@/lib/selection';
 import { cn } from '@/lib/utils';
 import { ArchivedTaskRow } from '@/components/repo-tree/ArchivedTaskRow';
@@ -20,7 +21,11 @@ import { Button } from '@/components/ui/button';
 
 /** Tasks of one expanded repo, split into proposals, saved prompts, and running processes. */
 export function RepoTasks({ repositoryId }: { repositoryId: string }) {
-  const tasksQuery = useTasks(repositoryId);
+  // Poll while any task is queued/running so the status badges track the
+  // worker even without SSE (task not selected) — stops on terminal states.
+  const tasksQuery = useTasks(repositoryId, {
+    refetchInterval: (query) => inFlightPollInterval(query.state.data),
+  });
   if (tasksQuery.isLoading) {
     return (
       <div className="flex items-center gap-2 py-2 pl-9 text-xs text-muted-foreground">
