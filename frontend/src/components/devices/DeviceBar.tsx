@@ -12,7 +12,7 @@ function platformIcon(platform: string) {
   return Globe;
 }
 
-function DeviceButton({ device, onClick }: { device: Device; onClick: () => void }) {
+function DeviceRow({ device, onClick }: { device: Device; onClick: () => void }) {
   const Icon = platformIcon(device.platform);
   return (
     <button
@@ -20,12 +20,13 @@ function DeviceButton({ device, onClick }: { device: Device; onClick: () => void
       onClick={onClick}
       title={`${device.name} (${device.online ? 'online' : 'offline'})`}
       aria-label={`Device ${device.name}`}
-      className="relative rounded-full p-1.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+      className="flex min-w-0 items-center gap-2 rounded-md px-1.5 py-1 text-left text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
     >
-      <Icon className="h-4 w-4" />
+      <Icon className="h-3.5 w-3.5 shrink-0" />
+      <span className="min-w-0 flex-1 truncate">{device.name}</span>
       <span
         className={cn(
-          'absolute right-0.5 top-0.5 h-2 w-2 rounded-full',
+          'h-2 w-2 shrink-0 rounded-full',
           device.online ? 'bg-green-500' : 'bg-gray-400',
         )}
       />
@@ -34,11 +35,11 @@ function DeviceButton({ device, onClick }: { device: Device; onClick: () => void
 }
 
 /**
- * Static strip pinned to the bottom of the left sidebar (rendered by RepoTree
- * after the scrollable repo list): a "Devices" label, one icon button per
- * paired device (opening its details modal) and a trailing "+" that opens the
- * pairing dialog. Icons wrap to extra rows when the sidebar is narrow.
- * The "+" is always shown so pairing is discoverable.
+ * Static section pinned to the bottom of the left sidebar (rendered by
+ * RepoTree after the scrollable repo list): a "Devices" header with a "+"
+ * pairing button and one named row per paired device (opening its details
+ * modal). Rows never scroll away with the repo list; the "+" is always
+ * visible so pairing is discoverable.
  */
 export function DeviceBar() {
   const devices = useDevices();
@@ -48,22 +49,31 @@ export function DeviceBar() {
 
   return (
     <>
-      <div className="flex shrink-0 flex-wrap items-center gap-1 border-t bg-card px-2 py-1.5">
-        <span className="mr-1 shrink-0 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-          Devices
-        </span>
-        {(devices.data ?? []).map((device) => (
-          <DeviceButton key={device.id} device={device} onClick={() => setSelectedId(device.id)} />
-        ))}
-        <button
-          type="button"
-          onClick={() => setPairingOpen(true)}
-          title="Pair a device"
-          aria-label="Pair a device"
-          className="rounded-full p-1.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-        >
-          <Plus className="h-4 w-4" />
-        </button>
+      <div className="shrink-0 border-t bg-card px-2 py-1.5">
+        <div className="flex items-center justify-between">
+          <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+            Devices
+          </span>
+          <button
+            type="button"
+            onClick={() => setPairingOpen(true)}
+            title="Pair a device"
+            aria-label="Pair a device"
+            className="rounded-full p-1 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+          >
+            <Plus className="h-4 w-4" />
+          </button>
+        </div>
+        <div className="mt-0.5 flex flex-col gap-0.5">
+          {(devices.data ?? []).map((device) => (
+            <DeviceRow key={device.id} device={device} onClick={() => setSelectedId(device.id)} />
+          ))}
+          {(devices.data ?? []).length === 0 && (
+            <p className="px-1.5 py-1 text-xs text-muted-foreground/70">
+              No devices paired — click + to connect one.
+            </p>
+          )}
+        </div>
       </div>
 
       <PairingDialog open={pairingOpen} onOpenChange={setPairingOpen} />
