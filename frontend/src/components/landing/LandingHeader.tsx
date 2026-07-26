@@ -1,6 +1,7 @@
-import { Infinity as InfinityIcon, Loader2 } from 'lucide-react';
+import { Loader2 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 
+import { LemniscateSwarm } from '@/components/LemniscateSwarm';
 import { ThemeToggle } from '@/components/ThemeToggle';
 import { buttonVariants } from '@/components/ui/button';
 import { useMe } from '@/lib/hooks';
@@ -29,7 +30,7 @@ export function LandingHeader() {
   return (
     <header className="flex h-14 shrink-0 items-center justify-between border-b px-4">
       <div className="flex items-center gap-2">
-        <InfinityIcon className="h-6 w-6 text-foreground" aria-hidden />
+        <LemniscateSwarm className="h-6 w-6 text-foreground" />
         <span className="text-lg font-semibold tracking-tight">Lemniscate</span>
       </div>
       <div className="flex items-center gap-2">

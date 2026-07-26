@@ -1,6 +1,6 @@
-import { Infinity as InfinityIcon } from 'lucide-react';
 import { Link } from 'react-router-dom';
 
+import { LemniscateSwarm } from '@/components/LemniscateSwarm';
 import { SettingsDialog } from '@/components/settings/SettingsDialog';
 import { ThemeToggle } from '@/components/ThemeToggle';
 
@@ -12,7 +12,7 @@ export function TopNav() {
   return (
     <header className="flex h-14 shrink-0 items-center justify-between border-b px-4">
       <Link to="/" className="flex items-center gap-2" aria-label="Go to landing page">
-        <InfinityIcon className="h-6 w-6 text-foreground" aria-hidden />
+        <LemniscateSwarm className="h-6 w-6 text-foreground" />
         <span className="text-lg font-semibold tracking-tight">Lemniscate</span>
       </Link>
 
