@@ -102,6 +102,10 @@ function lastUpdate(): { where: { id: string }; data: Record<string, unknown> } 
   return mocks.deliveryUpdate.mock.calls.at(-1)?.[0] as never;
 }
 
+function lastCreate(): { data: Record<string, unknown> } {
+  return mocks.deliveryCreate.mock.calls.at(-1)?.[0] as never;
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.config.SMTP_HOST = undefined;
@@ -150,20 +154,24 @@ describe('notify channel fan-out', () => {
     );
   });
 
-  it('embeds the event, payload fields, and delivery id in the stored body', async () => {
+  it('stores the full payload in a single create (no empty-payload window)', async () => {
     mocks.settingFindMany.mockResolvedValue([SETTING]);
 
     await notify('user-1', 'pr_opened', { title: 't', body: 'b', taskId: 't1' });
 
-    const stored = JSON.parse(lastUpdate().data.payload as string);
+    const stored = JSON.parse(lastCreate().data.payload as string);
     expect(stored).toMatchObject({
       event: 'pr_opened',
       title: 't',
       body: 'b',
       taskId: 't1',
       notificationId: 'n1',
-      deliveryId: 'd1',
     });
+    // The delivery id does not exist at create time — it is stamped into
+    // the outbound body at delivery time, so the audit row never holds an
+    // empty placeholder payload.
+    expect(stored.deliveryId).toBeUndefined();
+    expect(mocks.deliveryUpdate).not.toHaveBeenCalled();
   });
 
   it('redacts the channel HMAC secret from the outbound payload', async () => {
@@ -171,7 +179,7 @@ describe('notify channel fan-out', () => {
 
     await notify('user-1', 'pr_opened', { title: 'leaked whsec here', body: 'b' });
 
-    const stored = JSON.parse(lastUpdate().data.payload as string);
+    const stored = JSON.parse(lastCreate().data.payload as string);
     expect(stored.title).toBe('leaked [redacted] here');
     expect(JSON.stringify(stored)).not.toContain('whsec');
   });
@@ -211,6 +219,30 @@ describe('deliverNotification', () => {
       lastStatusCode: 200,
       lastError: null,
     });
+  });
+
+  it('stamps the delivery id into the POSTed body at delivery time', async () => {
+    mocks.deliveryFindUnique.mockResolvedValue({
+      ...DELIVERY,
+      payload: JSON.stringify({ event: 'pr_opened', title: 't', body: 'b' }),
+    });
+
+    await deliverNotification('d1', 0);
+
+    const [, init] = mocks.fetch.mock.calls[0] as unknown as [string, { body: string }];
+    expect(JSON.parse(init.body)).toMatchObject({ event: 'pr_opened', deliveryId: 'd1' });
+  });
+
+  it('does not follow redirects after the SSRF check — a 3xx is a failed delivery', async () => {
+    // A public URL passing assertPublicHttpUrl could 302 to an internal
+    // address (169.254.169.254 etc.); fetch must not follow it.
+    mocks.fetch.mockResolvedValue({ ok: false, status: 302 });
+
+    await expect(deliverNotification('d1', 0)).rejects.toThrow('302');
+
+    const [, init] = mocks.fetch.mock.calls[0] as unknown as [string, { redirect?: string }];
+    expect(init.redirect).toBe('manual');
+    expect(lastUpdate().data).toMatchObject({ status: 'queued', lastStatusCode: 302 });
   });
 
   it('throws on HTTP 5xx with attempts remaining so BullMQ retries', async () => {

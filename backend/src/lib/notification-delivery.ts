@@ -83,12 +83,17 @@ async function enqueueChannelDelivery(
 ): Promise<void> {
   const secret = setting.secretEnc ? decrypt(setting.secretEnc) : null;
   const body = redactedPayload(event, payload, notificationId, secret);
+  // Single write: the audit row always holds the full payload. The delivery
+  // id does not exist yet — it is stamped into the outbound body at
+  // delivery time (stampedBody), never stored as an empty placeholder.
   const delivery = await prisma.notificationDelivery.create({
-    data: { settingId: setting.id, notificationId, event, status: 'queued', payload: '' },
-  });
-  await prisma.notificationDelivery.update({
-    where: { id: delivery.id },
-    data: { payload: JSON.stringify({ ...body, deliveryId: delivery.id }) },
+    data: {
+      settingId: setting.id,
+      notificationId,
+      event,
+      status: 'queued',
+      payload: JSON.stringify(body),
+    },
   });
   await getAgentTasksQueue().add(DELIVERY_JOB_NAME, { deliveryId: delivery.id }, DELIVERY_JOB_OPTIONS);
 }
@@ -133,6 +138,10 @@ async function postWebhook(target: string, secret: string | null, body: string, 
       method: 'POST',
       headers,
       body,
+      // redirect:'manual' closes the redirect SSRF bypass: a public URL
+      // passing the guard must not be able to 302 fetch() into an internal
+      // address. A 3xx is simply a failed delivery (retried by BullMQ).
+      redirect: 'manual',
       signal: AbortSignal.timeout(WEBHOOK_TIMEOUT_MS),
     });
   } catch (err) {
@@ -189,6 +198,15 @@ async function recordOutcome(
   await prisma.notificationDelivery.update({ where: { id: deliveryId }, data: outcome });
 }
 
+// Stamps the delivery id into the outbound body. The stored payload is
+// written in a single create before the id exists (see
+// enqueueChannelDelivery), so the receiver gets the correlation id from the
+// job data at delivery time; the signed body is this stamped form.
+function stampedBody(payload: string, deliveryId: string): string {
+  const parsed = JSON.parse(payload) as Record<string, unknown>;
+  return JSON.stringify({ ...parsed, deliveryId });
+}
+
 // Executes one delivery attempt. Retries are BullMQ's: a failure with
 // attempts remaining rethrows so the job is rescheduled with backoff; the
 // final attempt marks the row 'failed' and completes (the audit row, not
@@ -202,7 +220,11 @@ export async function deliverNotification(deliveryId: string, attemptsMade: numb
   const attempts = attemptsMade + 1;
   let statusCode: number | null;
   try {
-    statusCode = await transportFor(delivery.setting, delivery.payload, delivery.event);
+    statusCode = await transportFor(
+      delivery.setting,
+      stampedBody(delivery.payload, delivery.id),
+      delivery.event,
+    );
   } catch (err) {
     const failureStatus = err instanceof DeliveryError ? err.statusCode : null;
     if (delivery.setting.channel === 'email' && !config.SMTP_HOST) {

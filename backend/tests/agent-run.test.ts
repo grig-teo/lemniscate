@@ -205,6 +205,19 @@ describe('runTask with AGENT_EXECUTOR=hermes', () => {
     expect(mocks.notifyTaskCompleted).toHaveBeenCalledWith('task-1');
   });
 
+  it('logs but does not fail the run when the completion hook rejects', async () => {
+    mocks.notifyTaskCompleted.mockRejectedValueOnce(new Error('db down'));
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      await runTask('task-1');
+      expect(mocks.setTaskStatus).toHaveBeenCalledWith('task-1', 'awaiting_review');
+      expect(error).toHaveBeenCalledWith(expect.stringContaining('task-1'));
+      expect(error).toHaveBeenCalledWith(expect.stringContaining('db down'));
+    } finally {
+      error.mockRestore();
+    }
+  });
+
   it('does not emit the task-completed hook when the run fails', async () => {
     mocks.runHermesTask.mockRejectedValueOnce(new Error('boom'));
     await runTask('task-1');

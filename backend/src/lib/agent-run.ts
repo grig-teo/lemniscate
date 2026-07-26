@@ -36,6 +36,7 @@ import { buildRepoContext } from './repo-context.js';
 import { buildTaskAttachmentFiles } from './repo-init.js';
 import { loadAgentsMdTemplate, loadTaskSkills } from './task-skills.js';
 import { setTaskStatus } from './task-events.js';
+import { errorMessage } from './utils.js';
 
 // Job: run-task — clone → LLM-proposed changes → branch → commit → push →
 // pull request. Extracted from agent-loop.ts.
@@ -375,7 +376,11 @@ export async function runTask(taskId: string): Promise<void> {
     rt = await executeRunTask(task, workdir, secrets);
     // Terminal 'done' runs (no auto-PR, empty repo, no changes) notify here;
     // the auto-PR path ends awaiting_review and already fired pr_opened.
-    await notifyTaskCompleted(taskId).catch(() => {});
+    // A dispatch failure must not fail the run, but it is logged — silent
+    // notification loss is exactly what this subsystem exists to prevent.
+    await notifyTaskCompleted(taskId).catch((err: unknown) => {
+      console.error(`run-task: task_completed notification failed for ${taskId}: ${errorMessage(err)}`);
+    });
   } catch (err) {
     // Failure state is fully recorded on the task; the BullMQ job is allowed
     // to complete so it is not retried into a duplicate branch/PR.
