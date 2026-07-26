@@ -2,8 +2,8 @@
  * TaskComposer shell: the shared composer card (auto-growing textarea +
  * toolbar) used by both the modal TaskComposerDialog and the inline
  * empty-console composer, plus the floating '+' trigger. Form state lives in
- * useTaskComposer.ts, rendering pieces in TaskComposerFields.tsx, helpers in
- * composer-utils.ts.
+ * useTaskComposer.ts, rendering pieces in TaskComposerFields.tsx and
+ * TaskComposerControls.tsx, helpers in composer-utils.ts.
  */
 import * as React from 'react';
 import { Plus } from 'lucide-react';

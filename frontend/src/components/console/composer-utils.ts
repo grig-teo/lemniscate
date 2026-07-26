@@ -2,7 +2,8 @@
  * Non-rendering TaskComposer helpers: the auto-resize textarea hook, image
  * file reading, and the Cmd/Ctrl+Enter submit shortcut. Extracted from
  * TaskComposer.tsx (AGENTS.md section 2) — rendering lives in
- * TaskComposerFields.tsx, form state in useTaskComposer.ts.
+ * TaskComposerFields.tsx / TaskComposerControls.tsx, form state in
+ * useTaskComposer.ts.
  */
 import * as React from 'react';
 

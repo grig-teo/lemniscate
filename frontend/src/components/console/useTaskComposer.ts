@@ -2,7 +2,7 @@
  * TaskComposer form state: repo choice (defaults follow the selected task),
  * prompt, images, library attachments, and the create-task submission.
  * Extracted from TaskComposer.tsx (AGENTS.md section 2); rendering lives in
- * TaskComposerFields.tsx.
+ * TaskComposerFields.tsx / TaskComposerControls.tsx.
  */
 import * as React from 'react';
 
