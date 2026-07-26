@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   userFindUnique: vi.fn(),
   repoFindFirst: vi.fn(),
   llmFindFirst: vi.fn(),
+  llmFindMany: vi.fn(),
   taskCount: vi.fn(),
   taskCreate: vi.fn(),
   queueAdd: vi.fn(),
@@ -20,7 +21,7 @@ vi.mock('../src/lib/prisma.js', () => ({
   prisma: {
     user: { findUnique: mocks.userFindUnique },
     repository: { findFirst: mocks.repoFindFirst },
-    llmConfig: { findFirst: mocks.llmFindFirst },
+    llmConfig: { findFirst: mocks.llmFindFirst, findMany: mocks.llmFindMany },
     task: { count: mocks.taskCount, create: mocks.taskCreate },
   },
 }));
@@ -53,6 +54,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   mocks.userFindUnique.mockResolvedValue({ id: 'user-1', sessionVersion: 0 });
   mocks.repoFindFirst.mockResolvedValue({ id: 'repo-1', llmConfigId: 'cfg-1', skillSlugs: null });
+  mocks.llmFindMany.mockResolvedValue([]);
   mocks.taskCreate.mockImplementation(async ({ data }: { data: object }) => ({ id: 't1', ...data }));
   mocks.queueAdd.mockResolvedValue({});
 });

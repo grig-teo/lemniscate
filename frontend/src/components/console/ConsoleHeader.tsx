@@ -4,19 +4,30 @@ import { useCancelTask, useStartTask } from '@/lib/hooks';
 import { useWorkspaceSelection, type SelectedTask } from '@/lib/selection';
 import { isSafeHttpUrl } from '@/lib/url';
 import { StatusBadge } from '@/components/StatusBadge';
+import { TokensBadge } from '@/components/TokensBadge';
 import { Button } from '@/components/ui/button';
 
 const CANCELLABLE = new Set(['queued', 'running']);
 const RUNNABLE_ON_DEVICE = new Set(['done', 'awaiting_review']);
 
+/** Live token consumption for the header badge, polled by the console pane. */
+export interface ConsoleUsage {
+  used: number;
+  max: number | null;
+  costUsd?: number | null;
+}
+
 /** Console header: task title, live status badge, branch and PR link. */
 export function ConsoleHeader({
   task,
   status,
+  usage,
   onRunOnDevice,
 }: {
   task: SelectedTask;
   status: string;
+  /** Token usage of the task; the badge warns at ≥80% of the budget while running. */
+  usage?: ConsoleUsage;
   /** Opens the run-on-device dialog; rendered only for finished tasks. */
   onRunOnDevice?: () => void;
 }) {
@@ -29,6 +40,14 @@ export function ConsoleHeader({
         {task.title}
       </span>
       <StatusBadge status={status} />
+      {usage && (
+        <TokensBadge
+          used={usage.used}
+          max={usage.max}
+          running={status === 'running'}
+          costUsd={usage.costUsd ?? null}
+        />
+      )}
       {task.branchName && (
         <span className="flex items-center gap-1 text-xs text-muted-foreground">
           <GitBranch className="h-3.5 w-3.5" aria-hidden />

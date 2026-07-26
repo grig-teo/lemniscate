@@ -12,6 +12,7 @@ import {
   chatCompletions,
   type ChatCompletionsParams,
   type ChatMessage,
+  type ChatUsage,
   type ThinkingLevel,
 } from './llm-client.js';
 import { parseTaskThinkingLevel } from './task-attachments.js';
@@ -29,11 +30,20 @@ export interface LlmRuntime {
   cfg: LlmConfig;
   apiKey: string;
   usedTokens: number;
+  /** Cumulative prompt/completion split, persisted on the task for cost estimates. */
+  usedPromptTokens: number;
+  usedCompletionTokens: number;
   lastCallStartedAt: number;
   /** Per-task override of the config's thinkingLevel (null column = unset). */
   thinkingLevelOverride?: ThinkingLevel;
   /** When set, llmCall echoes start/done/retry lines to the task console. */
   taskId?: string;
+}
+
+/** Prompt/completion split of billed tokens — the currency of cost estimates. */
+export interface TokenSplit {
+  promptTokens: number;
+  completionTokens: number;
 }
 
 export class TokenBudgetExceededError extends Error {
@@ -44,7 +54,7 @@ export class TokenBudgetExceededError extends Error {
 }
 
 export function makeLlmRuntime(cfg: LlmConfig, apiKey: string): LlmRuntime {
-  return { cfg, apiKey, usedTokens: 0, lastCallStartedAt: 0 };
+  return { cfg, apiKey, usedTokens: 0, usedPromptTokens: 0, usedCompletionTokens: 0, lastCallStartedAt: 0 };
 }
 
 // ---------------------------------------------------------------------------
@@ -87,6 +97,41 @@ export function billedTokens(
   reportedTotal: number | undefined,
 ): number {
   return reportedTotal ?? Math.ceil((promptChars + completionChars) / 4);
+}
+
+// The billed split of one call: the endpoint-reported split when present,
+// otherwise the chars/4 heuristic applied per side. Note the reported split
+// can sum to less than reportedTotal (e.g. providers that meter reasoning
+// tokens separately) — the total stays authoritative for the budget.
+export function billedSplit(
+  promptChars: number,
+  completionChars: number,
+  usage: ChatUsage | undefined,
+): TokenSplit {
+  if (usage) {
+    return { promptTokens: usage.promptTokens, completionTokens: usage.completionTokens };
+  }
+  return {
+    promptTokens: Math.ceil(promptChars / 4),
+    completionTokens: Math.ceil(completionChars / 4),
+  };
+}
+
+/** Current cumulative split of a runtime — passed to persistTokenUsage. */
+export function tokenSplit(rt: LlmRuntime): TokenSplit {
+  return { promptTokens: rt.usedPromptTokens, completionTokens: rt.usedCompletionTokens };
+}
+
+// Seeds a resumed runtime's split counters from the task's stored columns;
+// null columns (tasks that predate the split) start from zero, so the stored
+// split only ever covers tokens billed after the columns existed.
+export function taskTokenSplit(
+  task: { llmPromptTokens: number | null; llmCompletionTokens: number | null } | null,
+): TokenSplit {
+  return {
+    promptTokens: task?.llmPromptTokens ?? 0,
+    completionTokens: task?.llmCompletionTokens ?? 0,
+  };
 }
 
 export function assertWithinBudget(usedTokens: number, maxTokensPerRun: number | null): void {
@@ -165,12 +210,12 @@ export async function llmCall(rt: LlmRuntime, messages: ChatMessage[]): Promise<
   await throttle(rt);
   await logLlmStart(rt);
   const result = await chatCompletions(chatParams(rt, messages));
-  const billed = billedTokens(
-    sumMessageChars(messages),
-    result.content.length,
-    result.usage?.totalTokens,
-  );
+  const promptChars = sumMessageChars(messages);
+  const billed = billedTokens(promptChars, result.content.length, result.usage?.totalTokens);
+  const split = billedSplit(promptChars, result.content.length, result.usage);
   rt.usedTokens += billed;
+  rt.usedPromptTokens += split.promptTokens;
+  rt.usedCompletionTokens += split.completionTokens;
   await logLlmDone(rt, result.latencyMs, billed);
   assertWithinBudget(rt.usedTokens, rt.cfg.maxTokensPerRun);
   return result.content;
@@ -304,6 +349,9 @@ export async function prepareAgentRuntime(
   secrets.push(apiKey);
   const rt = makeLlmRuntime(llmConfig, apiKey);
   rt.usedTokens = usedTokens;
+  const splitSeed = taskTokenSplit(task);
+  rt.usedPromptTokens = splitSeed.promptTokens;
+  rt.usedCompletionTokens = splitSeed.completionTokens;
   rt.taskId = task?.id;
   const thinkingLevelOverride = parseTaskThinkingLevel(task?.thinkingLevel);
   if (thinkingLevelOverride) rt.thinkingLevelOverride = thinkingLevelOverride;

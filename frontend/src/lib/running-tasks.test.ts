@@ -18,6 +18,7 @@ function makeTask(id: string, repositoryId: string, status: TaskStatus): Task {
     title: `Task ${id}`,
     status,
     archivedAt: null,
+    llmTokensUsed: 0,
     createdAt: '2026-01-01T00:00:00.000Z',
     updatedAt: '2026-01-01T00:00:00.000Z',
   };

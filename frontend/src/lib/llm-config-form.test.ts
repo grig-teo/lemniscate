@@ -26,6 +26,8 @@ function makeConfig(overrides: Partial<LlmConfig> = {}): LlmConfig {
     maxRetries: 3,
     requestsPerMinute: 60,
     maxTokensPerRun: 500000,
+    inputPricePerMillion: 0.15,
+    outputPricePerMillion: 0.6,
     customHeaders: { 'X-Org': 'team' },
     isDefault: true,
     enabled: false,
@@ -52,6 +54,8 @@ describe('fromConfig', () => {
       maxRetries: '3',
       requestsPerMinute: '60',
       maxTokensPerRun: '500000',
+      inputPricePerMillion: '0.15',
+      outputPricePerMillion: '0.6',
       customHeaders: JSON.stringify({ 'X-Org': 'team' }, null, 2),
       isDefault: true,
       enabled: false,
@@ -104,6 +108,14 @@ describe('buildPayload', () => {
       expect(built.payload.temperature).toBe(0.7);
       expect(built.payload.maxTokens).toBe(100);
       expect(built.payload.contextWindow).toBeUndefined();
+    }
+  });
+
+  it('passes fractional token prices through and skips blank ones', () => {
+    const built = buildPayload({ ...REQUIRED, inputPricePerMillion: '0.15', outputPricePerMillion: '' });
+    if ('payload' in built) {
+      expect(built.payload.inputPricePerMillion).toBe(0.15);
+      expect(built.payload.outputPricePerMillion).toBeUndefined();
     }
   });
 

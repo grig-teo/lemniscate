@@ -19,6 +19,8 @@ export type FormState = {
   maxRetries: string;
   requestsPerMinute: string;
   maxTokensPerRun: string;
+  inputPricePerMillion: string;
+  outputPricePerMillion: string;
   customHeaders: string;
   isDefault: boolean;
   enabled: boolean;
@@ -38,6 +40,8 @@ export const DEFAULTS: FormState = {
   maxRetries: '3',
   requestsPerMinute: '',
   maxTokensPerRun: '',
+  inputPricePerMillion: '',
+  outputPricePerMillion: '',
   customHeaders: '',
   isDefault: false,
   enabled: true,
@@ -50,7 +54,9 @@ export type NumericField =
   | 'timeoutSeconds'
   | 'maxRetries'
   | 'requestsPerMinute'
-  | 'maxTokensPerRun';
+  | 'maxTokensPerRun'
+  | 'inputPricePerMillion'
+  | 'outputPricePerMillion';
 
 export const NUMERIC_FIELDS: NumericField[] = [
   'temperature',
@@ -60,6 +66,8 @@ export const NUMERIC_FIELDS: NumericField[] = [
   'maxRetries',
   'requestsPerMinute',
   'maxTokensPerRun',
+  'inputPricePerMillion',
+  'outputPricePerMillion',
 ];
 
 function numToInput(value: number | null | undefined): string {
@@ -82,6 +90,8 @@ export function fromConfig(config: LlmConfig): FormState {
     maxRetries: numToInput(config.maxRetries),
     requestsPerMinute: numToInput(config.requestsPerMinute),
     maxTokensPerRun: numToInput(config.maxTokensPerRun),
+    inputPricePerMillion: numToInput(config.inputPricePerMillion),
+    outputPricePerMillion: numToInput(config.outputPricePerMillion),
     customHeaders: config.customHeaders ? JSON.stringify(config.customHeaders, null, 2) : '',
     isDefault: config.isDefault,
     enabled: config.enabled,

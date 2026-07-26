@@ -57,6 +57,9 @@ export type LlmConfig = {
   maxRetries: number;
   requestsPerMinute: number;
   maxTokensPerRun: number;
+  /** Optional USD prices per million tokens; both set = cost estimates on. */
+  inputPricePerMillion: number | null;
+  outputPricePerMillion: number | null;
   customHeaders: Record<string, string> | null;
   isDefault: boolean;
   enabled: boolean;
@@ -79,6 +82,8 @@ export type LlmConfigPayload = {
   maxRetries?: number;
   requestsPerMinute?: number;
   maxTokensPerRun?: number;
+  inputPricePerMillion?: number;
+  outputPricePerMillion?: number;
   customHeaders?: Record<string, string>;
   isDefault?: boolean;
   enabled?: boolean;
@@ -185,6 +190,15 @@ export type Task = {
   attachments?: TaskImage[] | null;
   /** Soft-archive timestamp; null = active. Archived tasks only appear in ?archived=true lists. */
   archivedAt: string | null;
+  /** Cumulative LLM tokens across run/review/merge jobs of this task. */
+  llmTokensUsed: number;
+  /** Prompt/completion split; null for tasks that predate the split columns. */
+  llmPromptTokens?: number | null;
+  llmCompletionTokens?: number | null;
+  /** Effective run budget (task config → repo config → user default); null = uncapped. */
+  maxTokensPerRun?: number | null;
+  /** Estimated USD at the effective config's prices; absent when unpriced or split unknown. */
+  estimatedCostUsd?: number;
   createdAt: string;
   updatedAt: string;
 };
@@ -220,6 +234,41 @@ export type TaskEventItem = {
   kind: TaskEventKind;
   payload: unknown;
   createdAt: string;
+};
+
+// ---------------------------------------------------------------------------
+// GET /api/usage (LLM token usage + estimated cost)
+// ---------------------------------------------------------------------------
+
+export type UsagePeriod = '7d' | '30d';
+
+/** Token totals for one bucket; estimatedCostUsd is absent when unpriced. */
+export type UsageBucket = {
+  totalTokens: number;
+  promptTokens: number;
+  completionTokens: number;
+  estimatedCostUsd?: number;
+};
+
+export type UsageRepositoryBucket = UsageBucket & {
+  repositoryId: string;
+  name: string;
+  fullName: string;
+};
+
+export type UsageDayBucket = UsageBucket & {
+  /** UTC calendar day, YYYY-MM-DD. */
+  day: string;
+};
+
+export type UsageReport = {
+  period: UsagePeriod;
+  since: string;
+  /** Backend-attribution note (cumulative per task, attributed to createdAt). */
+  semantics: string;
+  totals: UsageBucket;
+  byRepository: UsageRepositoryBucket[];
+  byDay: UsageDayBucket[];
 };
 
 // ---------------------------------------------------------------------------
@@ -288,11 +337,24 @@ export function useTasks(
 }
 
 /** One task by id, including the full prompt; disabled until an id is set. */
-export function useTask(id: string | null | undefined) {
+export function useTask(
+  id: string | null | undefined,
+  options?: { refetchInterval?: UseQueryOptions<Task>['refetchInterval'] },
+) {
   return useQuery({
     queryKey: ['task', id ?? null],
     queryFn: () => api.get<{ task: Task }>(`/api/tasks/${id}`).then((res) => res.task),
     enabled: Boolean(id),
+    refetchInterval: options?.refetchInterval,
+  });
+}
+
+/** LLM token usage + estimated cost for the settings Usage panel. */
+export function useUsage(period: UsagePeriod) {
+  return useQuery({
+    queryKey: ['usage', period],
+    queryFn: () => api.get<UsageReport>(`/api/usage?period=${period}`),
+    staleTime: 30_000,
   });
 }
 
