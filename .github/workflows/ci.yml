@@ -66,3 +66,71 @@ jobs:
       - name: Test (vitest)
         working-directory: frontend
         run: npm test
+
+  changes:
+    name: Detect changed paths
+    runs-on: ubuntu-latest
+    outputs:
+      android: ${{ steps.filter.outputs.android }}
+      ios: ${{ steps.filter.outputs.ios }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # Works for both pull_request and push events; compares against the
+      # PR base or the push's before-commit respectively.
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            android:
+              - 'android/**'
+              - '.github/workflows/ci.yml'
+            ios:
+              - 'ios/**'
+              - '.github/workflows/ci.yml'
+
+  android:
+    name: Android — assembleDebug
+    needs: changes
+    if: needs.changes.outputs.android == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Build debug APK
+        working-directory: android
+        run: ./gradlew assembleDebug
+
+      - name: Lint (non-blocking for now)
+        working-directory: android
+        continue-on-error: true
+        run: ./gradlew lint
+
+  ios:
+    name: iOS — xcodebuild (simulator)
+    needs: changes
+    if: needs.changes.outputs.ios == 'true'
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install xcodegen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        working-directory: ios
+        run: xcodegen
+
+      - name: Build for iOS Simulator (no signing)
+        working-directory: ios
+        run: >-
+          xcodebuild -project Lemniscate.xcodeproj -scheme Lemniscate
+          -destination 'generic/platform=iOS Simulator'
+          CODE_SIGNING_ALLOWED=NO build
