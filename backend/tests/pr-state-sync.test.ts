@@ -14,6 +14,7 @@ const mocks = vi.hoisted(() => ({
   logEvent: vi.fn().mockResolvedValue(undefined),
   cleanupWorkdir: vi.fn().mockResolvedValue(undefined),
   pullRequestState: vi.fn(),
+  listPullRequests: vi.fn(),
 }));
 
 vi.mock('../src/config.js', () => ({ config: { AGENT_WORKDIR: '/tmp/test-workdirs' } }));
@@ -28,7 +29,10 @@ vi.mock('../src/lib/agent-git.js', () => ({
   logEvent: mocks.logEvent,
   cleanupWorkdir: mocks.cleanupWorkdir,
 }));
-vi.mock('../src/lib/pull-requests.js', () => ({ pullRequestState: mocks.pullRequestState }));
+vi.mock('../src/lib/pull-requests.js', () => ({
+  pullRequestState: mocks.pullRequestState,
+  listPullRequests: mocks.listPullRequests,
+}));
 vi.mock('../src/lib/proposal-scheduler.js', () => ({
   getAgentTasksQueue: vi.fn(),
   enqueueReviewTask: mocks.enqueueReviewTask,
@@ -47,6 +51,7 @@ function awaitingTask(overrides: Record<string, unknown> = {}) {
     status: 'awaiting_review',
     prUrl: 'https://pr/1',
     branchName: 'lemniscate/t-1',
+    repositoryId: 'r1',
     repository: {
       fullName: 'org/demo',
       defaultBranch: 'main',
@@ -58,6 +63,9 @@ function awaitingTask(overrides: Record<string, unknown> = {}) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // Default: the repo listing finds nothing, so legacy per-task tests exercise
+  // the per-branch fallback path. Batching tests override this per case.
+  mocks.listPullRequests.mockResolvedValue([]);
 });
 
 describe('taskStatusForPrState', () => {
@@ -140,6 +148,82 @@ describe('syncMergedPullRequests', () => {
       },
       include: { repository: { include: { connection: true } } },
     });
+  });
+});
+
+describe('syncMergedPullRequests batching', () => {
+  it('resolves all tasks of one repository with a single listPullRequests call', async () => {
+    mocks.taskFindMany.mockResolvedValue([
+      awaitingTask({ id: 't-a', branchName: 'lemniscate/t-a' }),
+      awaitingTask({ id: 't-b', branchName: 'lemniscate/t-b' }),
+    ]);
+    mocks.listPullRequests.mockResolvedValue([
+      { headBranch: 'lemniscate/t-a', baseBranch: 'main', state: 'merged' },
+      { headBranch: 'lemniscate/t-b', baseBranch: 'main', state: 'open' },
+    ]);
+
+    await syncMergedPullRequests();
+
+    expect(mocks.listPullRequests).toHaveBeenCalledTimes(1);
+    expect(mocks.listPullRequests).toHaveBeenCalledWith(
+      awaitingTask().repository.connection,
+      'org/demo',
+    );
+    expect(mocks.pullRequestState).not.toHaveBeenCalled();
+    expect(mocks.setTaskStatus).toHaveBeenCalledTimes(1);
+    expect(mocks.setTaskStatus).toHaveBeenCalledWith('t-a', 'done');
+    expect(mocks.cleanupWorkdir).toHaveBeenCalledWith('/tmp/test-workdirs/t-a', 't-a');
+  });
+
+  it('makes one list call per repository, not per task', async () => {
+    mocks.taskFindMany.mockResolvedValue([
+      awaitingTask({ id: 't-a', branchName: 'lemniscate/t-a' }),
+      awaitingTask({
+        id: 't-c',
+        branchName: 'lemniscate/t-c',
+        repositoryId: 'r2',
+        repository: {
+          fullName: 'org/other',
+          defaultBranch: 'main',
+          connection: { provider: 'github', baseUrl: null, accessTokenEnc: 'enc' },
+        },
+      }),
+    ]);
+
+    await syncMergedPullRequests();
+
+    expect(mocks.listPullRequests).toHaveBeenCalledTimes(2);
+    // Both branches are absent from the (empty) lists — per-branch fallback.
+    expect(mocks.pullRequestState).toHaveBeenCalledTimes(2);
+  });
+
+  it('falls back to the per-branch check when the branch is absent from the list', async () => {
+    mocks.taskFindMany.mockResolvedValue([awaitingTask()]);
+    mocks.listPullRequests.mockResolvedValue([
+      { headBranch: 'someone/else', baseBranch: 'main', state: 'merged' },
+    ]);
+    mocks.pullRequestState.mockResolvedValue('closed');
+
+    await syncMergedPullRequests();
+
+    expect(mocks.pullRequestState).toHaveBeenCalledTimes(1);
+    expect(mocks.setTaskStatus).toHaveBeenCalledWith('t1', 'closed');
+  });
+
+  it('falls back to per-branch checks for the whole repo when the list call fails', async () => {
+    mocks.taskFindMany.mockResolvedValue([
+      awaitingTask({ id: 't-a', branchName: 'lemniscate/t-a' }),
+      awaitingTask({ id: 't-b', branchName: 'lemniscate/t-b' }),
+    ]);
+    mocks.listPullRequests.mockRejectedValue(new Error('github: HTTP 500'));
+    mocks.pullRequestState.mockResolvedValue('merged');
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    await syncMergedPullRequests();
+
+    expect(mocks.pullRequestState).toHaveBeenCalledTimes(2);
+    expect(mocks.setTaskStatus).toHaveBeenCalledTimes(2);
+    warn.mockRestore();
   });
 });
 

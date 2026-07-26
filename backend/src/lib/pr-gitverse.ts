@@ -10,9 +10,12 @@ import {
   assembleUnifiedDiff,
   createOrFindExistingPr,
   encodeRepoPath,
+  fetchAllPages,
   gitverseDiffFileSchema,
   matchesHeadBaseRef,
+  PR_LIST_PAGE_SIZE,
   prStateFromOpenMerged,
+  type ListedPullRequest,
   type MergePullRequestResult,
   type OpenPullRequestInput,
   type OpenPullRequestResult,
@@ -239,11 +242,42 @@ async function gitversePullRequestState(
   return prStateFromOpenMerged(pull.state, pull.merged === true || pull.merged_at != null);
 }
 
+const gitverseListedPullSchema = z.array(
+  z.object({
+    state: z.string(),
+    merged_at: z.string().nullable().optional(),
+    head: z.object({ ref: z.string() }),
+    base: z.object({ ref: z.string() }),
+  }),
+);
+
+// Batched per-repo listing for the state-sync job (GitHub-shaped payload):
+// merged_at on the list item avoids one detail request per PR.
+async function gitverseListPullRequests(
+  connection: PrConnectionInput,
+  token: string,
+  repoFullName: string,
+): Promise<ListedPullRequest[]> {
+  const pulls = await fetchAllPages(async (page) => {
+    const url =
+      `${gitversePullsUrl(connection, repoFullName)}?state=all` +
+      `&per_page=${PR_LIST_PAGE_SIZE}&page=${page}`;
+    const { body } = await apiRequest('gitverse', 'GET', url, gitverseHeaders(token), token);
+    return gitverseListedPullSchema.parse(body);
+  });
+  return pulls.map((pull) => ({
+    headBranch: pull.head.ref,
+    baseBranch: pull.base.ref,
+    state: prStateFromOpenMerged(pull.state, pull.merged_at != null),
+  }));
+}
+
 export function gitversePrApi(connection: PrConnectionInput, token: string): ProviderPrApi {
   return {
     open: (input) => gitverseOpenPullRequest(connection, token, input),
     merge: (input) => gitverseMergePullRequest(connection, token, input),
     diff: (input) => gitversePullRequestDiff(connection, token, input),
     state: (input) => gitversePullRequestState(connection, token, input),
+    list: (repoFullName) => gitverseListPullRequests(connection, token, repoFullName),
   };
 }

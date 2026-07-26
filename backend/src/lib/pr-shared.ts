@@ -59,6 +59,31 @@ export interface PrChecksStatus {
 
 export type PrState = 'open' | 'merged' | 'closed';
 
+/** One PR as returned by the batched per-repo listing (pr-state-sync job). */
+export interface ListedPullRequest {
+  headBranch: string;
+  baseBranch: string;
+  state: PrState;
+}
+
+// Batched PR listing paginates at 100/page and gives up after a few pages:
+// a repo with more PRs than the cap falls back to per-branch lookups for
+// the branches the listing did not cover, so a huge repo cannot stall the
+// state-sync sweep.
+export const PR_LIST_PAGE_SIZE = 100;
+export const PR_LIST_MAX_PAGES = 3;
+
+// Walks a provider list endpoint page by page; a short page ends the walk.
+export async function fetchAllPages<T>(fetchPage: (page: number) => Promise<T[]>): Promise<T[]> {
+  const items: T[] = [];
+  for (let page = 1; page <= PR_LIST_MAX_PAGES; page += 1) {
+    const batch = await fetchPage(page);
+    items.push(...batch);
+    if (batch.length < PR_LIST_PAGE_SIZE) break;
+  }
+  return items;
+}
+
 /** Maps an explicit provider state string ('merged'/'closed'/'open'…) to a PrState. */
 export function prStateFromString(state: string): PrState {
   if (state === 'merged') return 'merged';
@@ -79,6 +104,8 @@ export interface ProviderPrApi {
   merge(input: PullRequestRefInput): Promise<MergePullRequestResult>;
   diff(input: PullRequestRefInput): Promise<string>;
   state(input: PullRequestRefInput): Promise<PrState>;
+  /** All PRs of a repo (batched state sync); capped at PR_LIST_MAX_PAGES pages. */
+  list(repoFullName: string): Promise<ListedPullRequest[]>;
   /** Commit/PR check statuses; absent when the provider has no checks API. */
   checks?(input: PullRequestRefInput): Promise<PrChecksStatus>;
 }
