@@ -4,7 +4,7 @@ import { Redis } from 'ioredis';
 import { z } from 'zod';
 import { config } from '../config.js';
 import { deviceHub } from '../lib/device-hub.js';
-import { enqueueRunTask, getAgentTasksQueue } from '../lib/proposal-scheduler.js';
+import { enqueueRunTask, getAgentTasksQueue, JOB_PRIORITY } from '../lib/proposal-scheduler.js';
 import { prisma } from '../lib/prisma.js';
 import { detectRunTargets, type RunTarget } from '../lib/run-targets.js';
 import { attachmentsData, taskImagesSchema, taskThinkingLevelSchema } from '../lib/task-attachments.js';
@@ -243,7 +243,11 @@ async function createTask(request: FastifyRequest, reply: FastifyReply) {
   // dedupe, immediate removal on completion) preserved as before. A
   // save-for-later task gets no job until POST /tasks/:id/start.
   if (!data.later) {
-    await getAgentTasksQueue().add(RUN_TASK_JOB, { taskId: task.id }, { removeOnComplete: true });
+    await getAgentTasksQueue().add(
+      RUN_TASK_JOB,
+      { taskId: task.id },
+      { removeOnComplete: true, priority: JOB_PRIORITY.userTask },
+    );
   }
 
   return reply.code(201).send({ task });

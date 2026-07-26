@@ -60,6 +60,15 @@ describe('enqueueGenerateProposalsNow', () => {
     );
   });
 
+  it('enqueues with background priority so user tasks go first', async () => {
+    await enqueueGenerateProposalsNow('repo-1');
+    expect(mocks.add).toHaveBeenCalledWith(
+      'generate-proposals',
+      { repositoryId: 'repo-1' },
+      expect.objectContaining({ priority: 10 }),
+    );
+  });
+
   // Regression: removeOnComplete/removeOnFail as counts kept the finished
   // job around, so BullMQ silently swallowed every later enqueue with the
   // same jobId (the UI generate button worked only once per repo).
@@ -174,6 +183,15 @@ describe('enqueueRunTask', () => {
       'run-task',
       { taskId: 'task-1' },
       expect.objectContaining({ removeOnComplete: true, removeOnFail: true }),
+    );
+  });
+
+  it('enqueues with user-task priority, ahead of background jobs', async () => {
+    await enqueueRunTask('task-1');
+    expect(mocks.add).toHaveBeenCalledWith(
+      'run-task',
+      { taskId: 'task-1' },
+      expect.objectContaining({ priority: 1 }),
     );
   });
 });

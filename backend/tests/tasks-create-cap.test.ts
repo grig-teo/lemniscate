@@ -27,6 +27,7 @@ vi.mock('../src/lib/prisma.js', () => ({
 vi.mock('../src/lib/proposal-scheduler.js', () => ({
   getAgentTasksQueue: () => ({ add: mocks.queueAdd }),
   enqueueRunTask: vi.fn(),
+  JOB_PRIORITY: { userTask: 1, review: 2, background: 10 },
 }));
 
 import tasksRoutes from '../src/routes/tasks.js';

@@ -110,6 +110,12 @@ export async function enqueueProposalTopUps(): Promise<void> {
   );
 }
 
+// BullMQ priority: 0 = highest. User-driven work must not queue behind
+// background proposal generation — the recurring top-up saturates all worker
+// slots (concurrency 4 × every repo every 10 min), so without priorities a
+// user's task waits minutes for a slot even though it matters more.
+export const JOB_PRIORITY = { userTask: 1, review: 2, background: 10 } as const;
+
 // Enqueues a 'run-task' job. jobId dedupes concurrent enqueues of the same task.
 // BullMQ rejects custom jobIds containing ':' unless they have exactly 3
 // segments (legacy repeat-job format), so all our jobIds use dashes.
@@ -119,7 +125,12 @@ export async function enqueueRunTask(taskId: string): Promise<void> {
   await getAgentTasksQueue().add(
     'run-task',
     { taskId },
-    { jobId: `run-task-${taskId}`, removeOnComplete: true, removeOnFail: true },
+    {
+      jobId: `run-task-${taskId}`,
+      removeOnComplete: true,
+      removeOnFail: true,
+      priority: JOB_PRIORITY.userTask,
+    },
   );
 }
 
@@ -159,7 +170,12 @@ export async function enqueueGenerateProposalsNow(repositoryId: string): Promise
   await getAgentTasksQueue().add(
     'generate-proposals',
     { repositoryId },
-    { jobId: `generate-proposals-${repositoryId}`, removeOnComplete: true, removeOnFail: true },
+    {
+      jobId: `generate-proposals-${repositoryId}`,
+      removeOnComplete: true,
+      removeOnFail: true,
+      priority: JOB_PRIORITY.background,
+    },
   );
 }
 
@@ -170,6 +186,11 @@ export async function enqueueReviewTask(taskId: string, attempt = 0): Promise<vo
   await getAgentTasksQueue().add(
     'review-pr',
     { taskId, attempt },
-    { jobId: `review-pr-${taskId}-${attempt}`, removeOnComplete: true, removeOnFail: true },
+    {
+      jobId: `review-pr-${taskId}-${attempt}`,
+      removeOnComplete: true,
+      removeOnFail: true,
+      priority: JOB_PRIORITY.review,
+    },
   );
 }
