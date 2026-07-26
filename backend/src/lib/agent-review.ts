@@ -365,8 +365,11 @@ export async function reviewTask(taskId: string, attempt = 0): Promise<void> {
   try {
     rt = await executeReviewTask(task, task.branchName, attempt, workdir, secrets);
   } catch (err) {
-    // The PR stays awaiting_review for a human; the review job is not retried.
+    // Record the failure, then rethrow so BullMQ retries the job with
+    // backoff. If the final attempt also fails the PR stays awaiting_review
+    // until pr-state-sync's bounded recovery re-enqueues it.
     await recordJobFailure('review-pr', taskId, err, secrets);
+    throw err;
   } finally {
     await persistTokenUsage(taskId, rt?.usedTokens ?? task.llmTokensUsed);
     await cleanupWorkdir(workdir);

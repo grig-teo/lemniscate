@@ -3,6 +3,7 @@ import {
   backoffMs,
   chatCompletions,
   LlmError,
+  timeoutForAttemptSeconds,
   toReasoningEffort,
 } from '../src/lib/llm-client.js';
 
@@ -245,5 +246,18 @@ describe('backoffMs', () => {
       expect(ms).toBeGreaterThanOrEqual(1000);
       expect(ms).toBeLessThan(1500);
     }
+  });
+});
+
+describe('timeoutForAttemptSeconds', () => {
+  it('doubles the base timeout on every attempt', () => {
+    expect(timeoutForAttemptSeconds(120, 0)).toBe(120);
+    expect(timeoutForAttemptSeconds(120, 1)).toBe(240);
+    expect(timeoutForAttemptSeconds(120, 2)).toBe(480);
+  });
+
+  it('caps the grown timeout at 600s', () => {
+    expect(timeoutForAttemptSeconds(120, 3)).toBe(600);
+    expect(timeoutForAttemptSeconds(120, 10)).toBe(600);
   });
 });

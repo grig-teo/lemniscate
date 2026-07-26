@@ -3,7 +3,7 @@ import type { Prisma } from '@prisma/client';
 import { config } from '../config.js';
 import { cleanupWorkdir, logEvent } from './agent-git.js';
 import { pullRequestState, type PrState } from './pull-requests.js';
-import { getAgentTasksQueue } from './proposal-scheduler.js';
+import { enqueueReviewTask, getAgentTasksQueue } from './proposal-scheduler.js';
 import { prisma } from './prisma.js';
 import { setTaskStatus } from './task-events.js';
 import { errorMessage } from './utils.js';
@@ -81,5 +81,56 @@ export async function syncMergedPullRequests(): Promise<void> {
   }
   if (tasks.length > 0) {
     console.log(`pr-state-sync: resolved ${marked}/${tasks.length} awaiting-review task(s)`);
+  }
+  await recoverStuckReviews();
+}
+
+// ---------------------------------------------------------------------------
+// Stuck-review recovery
+// ---------------------------------------------------------------------------
+
+const MAX_REVIEW_RECOVERIES = 3;
+const REVIEW_RECOVERY_LOG = 'recovery: re-enqueued PR review after a failed review job';
+
+// A review that concluded (approve / changes requested / checks gate) ends
+// with a distinct log line; a review whose job exhausted its BullMQ attempts
+// ends with an 'error:' line. Only the latter is stuck.
+async function isReviewStuck(taskId: string): Promise<boolean> {
+  const recoveries = await prisma.taskEvent.count({
+    where: { taskId, kind: 'log', payload: { path: ['line'], equals: REVIEW_RECOVERY_LOG } },
+  });
+  if (recoveries >= MAX_REVIEW_RECOVERIES) return false;
+  const lastLog = await prisma.taskEvent.findFirst({
+    where: { taskId, kind: 'log' },
+    orderBy: { createdAt: 'desc' },
+    select: { payload: true },
+  });
+  const line = (lastLog?.payload as { line?: unknown } | null)?.line;
+  return typeof line === 'string' && line.startsWith('error:');
+}
+
+// Re-enqueues review for awaiting_review tasks whose review job died for good
+// (e.g. repeated LLM timeouts). Bounded per task so a persistently failing
+// endpoint cannot burn tokens in an infinite review loop. The BullMQ jobId
+// dedupes against a review job that is still waiting/active/retrying.
+export async function recoverStuckReviews(): Promise<void> {
+  const tasks = await prisma.task.findMany({
+    where: {
+      status: 'awaiting_review',
+      archivedAt: null,
+      branchName: { not: null },
+      repository: { autoReviewPr: true, connection: { disconnectedAt: null } },
+    },
+    select: { id: true },
+  });
+  let recovered = 0;
+  for (const task of tasks) {
+    if (!(await isReviewStuck(task.id))) continue;
+    await logEvent(task.id, REVIEW_RECOVERY_LOG);
+    await enqueueReviewTask(task.id);
+    recovered += 1;
+  }
+  if (recovered > 0) {
+    console.log(`pr-state-sync: re-enqueued review for ${recovered} stuck task(s)`);
   }
 }

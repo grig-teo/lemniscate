@@ -7,6 +7,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
   taskFindMany: vi.fn(),
+  taskEventCount: vi.fn().mockResolvedValue(0),
+  taskEventFindFirst: vi.fn().mockResolvedValue(null),
+  enqueueReviewTask: vi.fn().mockResolvedValue(undefined),
   setTaskStatus: vi.fn().mockResolvedValue(undefined),
   logEvent: vi.fn().mockResolvedValue(undefined),
   cleanupWorkdir: vi.fn().mockResolvedValue(undefined),
@@ -15,7 +18,10 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock('../src/config.js', () => ({ config: { AGENT_WORKDIR: '/tmp/test-workdirs' } }));
 vi.mock('../src/lib/prisma.js', () => ({
-  prisma: { task: { findMany: mocks.taskFindMany } },
+  prisma: {
+    task: { findMany: mocks.taskFindMany },
+    taskEvent: { count: mocks.taskEventCount, findFirst: mocks.taskEventFindFirst },
+  },
 }));
 vi.mock('../src/lib/task-events.js', () => ({ setTaskStatus: mocks.setTaskStatus }));
 vi.mock('../src/lib/agent-git.js', () => ({
@@ -23,10 +29,17 @@ vi.mock('../src/lib/agent-git.js', () => ({
   cleanupWorkdir: mocks.cleanupWorkdir,
 }));
 vi.mock('../src/lib/pull-requests.js', () => ({ pullRequestState: mocks.pullRequestState }));
-vi.mock('../src/lib/proposal-scheduler.js', () => ({ getAgentTasksQueue: vi.fn() }));
+vi.mock('../src/lib/proposal-scheduler.js', () => ({
+  getAgentTasksQueue: vi.fn(),
+  enqueueReviewTask: mocks.enqueueReviewTask,
+}));
 vi.mock('ioredis', () => ({ Redis: vi.fn() }));
 
-import { syncMergedPullRequests, taskStatusForPrState } from '../src/lib/pr-state-sync.js';
+import {
+  recoverStuckReviews,
+  syncMergedPullRequests,
+  taskStatusForPrState,
+} from '../src/lib/pr-state-sync.js';
 
 function awaitingTask(overrides: Record<string, unknown> = {}) {
   return {
@@ -127,5 +140,41 @@ describe('syncMergedPullRequests', () => {
       },
       include: { repository: { include: { connection: true } } },
     });
+  });
+});
+
+describe('recoverStuckReviews', () => {
+  it('re-enqueues the review when the last log line is a job error', async () => {
+    mocks.taskFindMany.mockResolvedValue([{ id: 't-stuck' }]);
+    mocks.taskEventFindFirst.mockResolvedValue({ payload: { line: 'error: Request timed out' } });
+
+    await recoverStuckReviews();
+
+    expect(mocks.enqueueReviewTask).toHaveBeenCalledWith('t-stuck');
+    expect(mocks.logEvent).toHaveBeenCalledWith(
+      't-stuck',
+      'recovery: re-enqueued PR review after a failed review job',
+    );
+  });
+
+  it('leaves tasks alone when the review concluded without an error', async () => {
+    mocks.taskFindMany.mockResolvedValue([{ id: 't-waiting' }]);
+    mocks.taskEventFindFirst.mockResolvedValue({
+      payload: { line: 'approved by LLM, awaiting manual merge' },
+    });
+
+    await recoverStuckReviews();
+
+    expect(mocks.enqueueReviewTask).not.toHaveBeenCalled();
+  });
+
+  it('stops re-enqueueing after the per-task recovery cap', async () => {
+    mocks.taskFindMany.mockResolvedValue([{ id: 't-flapping' }]);
+    mocks.taskEventCount.mockResolvedValue(3);
+    mocks.taskEventFindFirst.mockResolvedValue({ payload: { line: 'error: boom' } });
+
+    await recoverStuckReviews();
+
+    expect(mocks.enqueueReviewTask).not.toHaveBeenCalled();
   });
 });
