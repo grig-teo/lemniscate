@@ -17,6 +17,7 @@ import usageRoutes from './routes/usage.js';
 import notificationsRoutes from './routes/notifications.js';
 import devicesRoutes from './routes/devices.js';
 import servicesRoutes, { servicesInternalRoutes, appsIndexRoute } from './routes/services.js';
+import webhookRoutes from './routes/webhooks.js';
 
 async function registerPlugins(app: FastifyInstance) {
   await app.register(cookie);
@@ -47,6 +48,8 @@ async function registerRoutes(app: FastifyInstance) {
   await app.register(servicesRoutes, { prefix: '/api' });
   // Traefik's HTTP provider endpoint; token-guarded, no session auth.
   await app.register(servicesInternalRoutes, { prefix: '/api' });
+  // Inbound git-provider webhooks (HMAC/token verified, no session auth).
+  await app.register(webhookRoutes, { prefix: '/api' });
   // Public owner index for the apps domain (Traefik rewrites /<owner> here).
   await app.register(appsIndexRoute, { prefix: '/api' });
   // Liveness (/health) + readiness (/health/ready), unprefixed.
