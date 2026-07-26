@@ -225,7 +225,7 @@ async function openBrowser(url) {
   await run(command, args, { timeout: 5_000 }); // best-effort — failure isn't fatal
 }
 
-async function executeRunWeb(send, { id, payload }) {
+async function executeRunWeb(send, config, { id, payload }) {
   const log = { text: '' };
   const url = `http://127.0.0.1:${payload.port}`;
   send(lib.commandResultMessage(id, 'running'));
@@ -239,7 +239,7 @@ async function executeRunWeb(send, { id, payload }) {
     await openBrowser(url);
     send(lib.commandResultMessage(id, 'done', { url, port: payload.port, projectDir }));
   } catch (error) {
-    send(lib.commandResultMessage(id, 'failed', { error: error.message, log: lib.tailLog(log.text) }));
+    send(await lib.finalizeFailure(config, id, error.message, log.text));
   }
 }
 
@@ -322,7 +322,7 @@ async function executeInstallApk(send, config, { id, payload }) {
     const installIntentLaunched = lib.isTermux() ? await launchInstallIntent(log, apkPath) : false;
     send(lib.commandResultMessage(id, 'done', { savedTo: apkPath, installIntentLaunched }));
   } catch (error) {
-    send(lib.commandResultMessage(id, 'failed', { error: error.message, log: lib.tailLog(log.text) }));
+    send(await lib.finalizeFailure(config, id, error.message, log.text));
   }
 }
 
@@ -378,7 +378,7 @@ async function executeBuildAndroid(send, config, { id, payload }) {
     const result = await uploadApk(log, config, payload, apkPath);
     send(lib.commandResultMessage(id, 'done', result));
   } catch (error) {
-    send(lib.commandResultMessage(id, 'failed', { error: error.message, log: lib.tailLog(log.text) }));
+    send(await lib.finalizeFailure(config, id, error.message, log.text));
   }
 }
 
@@ -430,7 +430,7 @@ async function waitForProcessAlive(child, timeoutMs = DESKTOP_START_GRACE_MS) {
   return true;
 }
 
-async function executeRunDesktop(send, { id, payload }) {
+async function executeRunDesktop(send, config, { id, payload }) {
   const log = { text: '' };
   send(lib.commandResultMessage(id, 'running'));
   try {
@@ -449,7 +449,7 @@ async function executeRunDesktop(send, { id, payload }) {
       note: 'The app window should open on the desktop shortly',
     }));
   } catch (error) {
-    send(lib.commandResultMessage(id, 'failed', { error: error.message, log: lib.tailLog(log.text) }));
+    send(await lib.finalizeFailure(config, id, error.message, log.text));
   }
 }
 
@@ -496,7 +496,7 @@ async function readBundleId(log, appPath) {
   return bundleId;
 }
 
-async function executeRunIos(send, { id, payload }) {
+async function executeRunIos(send, config, { id, payload }) {
   const log = { text: '' };
   const progress = (text) => {
     log.text += `${text}\n`;
@@ -537,16 +537,16 @@ async function executeRunIos(send, { id, payload }) {
     await step(log, 'xcrun', ['devicectl', 'device', 'install', 'app', '--device', udid, appPath]);
     send(lib.commandResultMessage(id, 'done', { scheme, device: udid, appPath, projectDir }));
   } catch (error) {
-    send(lib.commandResultMessage(id, 'failed', { error: error.message, log: lib.tailLog(log.text) }));
+    send(await lib.finalizeFailure(config, id, error.message, log.text));
   }
 }
 
 function executeCommand(send, config, command) {
   if (command.commandType === 'install_apk') return executeInstallApk(send, config, command);
   if (command.commandType === 'build_android') return executeBuildAndroid(send, config, command);
-  if (command.commandType === 'run_desktop') return executeRunDesktop(send, command);
-  if (command.commandType === 'run_ios') return executeRunIos(send, command);
-  return executeRunWeb(send, command);
+  if (command.commandType === 'run_desktop') return executeRunDesktop(send, config, command);
+  if (command.commandType === 'run_ios') return executeRunIos(send, config, command);
+  return executeRunWeb(send, config, command);
 }
 
 // --- WebSocket tunnel ---------------------------------------------------------

@@ -49,3 +49,20 @@ export function nextCommandAfterBuild(
     deviceSerial: typeof payload.deviceSerial === 'string' ? payload.deviceSerial : undefined,
   };
 }
+
+/**
+ * Shape of the `result` object on a `failed` command_result frame.
+ *
+ * - `error`: the human-readable failure message.
+ * - `log`: the tail of the build/run log (≤ 2KB), for at-a-glance context.
+ * - `logArtifactUrl`: backend-relative download path for the FULL log,
+ *   present only when the log exceeded the upload threshold and was stored
+ *   as a `.log` artifact. Absent when the log was small enough to fit inline,
+ *   or when the upload was rejected (quota exhausted) — in both cases the
+ *   tail-only `log` is still present.
+ */
+export interface FailedCommandResult {
+  error: string;
+  log: string;
+  logArtifactUrl?: string;
+}

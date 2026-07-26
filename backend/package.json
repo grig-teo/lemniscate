@@ -17,6 +17,7 @@
     "test": "vitest run",
     "prisma:generate": "prisma generate",
     "prisma:validate": "prisma validate",
+    "check:max-lines": "node ../scripts/check-max-lines.mjs src --ext ts,tsx --ignore scripts/max-lines-baseline.json",
     "seed:skills": "tsx scripts/seed-skills.ts"
   },
   "dependencies": {

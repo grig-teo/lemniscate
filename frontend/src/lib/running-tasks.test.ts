@@ -2,10 +2,13 @@ import { describe, expect, it } from 'vitest';
 
 import type { Repository, Task, TaskStatus } from '@/lib/hooks';
 import {
+  activityPollInterval,
   groupTasksByRepository,
+  hasActiveProcesses,
   hasInFlightTasks,
   IN_FLIGHT_POLL_INTERVAL_MS,
   inFlightPollInterval,
+  isActiveProcessStatus,
   isRunningStatus,
   selectRunningTasks,
 } from '@/lib/running-tasks';
@@ -83,6 +86,52 @@ describe('inFlightPollInterval', () => {
     expect(inFlightPollInterval(undefined)).toBe(false);
     expect(inFlightPollInterval([])).toBe(false);
     expect(inFlightPollInterval([makeTask('t1', 'r1', 'done')])).toBe(false);
+  });
+});
+
+describe('isActiveProcessStatus', () => {
+  it('is true only for running and awaiting_review (active work)', () => {
+    expect(isActiveProcessStatus('running')).toBe(true);
+    expect(isActiveProcessStatus('awaiting_review')).toBe(true);
+    for (const status of ['pending', 'queued', 'done', 'failed', 'closed', 'archived']) {
+      expect(isActiveProcessStatus(status)).toBe(false);
+    }
+  });
+});
+
+describe('hasActiveProcesses', () => {
+  it('is true while any task is running or awaiting review', () => {
+    expect(hasActiveProcesses([makeTask('t1', 'r1', 'running')])).toBe(true);
+    expect(hasActiveProcesses([makeTask('t1', 'r1', 'awaiting_review')])).toBe(true);
+    expect(
+      hasActiveProcesses([makeTask('t1', 'r1', 'done'), makeTask('t2', 'r1', 'running')]),
+    ).toBe(true);
+  });
+
+  it('is false when everything is idle (done / not started / only queued)', () => {
+    expect(hasActiveProcesses(undefined)).toBe(false);
+    expect(hasActiveProcesses([])).toBe(false);
+    expect(hasActiveProcesses([makeTask('t1', 'r1', 'done')])).toBe(false);
+    expect(hasActiveProcesses([makeTask('t1', 'r1', 'pending')])).toBe(false);
+    // queued is "in flight" but not yet actively running — do not animate
+    expect(hasActiveProcesses([makeTask('t1', 'r1', 'queued')])).toBe(false);
+  });
+});
+
+describe('activityPollInterval', () => {
+  it('polls while any task is in flight, running or awaiting review', () => {
+    expect(activityPollInterval([makeTask('t1', 'r1', 'queued')])).toBe(IN_FLIGHT_POLL_INTERVAL_MS);
+    expect(activityPollInterval([makeTask('t1', 'r1', 'running')])).toBe(IN_FLIGHT_POLL_INTERVAL_MS);
+    expect(activityPollInterval([makeTask('t1', 'r1', 'awaiting_review')])).toBe(
+      IN_FLIGHT_POLL_INTERVAL_MS,
+    );
+  });
+
+  it('stops polling once every task is idle', () => {
+    expect(activityPollInterval(undefined)).toBe(false);
+    expect(activityPollInterval([])).toBe(false);
+    expect(activityPollInterval([makeTask('t1', 'r1', 'done')])).toBe(false);
+    expect(activityPollInterval([makeTask('t1', 'r1', 'pending')])).toBe(false);
   });
 });
 

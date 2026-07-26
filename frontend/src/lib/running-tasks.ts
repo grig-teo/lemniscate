@@ -8,12 +8,30 @@ export function isRunningStatus(status: string): boolean {
   return RUNNING_STATUSES.has(status);
 }
 
+/**
+ * Statuses that count as "active work in progress": the brand mark and tab
+ * icon animate while any task is running or awaiting review (in review).
+ * Idle states (pending, done, …) and "queued" (dispatched but not yet
+ * running) do NOT animate.
+ */
+const ACTIVE_STATUSES: ReadonlySet<string> = new Set(['running', 'awaiting_review']);
+
+/** True for statuses that mean work is actively in progress (animate). */
+export function isActiveProcessStatus(status: string): boolean {
+  return ACTIVE_STATUSES.has(status);
+}
+
 /** Tasks-query poll cadence while any task is queued or running. */
 export const IN_FLIGHT_POLL_INTERVAL_MS = 5_000;
 
-/** True while any task in the list is queued or running. */
+/** True while any task is queued or running. */
 export function hasInFlightTasks(tasks: Task[] | undefined): boolean {
   return (tasks ?? []).some((task) => isRunningStatus(task.status));
+}
+
+/** True while any task is running or awaiting review (active work → animate). */
+export function hasActiveProcesses(tasks: Task[] | undefined): boolean {
+  return (tasks ?? []).some((task) => isActiveProcessStatus(task.status));
 }
 
 /**
@@ -23,6 +41,16 @@ export function hasInFlightTasks(tasks: Task[] | undefined): boolean {
  */
 export function inFlightPollInterval(tasks: Task[] | undefined): number | false {
   return hasInFlightTasks(tasks) ? IN_FLIGHT_POLL_INTERVAL_MS : false;
+}
+
+/**
+ * Refetch interval for activity indicators (brand mark / favicon): keep
+ * polling while anything is in flight OR actively running/awaiting review so
+ * the animation starts and stops in sync with task transitions. Returns false
+ * (no polling) once every task is idle.
+ */
+export function activityPollInterval(tasks: Task[] | undefined): number | false {
+  return hasInFlightTasks(tasks) || hasActiveProcesses(tasks) ? IN_FLIGHT_POLL_INTERVAL_MS : false;
 }
 
 export interface RepositoryTaskGroup {

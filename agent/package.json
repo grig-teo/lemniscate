@@ -10,7 +10,8 @@
     "node": ">=24.18.0"
   },
   "scripts": {
-    "test": "node --test"
+    "test": "node --test",
+    "check:max-lines": "node ../scripts/check-max-lines.mjs . --ext js --exclude '*.test.*' --ignore scripts/max-lines-baseline.json"
   },
   "license": "MIT",
   "dependencies": {

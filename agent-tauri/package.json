@@ -7,6 +7,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
+    "check:max-lines": "node ../scripts/check-max-lines.mjs src --ext ts,tsx",
     "tauri": "tauri"
   },
   "dependencies": {

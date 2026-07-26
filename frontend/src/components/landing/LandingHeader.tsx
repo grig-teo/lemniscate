@@ -4,6 +4,7 @@ import { Link } from 'react-router-dom';
 import { BrandMark } from '@/components/BrandMark';
 import { ThemeToggle } from '@/components/ThemeToggle';
 import { buttonVariants } from '@/components/ui/button';
+import { useHasActiveProcesses } from '@/lib/queries/tasks';
 import { useMe } from '@/lib/hooks';
 
 function AuthAction() {
@@ -27,9 +28,10 @@ function AuthAction() {
 
 /** Landing top bar: logo + name, session-aware auth action and theme toggle. */
 export function LandingHeader() {
+  const animate = useHasActiveProcesses();
   return (
     <header className="flex h-14 shrink-0 items-center justify-between border-b px-4">
-      <BrandMark />
+      <BrandMark animate={animate} />
       <div className="flex items-center gap-2">
         <AuthAction />
         <ThemeToggle />
