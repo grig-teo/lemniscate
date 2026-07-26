@@ -103,6 +103,8 @@ backend/              # Fastify API + BullMQ worker (npm run build / npm test)
 frontend/             # Vite/React app (npm run build = tsc --noEmit && vite build)
 android/              # native Android app, Kotlin + Compose Material 3 (gradle assembleDebug)
 ios/                  # native iOS app, SwiftUI glass design (xcodebuild -scheme Lemniscate)
+agent/                # local device bridge (Node CLI): pairs via /api/devices, executes
+                      # DeviceCommands (run_web/run_desktop/build_android/install_apk/run_ios)
 scripts/              # install-linux.sh / install-macos.sh one-command deploy
 landing/              # static landing page
 docs/                 # design specs

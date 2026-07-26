@@ -190,6 +190,28 @@ async function finalizeRunTask(
   await openTaskPullRequest(task, rt, branchName, summary);
 }
 
+// Persists the repo-relative paths the task branch changed (feeds the
+// run-targets endpoint). Fail-soft: a failed diff is logged to the task
+// console and changedPaths stays null, so the endpoint falls back to the
+// repository platform.
+async function recordChangedPaths(task: TaskWithRepo, workdir: string): Promise<void> {
+  try {
+    const out = await git(
+      ['diff', '--name-only', `${task.repository.defaultBranch}...HEAD`],
+      { cwd: workdir, taskId: task.id },
+    );
+    const changedPaths = out
+      .split('\n')
+      .map((line) => line.trim())
+      .filter(Boolean);
+    await prisma.task.update({ where: { id: task.id }, data: { changedPaths } });
+  } catch (err) {
+    await logEvent(task.id, `could not record changed paths: ${(err as Error).message}`).catch(
+      () => {},
+    );
+  }
+}
+
 const HERMES_INSTRUCTIONS =
   'Work in the current directory (a freshly cloned repository). Implement the task completely, including tests if the project has a test setup. Do NOT git commit, push, or create branches — git is handled externally.';
 
@@ -312,10 +334,12 @@ async function executeRunTask(
   const summary = await implementTask(task, rt, workdir, secrets, resume);
   if (summary === null) {
     await logEvent(task.id, 'no changes produced; nothing to commit');
+    await prisma.task.update({ where: { id: task.id }, data: { changedPaths: [] } });
     await setTaskStatus(task.id, 'done');
     return rt;
   }
   await pushBranch(task, rt, workdir, branchName, summary, secrets, gitAuth);
+  await recordChangedPaths(task, workdir);
   if (emptyRepo) {
     await logEvent(task.id, `empty repository bootstrapped on ${branchName}; no PR opened`);
     await setTaskStatus(task.id, 'done');

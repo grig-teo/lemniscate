@@ -186,6 +186,10 @@ model Task {
   // Cumulative LLM token usage across run/review/fix jobs; seeds the
   // maxTokensPerRun budget so it spans the whole task, not a single job.
   llmTokensUsed Int        @default(0)
+  // Repo-relative paths changed on the task branch (string[] as JSON),
+  // recorded by the worker after the push; null for old tasks or when the
+  // diff failed (run-targets falls back to the repository platform).
+  changedPaths Json?
   error        String?
   // Soft-archive timestamp: archived tasks are hidden from task lists but
   // never deleted; null = active.
@@ -282,15 +286,20 @@ model DevicePairing {
 model DeviceCommand {
   id        String   @id @default(cuid())
   deviceId  String
-  // 'run_web' for now — TEXT, validated by zod at the API.
+  // 'run_web'|'run_ios'|'run_desktop'|'install_apk'|'build_android' — TEXT,
+  // validated by zod at the API.
   type      String
   payload   Json
   // queued|sent|running|done|failed — TEXT, transitions via the WS gateway.
   status    String   @default("queued")
   result    Json?
+  // Optional link to the task this command runs the result of (plain
+  // column, no FK — the command must survive the task being touched).
+  taskId    String?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   device    Device   @relation(fields: [deviceId], references: [id], onDelete: Cascade)
 
   @@index([deviceId])
+  @@index([taskId])
 }

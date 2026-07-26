@@ -90,7 +90,23 @@ const commandBodySchema = z.discriminatedUnion('type', [
         .optional(),
     }),
   }),
+  // scheme/destination are passed to xcodebuild on a macOS agent; both
+  // optional — the agent auto-detects when omitted.
+  z.object({
+    type: z.literal('run_ios'),
+    payload: z.object({
+      repoUrl: z.string().url(),
+      branch: z.string().min(1).max(200),
+      scheme: z.string().min(1).max(200).optional(),
+      destination: z.string().min(1).max(200).optional(),
+    }),
+  }),
 ]);
+
+// Optional link back to the task whose result the command runs.
+const createCommandBodySchema = commandBodySchema.and(
+  z.object({ taskId: z.string().min(1).max(100).optional() }),
+);
 
 // install_apk launches an install intent on Android; on desktop the agent
 // only downloads the file. iOS/web devices cannot receive APKs at all.
@@ -220,7 +236,9 @@ async function listCommands(request: FastifyRequest, reply: FastifyReply) {
 async function createCommand(request: FastifyRequest, reply: FastifyReply) {
   const params = parseOrReply(idParamSchema, request.params, reply, 'Invalid device id');
   if (params === null) return;
-  const body = parseOrReply(commandBodySchema, request.body, reply, 'Invalid body', { request });
+  const body = parseOrReply(createCommandBodySchema, request.body, reply, 'Invalid body', {
+    request,
+  });
   if (body === null) return;
   const device = await ownedDevice(request, reply, params.id);
   if (!device) return;
@@ -233,7 +251,7 @@ async function createCommand(request: FastifyRequest, reply: FastifyReply) {
     if (block) return reply.code(400).send({ error: block });
   }
   const command = await prisma.deviceCommand.create({
-    data: { deviceId: params.id, type: body.type, payload: body.payload },
+    data: { deviceId: params.id, type: body.type, payload: body.payload, taskId: body.taskId },
   });
   const sent = await dispatchCommand(command);
   return reply.code(201).send({ command: { ...command, status: sent ? 'sent' : command.status } });
