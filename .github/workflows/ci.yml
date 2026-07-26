@@ -78,6 +78,7 @@ jobs:
       android: ${{ steps.filter.outputs.android }}
       ios: ${{ steps.filter.outputs.ios }}
       e2e: ${{ steps.filter.outputs.e2e }}
+      backend: ${{ steps.filter.outputs.backend }}
     steps:
       - uses: actions/checkout@v4
 
@@ -98,6 +99,9 @@ jobs:
               - 'frontend/**'
               - 'docker-compose.yml'
               - 'tests/e2e/**'
+              - '.github/workflows/ci.yml'
+            backend:
+              - 'backend/**'
               - '.github/workflows/ci.yml'
 
   android:
@@ -123,6 +127,55 @@ jobs:
         working-directory: android
         continue-on-error: true
         run: ./gradlew lint
+
+  # Real-Postgres integration tests (backend/tests/*.integration.test.ts,
+  # gated on INTEGRATION=1 — skipped in the unit-test job above). Proves the
+  # proposal auto-start claim race-safety against a live database: mocked
+  # transactions cannot catch a missing pg_advisory_xact_lock.
+  integration:
+    name: Backend — Postgres integration tests
+    needs: changes
+    if: needs.changes.outputs.backend == 'true'
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U test -d test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      INTEGRATION: '1'
+      # vitest.config.ts defers to this when set (its inline env otherwise
+      # overrides process.env).
+      DATABASE_URL: postgresql://test:test@localhost:5432/test
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.18.0
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Install dependencies
+        working-directory: backend
+        run: npm ci
+
+      - name: Apply migrations
+        working-directory: backend
+        run: npx prisma migrate deploy
+
+      - name: Run integration tests
+        working-directory: backend
+        run: npx vitest run tests/proposal-claim.integration.test.ts
 
   e2e:
     name: E2E — smoke suite on the real compose stack
