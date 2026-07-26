@@ -8,6 +8,7 @@ import { generateCommitMessage } from './agent-prompts.js';
 import type { LlmRuntime, TokenSplit } from './agent-runtime.js';
 import { prisma } from './prisma.js';
 import { errorKind, logJobFailure } from './job-failure-log.js';
+import { notifyTaskFailure } from './notifications.js';
 import { publishTaskEvent } from './task-events.js';
 import { errorMessage, redactSecrets } from './utils.js';
 import { archiveWorkdirToMinio } from './workdir-archive.js';
@@ -262,6 +263,9 @@ export async function recordJobFailure(
   const message = explainGitFailure(redactSecrets(errorMessage(err), secrets)).slice(0, 1_000);
   logJobFailure({ jobName: jobKind, taskId, errorKind: errorKind(err), message });
   await logEvent(taskId, `error: ${message}`).catch(() => {});
+  // User-facing notification (deduped per task+kind inside, so BullMQ
+  // retries of review/merge jobs cannot spam); never blocks the failure path.
+  await notifyTaskFailure(taskId, errorKind(err), message).catch(() => {});
   return message;
 }
 

@@ -178,6 +178,12 @@ by hand:
    roughly match the run's token usage shown in the live console. With
    `METRICS_TOKEN` set, `curl -s -H "Authorization: Bearer $METRICS_TOKEN"
    localhost:3000/metrics` answers 200 (and 401 without it).
+10. Confirm the TopNav bell shows an unread "PR opened" notification within
+    30s of the PR being created, and that clicking it opens the PR; merge the
+    PR on the git host and confirm a "PR merged" notification appears within
+    one pr-state-sync interval (5 min). Optionally set a webhook URL via
+    `PUT /api/notifications/settings` and verify the HMAC-signed POST
+    (`x-lemniscate-signature: sha256=…`) reaches the bridge.
 
 > Note: the live OAuth login, LLM calls, and branch/PR creation paths could
 > not be exercised without real provider and LLM credentials — verify them

@@ -14,6 +14,7 @@ const mocks = vi.hoisted(() => ({
   logEvent: vi.fn().mockResolvedValue(undefined),
   cleanupWorkdir: vi.fn().mockResolvedValue(undefined),
   pullRequestState: vi.fn(),
+  notify: vi.fn().mockResolvedValue(undefined),
 }));
 
 vi.mock('../src/config.js', () => ({ config: { AGENT_WORKDIR: '/tmp/test-workdirs' } }));
@@ -29,6 +30,7 @@ vi.mock('../src/lib/agent-git.js', () => ({
   cleanupWorkdir: mocks.cleanupWorkdir,
 }));
 vi.mock('../src/lib/pull-requests.js', () => ({ pullRequestState: mocks.pullRequestState }));
+vi.mock('../src/lib/notifications.js', () => ({ notify: mocks.notify }));
 vi.mock('../src/lib/proposal-scheduler.js', () => ({
   getAgentTasksQueue: vi.fn(),
   enqueueReviewTask: mocks.enqueueReviewTask,
@@ -44,13 +46,14 @@ import {
 function awaitingTask(overrides: Record<string, unknown> = {}) {
   return {
     id: 't1',
+    title: 'Add feature X',
     status: 'awaiting_review',
     prUrl: 'https://pr/1',
     branchName: 'lemniscate/t-1',
     repository: {
       fullName: 'org/demo',
       defaultBranch: 'main',
-      connection: { provider: 'github', baseUrl: null, accessTokenEnc: 'enc' },
+      connection: { provider: 'github', baseUrl: null, accessTokenEnc: 'enc', userId: 'user-1' },
     },
     ...overrides,
   };
@@ -86,6 +89,13 @@ describe('syncMergedPullRequests', () => {
     );
     // The kept run workdir is removed once the task is merged.
     expect(mocks.cleanupWorkdir).toHaveBeenCalledWith('/tmp/test-workdirs/t1', 't1');
+    // The repo owner gets a pr_merged notification pointing at the PR.
+    expect(mocks.notify).toHaveBeenCalledWith('user-1', 'pr_merged', {
+      title: 'PR merged: Add feature X',
+      body: 'org/demo — pull request merged on the git host',
+      taskId: 't1',
+      prUrl: 'https://pr/1',
+    });
   });
 
   it('leaves tasks with open PRs unchanged', async () => {
@@ -109,6 +119,11 @@ describe('syncMergedPullRequests', () => {
       'pull request closed without merge on the git host — task marked closed',
     );
     expect(mocks.cleanupWorkdir).toHaveBeenCalledWith('/tmp/test-workdirs/t-closed', 't-closed');
+    expect(mocks.notify).toHaveBeenCalledWith(
+      'user-1',
+      'pr_closed',
+      expect.objectContaining({ taskId: 't-closed' }),
+    );
   });
 
   it('skips provider failures and keeps syncing the remaining tasks', async () => {

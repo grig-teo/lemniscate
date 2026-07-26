@@ -4,6 +4,7 @@ import { config } from '../config.js';
 import { cleanupWorkdir, logEvent } from './agent-git.js';
 import { pullRequestState, type PrState } from './pull-requests.js';
 import { enqueueReviewTask, getAgentTasksQueue } from './proposal-scheduler.js';
+import { notify } from './notifications.js';
 import { prisma } from './prisma.js';
 import { setTaskStatus } from './task-events.js';
 import { errorMessage } from './utils.js';
@@ -51,6 +52,12 @@ async function syncTaskPrState(task: TaskWithConnection): Promise<boolean> {
     await setTaskStatus(task.id, status);
     const what = status === 'done' ? 'merged' : 'closed without merge';
     await logEvent(task.id, `pull request ${what} on the git host — task marked ${status}`);
+    await notify(task.repository.connection.userId, status === 'done' ? 'pr_merged' : 'pr_closed', {
+      title: `PR ${status === 'done' ? 'merged' : 'closed'}: ${task.title}`,
+      body: `${task.repository.fullName} — pull request ${what} on the git host`,
+      taskId: task.id,
+      prUrl: task.prUrl ?? undefined,
+    });
     // The run workdir was kept for the review window — the PR is finished
     // either way, so the clone can go.
     await cleanupWorkdir(path.join(config.AGENT_WORKDIR, task.id), task.id);
