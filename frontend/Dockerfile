@@ -1,5 +1,5 @@
 # ---------- build: compile the Vite app ----------
-FROM node:22-alpine AS build
+FROM node:24.18.0-alpine AS build
 WORKDIR /app
 # Bake-time configuration (subpath deploys set these via compose build args)
 ARG VITE_BASE_PATH=/

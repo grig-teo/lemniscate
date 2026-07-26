@@ -25,7 +25,7 @@ serve it via any static pages hosting.
 
 ## Tech stack
 
-- **Backend** — Node.js 22, TypeScript, Fastify, Prisma, PostgreSQL 16
+- **Backend** — Node.js 24.18.0, TypeScript, Fastify, Prisma, PostgreSQL 16
 - **Queue** — Redis + BullMQ (agent loop runs as background jobs)
 - **Worker** — separate service (same image) that clones repos, runs the LLM loop, commits and opens PRs
 - **Frontend** — React 18, Vite, TypeScript, Tailwind CSS, shadcn/ui, TanStack Query
