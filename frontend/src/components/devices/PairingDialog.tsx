@@ -90,9 +90,20 @@ function AgentDownloads() {
         ))}
       </div>
       <p className="text-xs text-muted-foreground">
-        macOS: unsigned — right-click → Open the first time. Windows: SmartScreen → More info →
-        Run anyway.
+        Windows: SmartScreen → More info → Run anyway.
       </p>
+      <div className="flex items-start gap-2">
+        <p className="min-w-0 flex-1 break-all text-xs text-muted-foreground">
+          macOS: unsigned — if &ldquo;damaged and can&rsquo;t be opened&rdquo;, run once:{' '}
+          <code className="text-foreground">
+            xattr -dr com.apple.quarantine &quot;/Applications/Lemniscate Agent.app&rdquo;
+          </code>
+        </p>
+        <CopyButton
+          text='xattr -dr com.apple.quarantine "/Applications/Lemniscate Agent.app"'
+          label="Copy macOS quarantine fix"
+        />
+      </div>
     </div>
   );
 }
