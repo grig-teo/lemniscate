@@ -4,14 +4,12 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const minio = vi.hoisted(() => ({
-  getMinioClient: vi.fn(),
+  getMinioBucket: vi.fn(),
   fPutObject: vi.fn(),
-  bucketExists: vi.fn(),
-  makeBucket: vi.fn(),
 }));
 
 vi.mock('../src/lib/minio-client.js', () => ({
-  getMinioClient: minio.getMinioClient,
+  getMinioBucket: minio.getMinioBucket,
 }));
 
 import {
@@ -35,12 +33,7 @@ describe('archiveWorkdirToMinio', () => {
 
   beforeEach(async () => {
     vi.clearAllMocks();
-    minio.getMinioClient.mockReturnValue({
-      fPutObject: minio.fPutObject,
-      bucketExists: minio.bucketExists,
-      makeBucket: minio.makeBucket,
-    });
-    minio.bucketExists.mockResolvedValue(true);
+    minio.getMinioBucket.mockResolvedValue({ client: { fPutObject: minio.fPutObject } });
     minio.fPutObject.mockResolvedValue(undefined);
     workdir = await mkdtemp(join(tmpdir(), 'workdir-archive-test-'));
     await writeFile(join(workdir, 'hello.txt'), 'hello');
@@ -52,6 +45,7 @@ describe('archiveWorkdirToMinio', () => {
 
   it('uploads a tarball of the workdir into the archive bucket', async () => {
     await archiveWorkdirToMinio(workdir);
+    expect(minio.getMinioBucket).toHaveBeenCalledWith(WORKDIR_ARCHIVE_BUCKET);
     expect(minio.fPutObject).toHaveBeenCalledTimes(1);
     const [bucket, key, filePath] = minio.fPutObject.mock.calls[0]!;
     expect(bucket).toBe(WORKDIR_ARCHIVE_BUCKET);
@@ -64,14 +58,8 @@ describe('archiveWorkdirToMinio', () => {
     await expect(stat(join(workdir, 'hello.txt'))).resolves.toBeTruthy();
   });
 
-  it('creates the archive bucket when it is missing', async () => {
-    minio.bucketExists.mockResolvedValue(false);
-    await archiveWorkdirToMinio(workdir);
-    expect(minio.makeBucket).toHaveBeenCalledWith(WORKDIR_ARCHIVE_BUCKET);
-  });
-
   it('is a no-op when MinIO is not configured', async () => {
-    minio.getMinioClient.mockReturnValue(null);
+    minio.getMinioBucket.mockResolvedValue(null);
     await archiveWorkdirToMinio(workdir);
     expect(minio.fPutObject).not.toHaveBeenCalled();
   });

@@ -17,10 +17,12 @@
 //   gitee.js       — GITEE_API, giteeHeaders, normalizeGiteeRepo, Gitee client
 //   gitverse.js    — GITVERSE_API, gitverseBase, gitverseApiBase,
 //                    normalizeGitverseRepo, GitVerse client
+//   registry.js    — providerApis registry, fetchProviderProfile,
+//                    assertRepoPushAccess, getProviderClient
 //
 // The provider factory (the single switch on provider type, per AGENTS.md
-// section 4) lives in exactly one of the modules above and is re-exported
-// through this barrel like everything else.
+// section 4) lives in registry.js and is re-exported through this barrel
+// like everything else.
 export * from './git-providers/types.js';
 export * from './git-providers/http.js';
 export * from './git-providers/scopes.js';
@@ -30,3 +32,4 @@ export * from './git-providers/github.js';
 export * from './git-providers/gitlab.js';
 export * from './git-providers/gitee.js';
 export * from './git-providers/gitverse.js';
+export * from './git-providers/registry.js';

@@ -3,8 +3,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import { promisify } from 'node:util';
-import type { Client as MinioClient } from 'minio';
-import { getMinioClient } from './minio-client.js';
+import { getMinioBucket } from './minio-client.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -14,11 +13,6 @@ export const WORKDIR_ARCHIVE_BUCKET =
 export function archiveObjectKey(workdir: string, now: Date = new Date()): string {
   const stamp = now.toISOString().replace(/[:.]/g, '-');
   return `workdirs/${basename(workdir)}-${stamp}.tar.gz`;
-}
-
-async function ensureBucket(client: MinioClient): Promise<void> {
-  if (await client.bucketExists(WORKDIR_ARCHIVE_BUCKET)) return;
-  await client.makeBucket(WORKDIR_ARCHIVE_BUCKET);
 }
 
 async function stageTarball(workdir: string, staging: string): Promise<string> {
@@ -35,13 +29,12 @@ async function stageTarball(workdir: string, staging: string): Promise<string> {
  */
 export async function archiveWorkdirToMinio(workdir: string): Promise<void> {
   try {
-    const client = getMinioClient();
-    if (!client) return;
+    const ctx = await getMinioBucket(WORKDIR_ARCHIVE_BUCKET);
+    if (!ctx) return;
     const staging = await mkdtemp(join(tmpdir(), 'lemniscate-workdir-archive-'));
     try {
       const tarball = await stageTarball(workdir, staging);
-      await ensureBucket(client);
-      await client.fPutObject(WORKDIR_ARCHIVE_BUCKET, archiveObjectKey(workdir), tarball);
+      await ctx.client.fPutObject(WORKDIR_ARCHIVE_BUCKET, archiveObjectKey(workdir), tarball);
     } finally {
       await rm(staging, { recursive: true, force: true }).catch(() => {});
     }
