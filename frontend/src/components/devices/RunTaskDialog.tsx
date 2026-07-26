@@ -3,6 +3,12 @@ import { Loader2, Play } from 'lucide-react';
 
 import { describeApiError } from '@/lib/api';
 import {
+  androidTargetOptions,
+  dockerHint,
+  iosTargetOptions,
+  transportLabel,
+} from '@/lib/devices';
+import {
   useCreateDeviceCommand,
   useDeviceCommands,
   useRepositories,
@@ -65,6 +71,30 @@ function RunTargetRow({
   const [chosenDeviceId, setChosenDeviceId] = React.useState<string | null>(null);
   const deviceId = chosenDeviceId ?? defaultDeviceId ?? null;
 
+  const chosenDevice = target.devices.find((device) => device.id === deviceId) ?? null;
+  const environment = chosenDevice?.meta?.environment;
+
+  // Concrete install/run target on the chosen machine; reset when the device changes.
+  const [installTarget, setInstallTarget] = React.useState<string | null>(null);
+  React.useEffect(() => {
+    setInstallTarget(null);
+  }, [deviceId]);
+
+  const isMobileTarget = target.target === 'android' || target.target === 'ios';
+  // environment undefined → the agent never reported capabilities (legacy: no picker).
+  const showInstallPicker = isMobileTarget && environment !== undefined;
+  const installOptions = showInstallPicker
+    ? target.target === 'android'
+      ? androidTargetOptions(environment)
+      : iosTargetOptions(environment)
+    : [];
+  const installPickerEmpty = showInstallPicker && installOptions.length === 0;
+  const installPlaceholder = installPickerEmpty
+    ? target.target === 'android'
+      ? 'No Android device reported'
+      : 'No iOS device or simulator reported'
+    : 'Install target';
+
   const commands = useDeviceCommands(dispatched?.deviceId ?? null, {
     refetchInterval: dispatched ? 5_000 : false,
   });
@@ -81,37 +111,72 @@ function RunTargetRow({
         {target.devices.length === 0 ? (
           <span className="min-w-0 flex-1 text-sm text-muted-foreground">No paired device</span>
         ) : (
-          <Select
-            value={deviceId ?? undefined}
-            onValueChange={setChosenDeviceId}
-            disabled={Boolean(dispatched) || createCommand.isPending}
-          >
-            <SelectTrigger className="h-8 min-w-0 flex-1" aria-label="Device">
-              <SelectValue placeholder="Select device" />
-            </SelectTrigger>
-            <SelectContent>
-              {onlineFirst.map((device) => (
-                <SelectItem key={device.id} value={device.id} disabled={!device.online}>
-                  {device.name}
-                  {device.online ? '' : ' (offline)'}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          <div className="flex min-w-0 flex-1 items-center gap-2">
+            <Select
+              value={deviceId ?? undefined}
+              onValueChange={setChosenDeviceId}
+              disabled={Boolean(dispatched) || createCommand.isPending}
+            >
+              <SelectTrigger className="h-8 min-w-0 flex-1" aria-label="Device">
+                <SelectValue placeholder="Select device" />
+              </SelectTrigger>
+              <SelectContent>
+                {onlineFirst.map((device) => (
+                  <SelectItem key={device.id} value={device.id} disabled={!device.online}>
+                    {device.name}
+                    {device.online ? '' : ' (offline)'}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {showInstallPicker && (
+              <Select
+                value={installTarget ?? undefined}
+                onValueChange={setInstallTarget}
+                disabled={installPickerEmpty || Boolean(dispatched) || createCommand.isPending}
+              >
+                <SelectTrigger className="h-8 min-w-0 flex-1" aria-label="Install target">
+                  <SelectValue placeholder={installPlaceholder} />
+                </SelectTrigger>
+                <SelectContent>
+                  {installOptions.map((option) => (
+                    <SelectItem
+                      key={option.value}
+                      value={option.value}
+                      disabled={'disabled' in option ? option.disabled : false}
+                    >
+                      {'transport' in option
+                        ? `${option.label} · ${transportLabel(option.transport)}`
+                        : option.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
+          </div>
         )}
         <Button
           type="button"
           variant="outline"
           size="sm"
           className="shrink-0"
-          disabled={!deviceId || Boolean(dispatched) || createCommand.isPending}
+          disabled={!deviceId || installPickerEmpty || Boolean(dispatched) || createCommand.isPending}
           onClick={() => {
             if (!deviceId) return;
             createCommand.mutate(
               {
                 deviceId,
                 type: target.commandType,
-                payload: { repoUrl: repository.cloneUrl, branch },
+                payload: {
+                  repoUrl: repository.cloneUrl,
+                  branch,
+                  ...(installTarget && target.target === 'android'
+                    ? { deviceSerial: installTarget }
+                    : {}),
+                  ...(installTarget && target.target === 'ios'
+                    ? { destination: installTarget }
+                    : {}),
+                },
                 taskId,
               },
               { onSuccess: (created) =>
@@ -129,6 +194,25 @@ function RunTargetRow({
         </Button>
         {command && <StatusBadge status={command.status} />}
       </div>
+      {installPickerEmpty && (
+        <p className="break-words text-xs text-muted-foreground">{installPlaceholder}</p>
+      )}
+      {(target.target === 'web' || target.target === 'desktop') &&
+        chosenDevice &&
+        (() => {
+          const hint = dockerHint(environment);
+          return (
+            <p
+              className={
+                hint.warn
+                  ? 'break-words text-xs text-amber-600 dark:text-amber-400'
+                  : 'break-words text-xs text-muted-foreground'
+              }
+            >
+              {hint.text}
+            </p>
+          );
+        })()}
       {createCommand.isError && (
         <p className="break-words text-xs text-destructive">
           {describeApiError(createCommand.error)}

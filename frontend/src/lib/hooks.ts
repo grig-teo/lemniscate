@@ -620,7 +620,7 @@ export type DeviceEnvironment = {
   dockerAvailable?: boolean;
   androidDevices?: { serial: string; model?: string; transport: 'usb' | 'wifi' }[];
   iosDevices?: { name: string; udid: string; available: boolean }[];
-  simulators?: { name: string; runtime?: string; state?: string }[];
+  simulators?: { name: string; runtime?: string; state?: string; udid?: string }[];
   emulators?: { name: string }[];
 };
 
@@ -662,6 +662,7 @@ export type RunWebPayload = {
 export type InstallApkPayload = {
   apkUrl: string;
   appName?: string;
+  deviceSerial?: string;
 };
 
 export type BuildAndroidPayload = {
@@ -771,6 +772,7 @@ export type TaskRunTargetDevice = {
   name: string;
   platform: string;
   online: boolean;
+  meta: DeviceMeta | null;
 };
 
 /** GET /api/tasks/:id/run-targets item — one affected target plus its paired devices. */

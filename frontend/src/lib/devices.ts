@@ -3,6 +3,8 @@
  * DeviceDetailsModal). Tested in devices.test.ts — keep them dependency-free.
  */
 
+import type { DeviceEnvironment } from '@/lib/hooks';
+
 const MINUTE_MS = 60_000;const HOUR_MS = 3_600_000;
 const DAY_MS = 86_400_000;
 
@@ -37,6 +39,48 @@ const TRANSPORT_LABELS: Record<string, string> = {
 /** Display label for an adb device transport; unknown ones pass through. */
 export function transportLabel(transport: string): string {
   return TRANSPORT_LABELS[transport] ?? transport;
+}
+
+export type AndroidTargetOption = { value: string; label: string; transport: 'usb' | 'wifi' };
+
+/** Install-target options for an agent's reported Android devices (adb serials). */
+export function androidTargetOptions(env?: DeviceEnvironment | null): AndroidTargetOption[] {
+  return (env?.androidDevices ?? []).map((device) => ({
+    value: device.serial,
+    label: device.model ?? device.serial,
+    transport: device.transport,
+  }));
+}
+
+export type IosTargetOption = { value: string; label: string; disabled: boolean };
+
+/**
+ * Run-target options for an agent's reported iOS devices and simulators —
+ * physical devices first (disabled when unavailable), then simulators that
+ * carry a udid (run_ios only accepts a udid destination).
+ */
+export function iosTargetOptions(env?: DeviceEnvironment | null): IosTargetOption[] {
+  const physical = (env?.iosDevices ?? []).map((device) => ({
+    value: device.udid,
+    label: device.name,
+    disabled: !device.available,
+  }));
+  const simulators = (env?.simulators ?? [])
+    .filter((simulator): simulator is typeof simulator & { udid: string } => Boolean(simulator.udid))
+    .map((simulator) => ({
+      value: simulator.udid,
+      label: simulator.runtime ? `${simulator.name} · ${simulator.runtime}` : simulator.name,
+      disabled: false,
+    }));
+  return [...physical, ...simulators];
+}
+
+export type DockerHint = { text: string; warn: boolean };
+
+/** One-line docker status hint for web/desktop run targets on a chosen device. */
+export function dockerHint(env?: DeviceEnvironment | null): DockerHint {
+  if (env?.dockerAvailable === true) return { text: 'Docker available', warn: false };
+  return { text: 'Docker not reported on this device', warn: true };
 }
 
 
