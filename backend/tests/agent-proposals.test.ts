@@ -126,6 +126,20 @@ describe('generateProposals', () => {
     });
   });
 
+  it('persists a features proposal as a pending task with category features', async () => {
+    stubHappyPath([
+      { title: 'Add REST webhooks', prompt: 'Implement outbound webhooks', category: 'features', priority: 'high', effort: 'medium' },
+    ]);
+    await generateProposals('repo-1');
+    expect(mocks.taskCreate.mock.calls[0]?.[0].data).toMatchObject({
+      kind: 'proposal',
+      category: 'features',
+      priority: 'high',
+      effort: 'medium',
+      status: 'pending',
+    });
+  });
+
   it('skips proposals whose title is already pending or queued', async () => {
     stubHappyPath([proposal(1), proposal(2)]);
     mocks.taskFindMany.mockResolvedValue([{ title: '  proposal 1 ', status: 'queued' }]);
@@ -326,6 +340,12 @@ describe('parseProposalsFile', () => {
     ]);
   });
 
+  it('keeps the features category from the hermes-written file', () => {
+    expect(parseProposalsFile('[{"title":"Add SSO","prompt":"P","category":"features"}]')).toEqual([
+      { title: 'Add SSO', prompt: 'P', category: 'features', priority: 'medium', effort: 'medium' },
+    ]);
+  });
+
   it('parses JSON embedded in surrounding prose', () => {
     const raw = 'Here are the proposals:\n[{"title":"T","prompt":"P"}]\nDone.';
     expect(parseProposalsFile(raw)).toEqual([
@@ -376,5 +396,16 @@ describe('buildHermesProposalPrompt', () => {
     });
     expect(prompt).not.toContain('Additional instructions');
     expect(prompt).not.toContain('Active skills');
+  });
+
+  it('requires features proposals for new implementations', () => {
+    const prompt = buildHermesProposalPrompt({
+      maxProposals: 5,
+      skillsSection: '',
+      systemPromptExtra: null,
+    });
+    expect(prompt).toContain('features');
+    expect(prompt).toContain('at least one `features` proposal');
+    expect(prompt).toContain('NEW implementations');
   });
 });
