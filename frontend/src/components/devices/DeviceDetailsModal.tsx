@@ -1,5 +1,6 @@
 import * as React from 'react';
 
+import { API_BASE_URL } from '@/lib/api';
 import { commandTypeLabel, devicePlatformLabel, formatLastSeen, transportLabel } from '@/lib/devices';
 import {
   useDeleteDevice,
@@ -210,6 +211,21 @@ function CommandRow({ command }: { command: DeviceCommand }) {
       )}
       {command.status === 'failed' && command.result?.error && (
         <p className="break-words text-xs text-destructive">{command.result.error}</p>
+      )}
+      {command.status === 'failed' && command.result?.log && (
+        <pre className="max-h-24 overflow-y-auto whitespace-pre-wrap break-words rounded bg-muted p-1.5 text-[10px] leading-tight text-muted-foreground">
+          {command.result.log}
+        </pre>
+      )}
+      {command.status === 'failed' && command.result?.logArtifactUrl && (
+        <a
+          href={`${API_BASE_URL}${command.result.logArtifactUrl}`}
+          target="_blank"
+          rel="noreferrer"
+          className="text-xs text-blue-500 underline"
+        >
+          Download full log
+        </a>
       )}
     </li>
   );

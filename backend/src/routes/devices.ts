@@ -1,6 +1,7 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import type { WebSocket } from 'ws';
 import { requireAuth } from '../plugins/auth.js';
+import { optionalAuth } from './connection-handlers.js';
 import {
   claimPairing,
   createCommand,
@@ -37,7 +38,7 @@ export default async function devicesRoutes(app: FastifyInstance) {
   app.post('/pairings', { preHandler: requireAuth }, createPairing);
   app.post('/claim', { config: { rateLimit: CLAIM_RATE_LIMIT } }, claimPairing);
   app.post('/artifacts', uploadArtifact);
-  app.get('/artifacts/*', downloadArtifact);
+  app.get('/artifacts/*', { preHandler: optionalAuth }, downloadArtifact);
   app.get('/', { preHandler: requireAuth }, listDevices);
   app.patch('/:id', { preHandler: requireAuth }, renameDevice);
   app.delete('/:id', { preHandler: requireAuth }, deleteDevice);

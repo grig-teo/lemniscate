@@ -17,7 +17,21 @@ export { DEVICE_ARTIFACTS_BUCKET } from './minio-client.js';
 export function safeArtifactFilename(name: string): string {
   const base = name.replace(/\\/g, '/').split('/').pop() ?? '';
   const safe = base.replace(/[^a-zA-Z0-9._-]+/g, '-').slice(0, 80);
-  return safe || 'app.apk';
+  return safe || 'artifact.bin';
+}
+
+const APK_MIME = 'application/vnd.android.package-archive';
+const LOG_MIME = 'text/plain; charset=utf-8';
+const DEFAULT_MIME = 'application/octet-stream';
+
+/**
+ * Content-Type for an artifact key/filename, inferred from its extension.
+ * `.apk` → APK mime, `.log` → text/plain, everything else → octet-stream.
+ */
+export function contentTypeForFilename(filename: string): string {
+  if (filename.endsWith('.apk')) return APK_MIME;
+  if (filename.endsWith('.log')) return LOG_MIME;
+  return DEFAULT_MIME;
 }
 
 /** Object key: scoped per device, unique per upload. */
@@ -59,17 +73,22 @@ export function artifactOwnerDeviceId(key: string): string | null {
   return key.slice(0, slash);
 }
 
-/** Store one uploaded artifact; throws when MinIO is not configured. */
+/**
+ * Store one uploaded artifact; throws when MinIO is not configured.
+ * The content type defaults to the APK mime for backward compatibility;
+ * callers uploading other artifact types (logs) should pass it explicitly.
+ */
 export async function storeDeviceArtifact(
   deviceId: string,
   filename: string,
   body: Buffer,
+  contentType: string = APK_MIME,
 ): Promise<{ key: string }> {
   const ctx = await getMinioBucket(DEVICE_ARTIFACTS_BUCKET);
   if (!ctx) throw new Error('MinIO is not configured');
   const key = artifactKeyFor(deviceId, filename, randomUUID());
   await ctx.client.putObject(DEVICE_ARTIFACTS_BUCKET, key, body, body.length, {
-    'Content-Type': 'application/vnd.android.package-archive',
+    'Content-Type': contentType,
   });
   return { key };
 }

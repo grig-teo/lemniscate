@@ -3,6 +3,7 @@ import type { Prisma } from '@prisma/client';
 import {
   artifactOwnerDeviceId,
   checkArtifactQuota,
+  contentTypeForFilename,
   deviceArtifactStream,
   storeDeviceArtifact,
 } from '../lib/device-artifacts.js';
@@ -170,23 +171,27 @@ export async function uploadArtifact(request: FastifyRequest, reply: FastifyRepl
   if (!(await checkArtifactQuota(device.id))) {
     return reply.code(429).send({ error: 'Daily artifact upload quota exceeded' });
   }
-  const filename = (request.query as { filename?: string }).filename ?? 'app.apk';
+  const filename = (request.query as { filename?: string }).filename ?? 'artifact.bin';
   const body = request.body;
   if (!Buffer.isBuffer(body) || body.length === 0) {
     return reply.code(400).send({ error: 'Expected an octet-stream body' });
   }
   try {
-    return reply.code(201).send(await storeDeviceArtifact(device.id, filename, body));
+    const contentType = contentTypeForFilename(filename);
+    return reply.code(201).send(await storeDeviceArtifact(device.id, filename, body, contentType));
   } catch (err) {
     request.log.error({ err }, 'artifact upload failed');
     return reply.code(503).send({ error: 'Artifact storage unavailable' });
   }
 }
 
-// GET /artifacts/* — install-target agents download the built APK through
-// the backend (MinIO's own endpoint is internal-only). Same device-token
-// auth as uploads; keys are scoped to the builder's device id, and downloads
-// are limited to devices of the SAME user as the key's owner (IDOR guard).
+// GET /artifacts/* — install-target agents download the built APK, and
+// authenticated users download full build logs, through the backend (MinIO's
+// own endpoint is internal-only). Agents authenticate with a device token
+// (`Authorization: Device <token>`); users authenticate via the session
+// cookie (set by `optionalAuth`). Keys are scoped to the builder's device
+// id, and downloads are limited to devices of the SAME user as the key's
+// owner (IDOR guard).
 async function assertArtifactAccess(ownerDeviceId: string, userId: string): Promise<boolean> {
   const owner = await prisma.device.findUnique({ where: { id: ownerDeviceId } });
   return owner?.userId === userId;
@@ -194,18 +199,19 @@ async function assertArtifactAccess(ownerDeviceId: string, userId: string): Prom
 
 export async function downloadArtifact(request: FastifyRequest, reply: FastifyReply) {
   const device = await deviceByToken(deviceTokenFromHeader(request.headers.authorization));
-  if (!device) return reply.code(401).send({ error: 'Invalid device token' });
+  const userId = device?.userId ?? request.userId;
+  if (!userId) return reply.code(401).send({ error: 'Authentication required' });
   const key = (request.params as { '*': string })['*'];
   const ownerDeviceId = key && !key.includes('..') ? artifactOwnerDeviceId(key) : null;
   if (!ownerDeviceId) return reply.code(400).send({ error: 'Invalid artifact key' });
   // 404 (not 403): cross-user artifact existence must not leak.
-  if (!(await assertArtifactAccess(ownerDeviceId, device.userId))) {
+  if (!(await assertArtifactAccess(ownerDeviceId, userId))) {
     return reply.code(404).send({ error: 'Artifact not found' });
   }
   const artifact = await deviceArtifactStream(key);
   if (!artifact) return reply.code(404).send({ error: 'Artifact not found' });
   return reply
-    .header('Content-Type', 'application/vnd.android.package-archive')
+    .header('Content-Type', contentTypeForFilename(key))
     .header('Content-Length', artifact.size)
     .send(artifact.stream);
 }

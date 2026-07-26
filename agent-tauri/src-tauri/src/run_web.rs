@@ -5,6 +5,7 @@ use serde_json::{json, Value};
 use std::path::Path;
 use std::time::{Duration, Instant};
 
+use crate::config::Config;
 use crate::exec::{self, CommandContext, ResultSender, DEFAULT_CMD_TIMEOUT};
 
 const HTTP_READY_TIMEOUT: Duration = Duration::from_secs(30);
@@ -16,12 +17,12 @@ const COMPOSE_CANDIDATES: [&str; 4] = [
     "compose.yaml",
 ];
 
-pub async fn execute(tx: ResultSender, id: String, payload: Value) {
+pub async fn execute(tx: ResultSender, config: Config, id: String, payload: Value) {
     let mut ctx = CommandContext::new(tx, id);
     ctx.running().await;
     match attempt(&mut ctx, &payload).await {
         Ok(result) => ctx.done(result).await,
-        Err(error) => ctx.fail(error).await,
+        Err(error) => ctx.fail_with_log(error, &config.server, &config.device_token).await,
     }
 }
 

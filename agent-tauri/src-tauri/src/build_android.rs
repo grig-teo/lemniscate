@@ -8,7 +8,6 @@ use std::time::{Duration, SystemTime};
 
 use crate::config::Config;
 use crate::exec::{self, CommandContext, ResultSender};
-use crate::protocol;
 
 const GRADLE_BUILD_TIMEOUT: Duration = Duration::from_secs(30 * 60);
 const DEFAULT_IMAGE: &str = "mingc/android-build-box:1.29.0";
@@ -20,7 +19,7 @@ pub async fn execute(tx: ResultSender, config: Config, id: String, payload: Valu
     ctx.running().await;
     match attempt(&mut ctx, &config, &payload).await {
         Ok(result) => ctx.done(result).await,
-        Err(error) => ctx.fail(error).await,
+        Err(error) => ctx.fail_with_log(error, &config.server, &config.device_token).await,
     }
 }
 
@@ -88,34 +87,9 @@ async fn upload_apk(
         .ok_or("APK path has no file name")?;
     let upload_base = exec::required_str(payload, "uploadBaseUrl", "build_android")?;
     let body = tokio::fs::read(apk_path).await.map_err(|e| format!("cannot read APK: {e}"))?;
-    let key = post_artifact(&upload_base, &apk_name, &body, &config.device_token).await?;
+    let key = exec::post_artifact(&upload_base, &apk_name, &body, &config.device_token).await?;
     ctx.append(&format!("Uploaded {apk_name} ({} bytes) → {key}", body.len()));
     Ok(json!({ "artifactKey": key, "apkName": apk_name, "sizeBytes": body.len() }))
-}
-
-async fn post_artifact(
-    upload_base: &str,
-    apk_name: &str,
-    body: &[u8],
-    device_token: &str,
-) -> Result<String, String> {
-    let response = reqwest::Client::new()
-        .post(artifact_upload_url(upload_base, apk_name))
-        .header("content-type", "application/octet-stream")
-        .header("authorization", format!("Device {device_token}"))
-        .body(body.to_vec())
-        .send()
-        .await
-        .map_err(|e| format!("APK upload failed: {e}"))?;
-    if !response.status().is_success() {
-        return Err(format!("APK upload failed (HTTP {})", response.status()));
-    }
-    let parsed: Value = response.json().await.map_err(|e| format!("bad upload response: {e}"))?;
-    parsed
-        .get("key")
-        .and_then(Value::as_str)
-        .map(str::to_string)
-        .ok_or_else(|| "upload response is missing 'key'".to_string())
 }
 
 // --- pure helpers -----------------------------------------------------------------
@@ -134,15 +108,6 @@ fn gradle_docker_args(repo_dir: &Path, image: &str, module: &str, task: &str) ->
         "-c".into(),
         format!("./gradlew --no-daemon {module}:{task}"),
     ]
-}
-
-/// Upload endpoint for a built APK on the Lemniscate server.
-fn artifact_upload_url(upload_base: &str, filename: &str) -> String {
-    format!(
-        "{}/api/devices/artifacts?filename={}",
-        upload_base.trim_end_matches('/'),
-        protocol::percent_encode(filename)
-    )
 }
 
 /// Newest APK by mtime under <repoDir>/<module>/build/outputs/apk.
@@ -202,7 +167,7 @@ mod tests {
     #[test]
     fn artifact_upload_url_appends_the_encoded_filename_query() {
         assert_eq!(
-            artifact_upload_url("https://x.space/", "my app.apk"),
+            exec::artifact_upload_url("https://x.space/", "my app.apk"),
             "https://x.space/api/devices/artifacts?filename=my%20app.apk"
         );
     }
