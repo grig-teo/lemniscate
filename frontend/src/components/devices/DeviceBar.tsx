@@ -5,6 +5,7 @@ import { useDevices, type Device } from '@/lib/hooks';
 import { cn } from '@/lib/utils';
 import { DeviceDetailsModal } from '@/components/devices/DeviceDetailsModal';
 import { PairingDialog } from '@/components/devices/PairingDialog';
+import { SectionHeader } from '@/components/sidebar/SectionHeader';
 
 function platformIcon(platform: string) {
   if (platform === 'desktop') return Monitor;
@@ -39,41 +40,54 @@ function DeviceRow({ device, onClick }: { device: Device; onClick: () => void })
  * RepoTree after the scrollable repo list): a "Devices" header with a "+"
  * pairing button and one named row per paired device (opening its details
  * modal). Rows never scroll away with the repo list; the "+" is always
- * visible so pairing is discoverable.
+ * visible so pairing is discoverable. Clicking the "Devices" header
+ * hides/shows the rows (state owned by RepoTree, persisted).
  */
-export function DeviceBar() {
+export function DeviceBar({
+  collapsed,
+  onToggle,
+}: {
+  collapsed: boolean;
+  onToggle: () => void;
+}) {
   const devices = useDevices();
   const [selectedId, setSelectedId] = React.useState<string | null>(null);
   const [pairingOpen, setPairingOpen] = React.useState(false);
   const selected = (devices.data ?? []).find((device) => device.id === selectedId) ?? null;
 
+  const pairButton = (
+    <button
+      type="button"
+      onClick={() => setPairingOpen(true)}
+      title="Pair a device"
+      aria-label="Pair a device"
+      className="rounded-full p-1 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+    >
+      <Plus className="h-4 w-4" />
+    </button>
+  );
+
   return (
     <>
       <div className="shrink-0 border-t bg-card px-2 py-1.5">
-        <div className="flex items-center justify-between">
-          <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-            Devices
-          </span>
-          <button
-            type="button"
-            onClick={() => setPairingOpen(true)}
-            title="Pair a device"
-            aria-label="Pair a device"
-            className="rounded-full p-1 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-          >
-            <Plus className="h-4 w-4" />
-          </button>
-        </div>
-        <div className="mt-0.5 flex flex-col gap-0.5">
-          {(devices.data ?? []).map((device) => (
-            <DeviceRow key={device.id} device={device} onClick={() => setSelectedId(device.id)} />
-          ))}
-          {(devices.data ?? []).length === 0 && (
-            <p className="px-1.5 py-1 text-xs text-muted-foreground/70">
-              No devices paired — click + to connect one.
-            </p>
-          )}
-        </div>
+        <SectionHeader
+          label="Devices"
+          collapsed={collapsed}
+          onToggle={onToggle}
+          action={pairButton}
+        />
+        {!collapsed && (
+          <div className="mt-0.5 flex flex-col gap-0.5">
+            {(devices.data ?? []).map((device) => (
+              <DeviceRow key={device.id} device={device} onClick={() => setSelectedId(device.id)} />
+            ))}
+            {(devices.data ?? []).length === 0 && (
+              <p className="px-1.5 py-1 text-xs text-muted-foreground/70">
+                No devices paired — click + to connect one.
+              </p>
+            )}
+          </div>
+        )}
       </div>
 
       <PairingDialog open={pairingOpen} onOpenChange={setPairingOpen} />
