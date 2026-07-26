@@ -22,11 +22,9 @@ describe('buildTraefikConfig', () => {
     });
   });
 
-  it('returns empty tables when nothing is deployed', () => {
+  it('omits empty tables when nothing is deployed', () => {
     const cfg = buildTraefikConfig([]);
-    expect(cfg.http.routers).toEqual({});
-    expect(cfg.http.services).toEqual({});
-    expect(cfg.http.middlewares).toEqual({});
+    expect(cfg.http).toEqual({});
   });
 
   it('handles multiple services independently', () => {

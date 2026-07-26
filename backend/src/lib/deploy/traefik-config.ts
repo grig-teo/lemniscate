@@ -18,9 +18,9 @@ export interface TraefikServiceInput {
 
 export interface TraefikDynamicConfig {
   http: {
-    routers: Record<string, unknown>;
-    services: Record<string, unknown>;
-    middlewares: Record<string, unknown>;
+    routers?: Record<string, unknown>;
+    services?: Record<string, unknown>;
+    middlewares?: Record<string, unknown>;
   };
 }
 
@@ -46,5 +46,11 @@ export function buildTraefikConfig(services: TraefikServiceInput[]): TraefikDyna
       stripPrefix: { prefixes: [path] },
     };
   }
-  return { http: { routers, services: backends, middlewares } };
+  // Empty tables are omitted entirely: Traefik rejects a standalone empty
+  // `middlewares` map when decoding the provider payload.
+  const http: TraefikDynamicConfig['http'] = {};
+  if (Object.keys(routers).length > 0) http.routers = routers;
+  if (Object.keys(backends).length > 0) http.services = backends;
+  if (Object.keys(middlewares).length > 0) http.middlewares = middlewares;
+  return { http };
 }
