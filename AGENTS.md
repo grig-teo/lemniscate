@@ -114,4 +114,6 @@ docs/                 # design specs
 
 - Backend: `cd backend && npm run build && npm test` (tsc strict, vitest)
 - Frontend: `cd frontend && npm run build` (tsc --noEmit + vite build)
-- Full stack: `docker compose up --build` → `/health` on :3000, SPA on :8080
+- Full stack: `docker compose up --build` → `/health/ready` on :3000 (deep check:
+  Postgres `SELECT 1` + Redis `PING`, 503 on failure; `/health` stays a static
+  liveness probe), worker liveness with queue counts on :3100/health, SPA on :8080
