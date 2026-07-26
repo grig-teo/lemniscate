@@ -76,6 +76,13 @@ vi.mock('../src/lib/task-events.js', () => ({
   publishTaskEvent: mocks.publishTaskEvent,
   setTaskStatus: mocks.setTaskStatus,
 }));
+// merge-gate notifies on merged/gave-up; the emitters pull in lib/crypto
+// (ENCRYPTION_KEY absent from the partial config mock above). Notification
+// fan-out is covered in notification-delivery.test.ts.
+vi.mock('../src/lib/notifications.js', () => ({
+  notify: vi.fn().mockResolvedValue(undefined),
+  notifyOncePerTask: vi.fn().mockResolvedValue(undefined),
+}));
 
 // pr-review.js (parseResolvedFile, hasConflictMarkers, prompt builders) is
 // intentionally NOT mocked: conflict-marker safety is behavior under test.
