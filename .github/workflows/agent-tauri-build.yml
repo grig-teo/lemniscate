@@ -131,11 +131,11 @@ jobs:
           mkdir -p out
 
           # Artifact dirs match the build matrix:
-          #   lemniscate-agent-macos-latest-arm64, lemniscate-agent-macos-13-amd64,
+          #   lemniscate-agent-macos-latest-arm64, lemniscate-agent-macos-latest-amd64,
           #   lemniscate-agent-windows-latest-amd64, lemniscate-agent-windows-11-arm-arm64,
           #   lemniscate-agent-ubuntu-latest-amd64, lemniscate-agent-ubuntu-24.04-arm-arm64
           macos_arm64=dist/lemniscate-agent-macos-latest-arm64
-          macos_amd64=dist/lemniscate-agent-macos-13-amd64
+          macos_amd64=dist/lemniscate-agent-macos-latest-amd64
           windows_amd64=dist/lemniscate-agent-windows-latest-amd64
           windows_arm64=dist/lemniscate-agent-windows-11-arm-arm64
           linux_amd64=dist/lemniscate-agent-ubuntu-latest-amd64
