@@ -6,36 +6,13 @@ import {
   AGENT_DOWNLOAD_LINUX_DEBS,
   agentDownloadUrl,
   agentPairCommand,
-  androidRepos,
-  builderDevices,
-  canInstallApk,
-  canRunWeb,
   commandTypeLabel,
-  defaultRunPort,
-  desktopRepos,
   detectClientArch,
   detectClientPlatform,
   devicePlatformLabel,
   formatLastSeen,
   pairingExpirySeconds,
-  repoPlatformLabel,
-  runWebBlocker,
 } from '@/lib/devices';
-import type { Device } from '@/lib/hooks';
-
-function makeDevice(patch: Partial<Device>): Device {
-  return {
-    id: 'dev-1',
-    name: 'My machine',
-    platform: 'desktop',
-    meta: null,
-    online: true,
-    lastSeenAt: null,
-    createdAt: '2026-01-01T00:00:00.000Z',
-    ...patch,
-  };
-}
-
 describe('formatLastSeen', () => {
   const now = new Date('2026-07-25T12:00:00.000Z');
   const iso = (msAgo: number) => new Date(now.getTime() - msAgo).toISOString();
@@ -81,36 +58,6 @@ describe('devicePlatformLabel', () => {
   });
 });
 
-describe('canRunWeb / runWebBlocker', () => {
-  it('allows a desktop device with docker', () => {
-    const device = makeDevice({ meta: { dockerAvailable: true } });
-    expect(canRunWeb(device)).toBe(true);
-    expect(runWebBlocker(device)).toBeNull();
-  });
-
-  it('blocks non-desktop platforms', () => {
-    const device = makeDevice({ platform: 'android', meta: { dockerAvailable: true } });
-    expect(canRunWeb(device)).toBe(false);
-    expect(runWebBlocker(device)).toBe('Only desktop devices can run web apps');
-  });
-
-  it('blocks a desktop device without docker', () => {
-    const device = makeDevice({ meta: { dockerAvailable: false } });
-    expect(canRunWeb(device)).toBe(false);
-    expect(runWebBlocker(device)).toBe('Docker not available on this device');
-  });
-
-  it('blocks when meta is missing entirely', () => {
-    expect(canRunWeb(makeDevice({ meta: null }))).toBe(false);
-  });
-});
-
-describe('defaultRunPort', () => {
-  it('is 3000', () => {
-    expect(defaultRunPort()).toBe(3000);
-  });
-});
-
 describe('pairingExpirySeconds', () => {
   it('returns whole seconds remaining, clamped at zero', () => {
     const now = new Date('2026-07-25T12:00:00.000Z');
@@ -127,18 +74,6 @@ describe('agentPairCommand', () => {
   });
 });
 
-describe('canInstallApk', () => {
-  it('allows android and desktop devices', () => {
-    expect(canInstallApk(makeDevice({ platform: 'android' }))).toBe(true);
-    expect(canInstallApk(makeDevice({ platform: 'desktop' }))).toBe(true);
-  });
-
-  it('blocks ios and web devices', () => {
-    expect(canInstallApk(makeDevice({ platform: 'ios' }))).toBe(false);
-    expect(canInstallApk(makeDevice({ platform: 'web' }))).toBe(false);
-  });
-});
-
 describe('commandTypeLabel', () => {
   it('labels known command types and passes through unknown ones', () => {
     expect(commandTypeLabel('run_web')).toBe('Run web app');
@@ -147,62 +82,9 @@ describe('commandTypeLabel', () => {
   });
 });
 
-describe('repoPlatformLabel', () => {
-  it('labels detected platforms', () => {
-    expect(repoPlatformLabel('android')).toBe('Android');
-    expect(repoPlatformLabel('ios')).toBe('iOS');
-    expect(repoPlatformLabel('web')).toBe('Web');
-    expect(repoPlatformLabel('desktop')).toBe('Desktop');
-  });
-
-  it('returns null when no badge should be shown', () => {
-    expect(repoPlatformLabel('unknown')).toBeNull();
-    expect(repoPlatformLabel(null)).toBeNull();
-    expect(repoPlatformLabel(undefined)).toBeNull();
-  });
-});
-
-describe('androidRepos', () => {
-  it('keeps only android-platform repositories', () => {
-    const repos = [
-      { platform: 'android' },
-      { platform: 'ios' },
-      { platform: 'web' },
-      { platform: null },
-      { platform: 'unknown' },
-    ];
-    expect(androidRepos(repos)).toEqual([{ platform: 'android' }]);
-  });
-});
-
-describe('builderDevices', () => {
-  it('keeps only online desktop devices with docker', () => {
-    const devices = [
-      makeDevice({ id: 'ok', platform: 'desktop', meta: { dockerAvailable: true }, online: true }),
-      makeDevice({ id: 'offline', platform: 'desktop', meta: { dockerAvailable: true }, online: false }),
-      makeDevice({ id: 'no-docker', platform: 'desktop', meta: { dockerAvailable: false } }),
-      makeDevice({ id: 'phone', platform: 'android', online: true }),
-    ];
-    expect(builderDevices(devices).map((d) => d.id)).toEqual(['ok']);
-  });
-});
-
 describe('commandTypeLabel build_android', () => {
   it('labels build_android', () => {
     expect(commandTypeLabel('build_android')).toBe('Build Android APK');
-  });
-});
-
-describe('desktopRepos', () => {
-  it('keeps only desktop-platform repositories', () => {
-    const repos = [
-      { platform: 'desktop' },
-      { platform: 'android' },
-      { platform: 'web' },
-      { platform: null },
-      { platform: 'unknown' },
-    ];
-    expect(desktopRepos(repos)).toEqual([{ platform: 'desktop' }]);
   });
 });
 

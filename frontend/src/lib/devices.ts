@@ -2,10 +2,8 @@
  * Pure helpers for the device-tunnel UI (DeviceBar / PairingDialog /
  * DeviceDetailsModal). Tested in devices.test.ts — keep them dependency-free.
  */
-import type { Device, Repository } from '@/lib/hooks';
 
-const MINUTE_MS = 60_000;
-const HOUR_MS = 3_600_000;
+const MINUTE_MS = 60_000;const HOUR_MS = 3_600_000;
 const DAY_MS = 86_400_000;
 
 /** Human label for a device's last check-in ('online', 'just now', '5 min ago', …). */
@@ -31,30 +29,6 @@ export function devicePlatformLabel(platform: string): string {
   return PLATFORM_LABELS[platform] ?? platform.charAt(0).toUpperCase() + platform.slice(1);
 }
 
-/** run_web commands need a desktop agent with docker. */
-export function canRunWeb(device: Pick<Device, 'platform' | 'meta'>): boolean {
-  return device.platform === 'desktop' && device.meta?.dockerAvailable === true;
-}
-
-/** install_apk works on android (install intent) and desktop (download only). */
-export function canInstallApk(device: Pick<Device, 'platform'>): boolean {
-  return device.platform === 'android' || device.platform === 'desktop';
-}
-
-/** Repositories an android APK can be built from (detected platform 'android'). */
-export function androidRepos<T extends Pick<Repository, 'platform'>>(repos: T[]): T[] {
-  return repos.filter((repo) => repo.platform === 'android');
-}
-
-/** Repositories runnable as desktop apps (detected platform 'desktop'). */
-export function desktopRepos<T extends Pick<Repository, 'platform'>>(repos: T[]): T[] {
-  return repos.filter((repo) => repo.platform === 'desktop');
-}
-
-/** Devices that can build APKs: online desktop agents with docker. */
-export function builderDevices(devices: Device[]): Device[] {
-  return devices.filter((device) => device.online && canRunWeb(device));
-}
 
 const COMMAND_TYPE_LABELS: Record<string, string> = {
   run_web: 'Run web app',
@@ -68,23 +42,6 @@ export function commandTypeLabel(type: string): string {
   return COMMAND_TYPE_LABELS[type] ?? type;
 }
 
-/** Badge label for a repository's detected platform; null = show no badge. */
-export function repoPlatformLabel(platform: string | null | undefined): string | null {
-  if (!platform || platform === 'unknown') return null;
-  return devicePlatformLabel(platform);
-}
-
-/** Why the run-on-device form is disabled, or null when it is usable. */
-export function runWebBlocker(device: Pick<Device, 'platform' | 'meta'>): string | null {
-  if (device.platform !== 'desktop') return 'Only desktop devices can run web apps';
-  if (device.meta?.dockerAvailable !== true) return 'Docker not available on this device';
-  return null;
-}
-
-/** Default host port offered by the run-on-device form. */
-export function defaultRunPort(): number {
-  return 3000;
-}
 
 /** Seconds until a pairing code expires, clamped at zero. */
 export function pairingExpirySeconds(expiresAt: string, now: Date): number {

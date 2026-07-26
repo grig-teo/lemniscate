@@ -1,31 +1,12 @@
 import * as React from 'react';
 
-import { describeApiError } from '@/lib/api';
-import {
-  androidRepos,
-  builderDevices,
-  canInstallApk,
-  commandTypeLabel,
-  defaultRunPort,
-  desktopRepos,
-  devicePlatformLabel,
-  formatLastSeen,
-  repoPlatformLabel,
-  runWebBlocker,
-} from '@/lib/devices';
+import { commandTypeLabel, devicePlatformLabel, formatLastSeen } from '@/lib/devices';
 import {
   useDeleteDevice,
-  useDeployAndroid,
   useDeviceCommands,
-  useDevices,
-  useInstallApk,
   useRenameDevice,
-  useRepositories,
-  useRunDesktop,
-  useRunOnDevice,
   type Device,
   type DeviceCommand,
-  type Repository,
 } from '@/lib/hooks';
 import { StatusBadge } from '@/components/StatusBadge';
 import { Button } from '@/components/ui/button';
@@ -36,15 +17,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { FormField } from '@/components/ui/form-field';
 import { Input } from '@/components/ui/input';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
 
 /** Inline-editable device name — saves on blur/Enter via PATCH /api/devices/:id. */
 function DeviceName({ device }: { device: Device }) {
@@ -114,317 +87,6 @@ function DeleteDeviceButton({ device, onDeleted }: { device: Device; onDeleted: 
   );
 }
 
-/** Repo fullName with a small platform badge when detection ran. */
-function RepoSelectLabel({ repo }: { repo: Repository }) {
-  const label = repoPlatformLabel(repo.platform);
-  return (
-    <span className="flex items-center gap-2">
-      {repo.fullName}
-      {label && (
-        <span className="rounded bg-muted px-1 py-0.5 text-[10px] font-medium uppercase text-muted-foreground">
-          {label}
-        </span>
-      )}
-    </span>
-  );
-}
-
-/** "Run a repository on this device" form → POST run_web command. */
-function RunOnDeviceSection({ device }: { device: Device }) {
-  const repos = useRepositories();
-  const run = useRunOnDevice();
-  const blocker = runWebBlocker(device);
-  const [repoId, setRepoId] = React.useState('');
-  const [branch, setBranch] = React.useState('');
-  const [port, setPort] = React.useState(String(defaultRunPort()));
-
-  const repo = (repos.data ?? []).find((r) => r.id === repoId) ?? null;
-  const portNumber = Number.parseInt(port, 10);
-  const portValid = Number.isInteger(portNumber) && portNumber > 0 && portNumber <= 65_535;
-  const canSubmit =
-    blocker === null && repo !== null && branch.trim() !== '' && portValid && !run.isPending;
-
-  function selectRepo(id: string) {
-    setRepoId(id);
-    const next = repos.data?.find((r) => r.id === id);
-    if (next) setBranch(next.defaultBranch);
-  }
-
-  function submit(event: React.FormEvent) {
-    event.preventDefault();
-    if (!repo || !canSubmit) return;
-    run.mutate({
-      deviceId: device.id,
-      payload: { repoUrl: repo.cloneUrl, branch: branch.trim(), port: portNumber },
-    });
-  }
-
-  return (
-    <form onSubmit={submit} className="flex min-w-0 flex-col gap-3">
-      <p className="text-sm font-medium">Run a repository on this device</p>
-      {blocker ? (
-        <p className="text-sm text-muted-foreground">{blocker}</p>
-      ) : (
-        <>
-          <FormField label="Repository">
-            <Select value={repoId} onValueChange={selectRepo}>
-              <SelectTrigger aria-label="Repository">
-                <SelectValue placeholder="Pick a repository" />
-              </SelectTrigger>
-              <SelectContent>
-                {(repos.data ?? []).map((r) => (
-                  <SelectItem key={r.id} value={r.id}>
-                    <RepoSelectLabel repo={r} />
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </FormField>
-
-          <div className="flex gap-2">
-            <FormField label="Branch">
-              <Input
-                value={branch}
-                onChange={(event) => setBranch(event.target.value)}
-                placeholder="main"
-                autoComplete="off"
-              />
-            </FormField>
-            <FormField label="Port">
-              <Input
-                type="number"
-                min={1}
-                max={65535}
-                value={port}
-                onChange={(event) => setPort(event.target.value)}
-              />
-            </FormField>
-          </div>
-
-          {run.isError && (
-            <p className="break-words text-sm text-destructive">
-              {describeApiError(run.error)}
-            </p>
-          )}
-          {run.isSuccess && !run.isPending && (
-            <p className="text-sm text-muted-foreground">Command sent — see history below.</p>
-          )}
-
-          <Button type="submit" disabled={!canSubmit}>
-            {run.isPending ? 'Sending…' : 'Run on this device'}
-          </Button>
-        </>
-      )}
-    </form>
-  );
-}
-
-/** "Build & install from repository" form → POST deploy-android (build→install chain). */
-function BuildInstallSection({ device }: { device: Device }) {
-  const repos = useRepositories();
-  const devices = useDevices();
-  const deploy = useDeployAndroid();
-  const [repoId, setRepoId] = React.useState('');
-  const [builderId, setBuilderId] = React.useState('');
-
-  const candidates = androidRepos(repos.data ?? []);
-  const builders = builderDevices(devices.data ?? []);
-  const canSubmit = repoId !== '' && builderId !== '' && !deploy.isPending;
-
-  function submit(event: React.FormEvent) {
-    event.preventDefault();
-    if (!canSubmit) return;
-    deploy.mutate({ repositoryId: repoId, buildDeviceId: builderId, installDeviceId: device.id });
-  }
-
-  return (
-    <form onSubmit={submit} className="flex min-w-0 flex-col gap-3">
-      <p className="text-sm font-medium">Build &amp; install from repository</p>
-      <FormField label="Repository">
-        <Select value={repoId} onValueChange={setRepoId}>
-          <SelectTrigger aria-label="Repository to build">
-            <SelectValue placeholder="Pick an android repository" />
-          </SelectTrigger>
-          <SelectContent>
-            {candidates.map((r) => (
-              <SelectItem key={r.id} value={r.id}>
-                <RepoSelectLabel repo={r} />
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      </FormField>
-      <FormField label="Builder device">
-        <Select value={builderId} onValueChange={setBuilderId}>
-          <SelectTrigger aria-label="Builder device">
-            <SelectValue placeholder="Pick a builder (desktop + docker)" />
-          </SelectTrigger>
-          <SelectContent>
-            {builders.map((d) => (
-              <SelectItem key={d.id} value={d.id}>
-                {d.name}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      </FormField>
-      {candidates.length === 0 && (
-        <p className="text-sm text-muted-foreground">No android-platform repositories yet.</p>
-      )}
-      {builders.length === 0 && (
-        <p className="text-sm text-muted-foreground">
-          No online builder devices (desktop with docker) available.
-        </p>
-      )}
-      {deploy.isError && (
-        <p className="break-words text-sm text-destructive">{describeApiError(deploy.error)}</p>
-      )}
-      {deploy.isSuccess && !deploy.isPending && (
-        <p className="text-sm text-muted-foreground">Build queued — see history below.</p>
-      )}
-      <Button type="submit" disabled={!canSubmit}>
-        {deploy.isPending ? 'Sending…' : 'Build & Install'}
-      </Button>
-    </form>
-  );
-}
-
-/** "Install an APK on this device" form → POST install_apk command. */
-function InstallApkSection({ device }: { device: Device }) {
-  const install = useInstallApk();
-  const [apkUrl, setApkUrl] = React.useState('');
-  const [appName, setAppName] = React.useState('');
-
-  const urlValid = /^https?:\/\/.+/.test(apkUrl.trim());
-  const canSubmit = urlValid && !install.isPending;
-
-  function submit(event: React.FormEvent) {
-    event.preventDefault();
-    if (!canSubmit) return;
-    install.mutate({
-      deviceId: device.id,
-      payload: { apkUrl: apkUrl.trim(), appName: appName.trim() || undefined },
-    });
-  }
-
-  return (
-    <form onSubmit={submit} className="flex min-w-0 flex-col gap-3">
-      <p className="text-sm font-medium">Install an APK on this device</p>
-      <FormField label="APK URL">
-        <Input
-          value={apkUrl}
-          onChange={(event) => setApkUrl(event.target.value)}
-          placeholder="https://…/app-release.apk"
-          autoComplete="off"
-        />
-      </FormField>
-      <FormField label="App name (optional)">
-        <Input
-          value={appName}
-          onChange={(event) => setAppName(event.target.value)}
-          placeholder="My App"
-          autoComplete="off"
-        />
-      </FormField>
-
-      {install.isError && (
-        <p className="break-words text-sm text-destructive">{describeApiError(install.error)}</p>
-      )}
-      {install.isSuccess && !install.isPending && (
-        <p className="text-sm text-muted-foreground">Command sent — see history below.</p>
-      )}
-
-      <Button type="submit" disabled={!canSubmit}>
-        {install.isPending ? 'Sending…' : 'Install APK'}
-      </Button>
-    </form>
-  );
-}
-
-/** "Run desktop app" form → POST run_desktop command (desktop devices only). */
-function RunDesktopSection({ device }: { device: Device }) {
-  const repos = useRepositories();
-  const run = useRunDesktop();
-  const [repoId, setRepoId] = React.useState('');
-  const [branch, setBranch] = React.useState('');
-  const [startScript, setStartScript] = React.useState('');
-
-  const candidates = desktopRepos(repos.data ?? []);
-  const repo = candidates.find((r) => r.id === repoId) ?? null;
-  const canSubmit = repo !== null && branch.trim() !== '' && !run.isPending;
-
-  function selectRepo(id: string) {
-    setRepoId(id);
-    const next = candidates.find((r) => r.id === id);
-    if (next) setBranch(next.defaultBranch);
-  }
-
-  function submit(event: React.FormEvent) {
-    event.preventDefault();
-    if (!repo || !canSubmit) return;
-    run.mutate({
-      deviceId: device.id,
-      payload: {
-        repoUrl: repo.cloneUrl,
-        branch: branch.trim(),
-        startScript: startScript.trim() || undefined,
-      },
-    });
-  }
-
-  return (
-    <form onSubmit={submit} className="flex min-w-0 flex-col gap-3">
-      <p className="text-sm font-medium">Run desktop app</p>
-      <FormField label="Repository">
-        <Select value={repoId} onValueChange={selectRepo}>
-          <SelectTrigger aria-label="Desktop repository">
-            <SelectValue placeholder="Pick a desktop repository" />
-          </SelectTrigger>
-          <SelectContent>
-            {candidates.map((r) => (
-              <SelectItem key={r.id} value={r.id}>
-                <RepoSelectLabel repo={r} />
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      </FormField>
-
-      <div className="flex gap-2">
-        <FormField label="Branch">
-          <Input
-            value={branch}
-            onChange={(event) => setBranch(event.target.value)}
-            placeholder="main"
-            autoComplete="off"
-          />
-        </FormField>
-        <FormField label="Start script (optional)">
-          <Input
-            value={startScript}
-            onChange={(event) => setStartScript(event.target.value)}
-            placeholder="tauri, electron, dev…"
-            autoComplete="off"
-          />
-        </FormField>
-      </div>
-
-      {candidates.length === 0 && (
-        <p className="text-sm text-muted-foreground">No desktop-platform repositories yet.</p>
-      )}
-      {run.isError && (
-        <p className="break-words text-sm text-destructive">{describeApiError(run.error)}</p>
-      )}
-      {run.isSuccess && !run.isPending && (
-        <p className="text-sm text-muted-foreground">Command sent — see history below.</p>
-      )}
-
-      <Button type="submit" disabled={!canSubmit}>
-        {run.isPending ? 'Sending…' : 'Run desktop app'}
-      </Button>
-    </form>
-  );
-}
 
 function commandRowDetail(command: DeviceCommand): string {
   if (command.type === 'run_web') {
@@ -504,9 +166,9 @@ function CommandHistory({ deviceId }: { deviceId: string }) {
 }
 
 /**
- * Details modal for one paired device: rename, presence + meta, delete, the
- * run-on-device form (desktop + docker only), the APK install form
- * (android/desktop) and the shared command history.
+ * Details modal for one paired device: rename, presence + meta, delete, and
+ * the shared command history. Run/install actions live in the console's
+ * RunTaskDialog, not here.
  */
 export function DeviceDetailsModal({
   device,
@@ -534,12 +196,6 @@ export function DeviceDetailsModal({
             <DeviceName device={device} />
             <DeviceMeta device={device} />
             <DeleteDeviceButton device={device} onDeleted={() => onOpenChange(false)} />
-            <RunOnDeviceSection device={device} />
-            {device.platform === 'desktop' && <RunDesktopSection device={device} />}
-            {device.platform === 'android' && device.online && (
-              <BuildInstallSection device={device} />
-            )}
-            {canInstallApk(device) && <InstallApkSection device={device} />}
             <div className="flex min-w-0 flex-col gap-2">
               <p className="text-sm font-medium">Command history</p>
               <CommandHistory deviceId={device.id} />
