@@ -1,0 +1,22 @@
+{
+  "verdict": "changes_requested",
+  "summary": "The Prometheus work itself is exactly what the task asked for and is well executed: prom-client added, a single registry in lib/metrics.ts with bounded labels, measureJob wrapping the worker dispatcher, the failure counter fed from logJobFailure, LLM request/latency/token metrics recorded in chatCompletions, queue gauges polled from the same getJobCounts source as worker-health, /metrics served on the worker port (unauthenticated, internal network) and on the API behind METRICS_TOKEN, plus solid tests and README scrape-config docs; backend build + all 848 tests and the frontend build pass. However, the PR also deletes an entire pre-existing, unrelated feature: token-usage persistence (llmPromptTokens/llmCompletionTokens, billedSplit/tokenSplit in agent-runtime), LLM config price fields and cost estimation, GET /api/usage (lib/usage.ts + routes/usage.ts), and the frontend UsageSection/TokensBadge/token-usage plumbing with their tests. The task only asked to add metrics; silently ripping out the shipped usage/cost surface is a major out-of-scope regression. Worse, it deletes the already-numbered migration 0024_llm_usage_cost without adding a drop migration, which breaks `prisma migrate deploy` on any database that has applied it and leaves orphan columns behind. Restore the usage feature and the migration, keeping only the metrics additions.",
+  "issues": [
+    {
+      "path": "backend/prisma/migrations/0024_llm_usage_cost/migration.sql",
+      "comment": "Do not delete an already-numbered migration. Any deployed database that applied 0024 will fail `prisma migrate deploy` (migration missing from history), and the columns are removed from schema.prisma with no new migration to drop them, leaving drift. Restore the migration file and the llmPromptTokens/llmCompletionTokens + LlmConfig price columns in schema.prisma."
+    },
+    {
+      "path": "backend/src/lib/usage.ts",
+      "comment": "Out-of-scope feature removal: the task is to add Prometheus metrics, not to delete the existing token-usage/cost-estimation feature. Restore lib/usage.ts, routes/usage.ts (GET /api/usage) and its registration in app.ts, the serializeTaskWithUsage enrichment in task-crud-handlers.ts, the price fields in routes/llm-configs.ts, and the deleted tests (usage.test.ts, usage-route.test.ts, tasks-usage-dto.test.ts, llm-config-prices.test.ts, token-usage-split.test.ts, persist-token-usage.test.ts)."
+    },
+    {
+      "path": "backend/src/lib/agent-runtime.ts",
+      "comment": "Restore the prompt/completion split tracking (billedSplit, tokenSplit, taskTokenSplit, usedPromptTokens/usedCompletionTokens) and the split persistence in persistTokenUsage (agent-git.ts) and its call sites in agent-run.ts/agent-review.ts/merge-gate.ts. The new lemniscate_llm_tokens_total metric complements this per-task persistence; it does not replace it. Token usage was not 'thrown away' on main — it backs the /api/usage view and cost estimates this PR deletes."
+    },
+    {
+      "path": "frontend/src/components/settings/UsageSection.tsx",
+      "comment": "Restore the deleted frontend usage/cost surface: UsageSection, TokensBadge (+ its test), lib/token-usage.ts, the Usage types and useUsage hooks in lib/hooks.ts, the price fields in LlmConfigFields/llm-config-form, and the wiring in ConsolePane/ConsoleHeader/RepoTasks/SettingsDialog. Removing a shipped user-facing feature is not part of exposing Prometheus metrics."
+    }
+  ]
+}

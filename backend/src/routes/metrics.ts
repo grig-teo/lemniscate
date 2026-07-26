@@ -1,6 +1,7 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { config } from '../config.js';
 import { METRICS_CONTENT_TYPE, renderMetrics } from '../lib/metrics.js';
+import { safeEqualSecret } from '../lib/secret-compare.js';
 
 // Prometheus exposition for the API process. Shared-secret guarded instead of
 // session auth: a Prometheus scraper cannot send cookies, and the payload is
@@ -23,7 +24,7 @@ function guardMetrics(request: FastifyRequest, reply: FastifyReply, token: strin
     void reply.code(503).send({ error: 'metrics endpoint is not configured' });
     return false;
   }
-  if (presentedToken(request) !== token) {
+  if (!safeEqualSecret(presentedToken(request), token)) {
     void reply.code(401).send({ error: 'invalid metrics token' });
     return false;
   }
