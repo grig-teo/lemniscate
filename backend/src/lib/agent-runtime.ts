@@ -192,18 +192,28 @@ async function findUserFallback(userId: string): Promise<LlmConfig | null> {
 }
 
 // Resolution order: task.llmConfigId → repo.llmConfigId → user's default →
-// any enabled config of the user.
-export async function resolveLlmConfig(
-  task: Task | null,
-  repository: Repository,
+// any enabled config of the user. Single source of truth for every caller
+// (task runs, improve, …) — parameterized on llmConfigId so partial task
+// selects fit. Returns null when nothing matches.
+export async function findLlmConfig(
+  task: { llmConfigId: string | null } | null,
+  repository: { llmConfigId: string | null },
   userId: string,
-): Promise<LlmConfig> {
+): Promise<LlmConfig | null> {
   for (const id of [task?.llmConfigId, repository.llmConfigId]) {
     if (!id) continue;
     const found = await findEnabledById(id, userId);
     if (found) return found;
   }
-  const fallback = await findUserFallback(userId);
+  return findUserFallback(userId);
+}
+
+export async function resolveLlmConfig(
+  task: { llmConfigId: string | null } | null,
+  repository: { llmConfigId: string | null },
+  userId: string,
+): Promise<LlmConfig> {
+  const fallback = await findLlmConfig(task, repository, userId);
   if (!fallback) {
     throw new Error(
       'No enabled LLM config found (task override, repository config, and user default are all unset)',

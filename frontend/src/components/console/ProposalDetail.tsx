@@ -9,7 +9,7 @@ import {
   taskMcpSelections,
   taskSkillSelections,
 } from '@/lib/proposal-detail';
-import { useSkills, useStartTask, useTask, type Task, type TaskImage } from '@/lib/hooks';
+import { useSkills, useImproveTask, useStartTask, useTask, type Task, type TaskImage } from '@/lib/hooks';
 import { useLibraryAttachments } from '@/lib/library-attachments';
 import { IMAGE_ACCEPT, MAX_IMAGES } from '@/lib/prompt-composer';
 import { cn } from '@/lib/utils';
@@ -71,15 +71,46 @@ function ToggleButton({
 function ViewToggle({
   preview,
   onChange,
+  action,
 }: {
   preview: boolean;
   onChange: (preview: boolean) => void;
+  action?: React.ReactNode;
 }) {
   return (
     <div className="flex shrink-0 items-center gap-1 border-b px-2 py-1">
       <ToggleButton active={preview} onClick={() => onChange(true)} label="Preview" />
       <ToggleButton active={!preview} onClick={() => onChange(false)} label="Edit" />
+      <div className="flex-1" />
+      {action}
     </div>
+  );
+}
+
+/** Improve button on the right of the Preview/Edit row: asks the LLM to
+ *  rewrite the current prompt into the structured proposal-document shape. */
+function ImproveButton({
+  pending,
+  disabled,
+  onClick,
+}: {
+  pending: boolean;
+  disabled: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled || pending}
+      className={cn(
+        'flex items-center gap-1 rounded px-2 py-0.5 text-[11px] text-muted-foreground',
+        'hover:text-foreground disabled:opacity-50',
+      )}
+    >
+      {pending && <Loader2 className="h-3 w-3 animate-spin" aria-hidden />}
+      {pending ? 'Improving…' : 'Improve'}
+    </button>
   );
 }
 
@@ -208,6 +239,7 @@ function TaskEditorInner({
 }) {
   const startTask = useStartTask();
   const patchTask = usePatchTask();
+  const improveTask = useImproveTask();
   const [title, setTitle] = React.useState(task.title);
   const [prompt, setPrompt] = React.useState(task.prompt ?? '');
   const [preview, setPreview] = React.useState(true);
@@ -243,7 +275,13 @@ function TaskEditorInner({
     patchTask.mutate({ id: task.id, body: editBody() }, { onSuccess: () => setSaved(true) });
   };
   const start = () => startTask.mutate({ id: task.id, body: editBody() });
-  const actionError = startTask.error ?? patchTask.error;
+  const improve = () => {
+    improveTask.mutate(
+      { id: task.id, body: { title: title.trim() || undefined, prompt: prompt.trim() } },
+      { onSuccess: (data) => setPrompt(data.prompt) },
+    );
+  };
+  const actionError = startTask.error ?? patchTask.error ?? improveTask.error;
 
   return (
     <div className="flex h-full min-h-0 flex-1 flex-col gap-3 overflow-hidden p-4">
@@ -273,7 +311,17 @@ function TaskEditorInner({
         className="flex h-1/2 shrink-0 flex-col overflow-hidden rounded-lg border bg-background shadow-sm focus-within:ring-1 focus-within:ring-ring"
       >
         <ImageThumbnails images={images} onRemove={removeImage} />
-        <ViewToggle preview={preview} onChange={setPreview} />
+        <ViewToggle
+          preview={preview}
+          onChange={setPreview}
+          action={
+            <ImproveButton
+              pending={improveTask.isPending}
+              disabled={!prompt.trim()}
+              onClick={improve}
+            />
+          }
+        />
         {preview ? (
           <div className="min-h-0 flex-1 overflow-y-auto px-3 py-2">
             <PromptPreview prompt={prompt} />
