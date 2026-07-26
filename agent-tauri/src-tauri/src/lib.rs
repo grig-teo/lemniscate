@@ -79,7 +79,8 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
     let quit = MenuItem::with_id(app, "quit", "Quit Lemniscate Agent", true, None::<&str>)?;
     let menu = Menu::with_items(app, &[&status_item, &quit])?;
     let tray = TrayIconBuilder::new()
-        .icon(tray_icon(app))
+        .icon(tray_icon())
+        .icon_as_template(true) // macOS menu bar: tint via alpha, auto light/dark
         .menu(&menu)
         .tooltip("Lemniscate Agent")
         .on_menu_event(|app, event| {
@@ -94,11 +95,11 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
     Ok(())
 }
 
-/// Solid-color fallback tray icon (owned pixels → 'static). The bundled
-/// window icon can't be reused here: default_window_icon() borrows the app.
-fn tray_icon(_app: &AppHandle) -> tauri::image::Image<'static> {
-    let rgba = vec![76u8, 110, 245, 255].repeat(32 * 32);
-    tauri::image::Image::new_owned(rgba, 32, 32)
+/// Tray icon: the bundled lemniscate mark (owned pixels → 'static). macOS
+/// renders it as a template (alpha-tinted); other platforms show it as-is.
+fn tray_icon() -> tauri::image::Image<'static> {
+    const PNG: &[u8] = include_bytes!("../icons/tray-icon.png");
+    tauri::image::Image::from_bytes(PNG).expect("embedded tray icon is a valid PNG")
 }
 
 // --- tunnel lifecycle ----------------------------------------------------------
