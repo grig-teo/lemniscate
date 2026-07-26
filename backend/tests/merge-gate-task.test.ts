@@ -36,9 +36,14 @@ const mocks = vi.hoisted(() => ({
   pullRequestChecksStatus: vi.fn(),
   publishTaskEvent: vi.fn(),
   setTaskStatus: vi.fn(),
+  logger: { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn(), child: vi.fn() },
 }));
 
 vi.mock('../src/config.js', () => ({ config: mocks.config }));
+vi.mock('../src/lib/logger.js', () => ({
+  logger: mocks.logger,
+  createLogger: vi.fn(() => mocks.logger),
+}));
 vi.mock('../src/lib/agent-git.js', () => ({
   checkoutTaskBranch: mocks.checkoutTaskBranch,
   cleanupWorkdir: mocks.cleanupWorkdir,
@@ -188,7 +193,10 @@ describe('mergeGateTask entry guards', () => {
     mocks.loadTaskWithRepo.mockResolvedValue(null);
     const error = vi.spyOn(console, 'error').mockImplementation(() => {});
     await mergeGateTask('task-1');
-    expect(error).toHaveBeenCalledWith(expect.stringContaining('task-1 not found'));
+    expect(mocks.logger.error).toHaveBeenCalledWith(
+      { taskId: 'task-1' },
+      'merge-gate: task not found',
+    );
     expect(mocks.pullRequestChecksStatus).not.toHaveBeenCalled();
   });
 

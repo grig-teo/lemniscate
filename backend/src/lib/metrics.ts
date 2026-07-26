@@ -12,6 +12,7 @@
 
 import { Counter, Gauge, Histogram, Registry } from 'prom-client';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
+import { logger } from './logger.js';
 import { errorKind, setJobFailureRecorder } from './job-failure-log.js';
 import { setLlmObserver, type LlmOutcome } from './llm-client.js';
 
@@ -219,7 +220,7 @@ export async function pollQueueCounts(m: Metrics, sources: QueueCountsSource[]):
         m.setQueueJobCount(source.name, state, count);
       }
     } catch (err) {
-      console.error(`queue metrics poll failed for '${source.name}': ${errorKind(err)}`);
+      logger.error({ source: source.name, errorKind: errorKind(err) }, 'queue metrics poll failed');
     }
   }
 }

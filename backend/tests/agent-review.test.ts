@@ -35,9 +35,14 @@ const mocks = vi.hoisted(() => ({
   buildRepoContext: vi.fn(),
   loadAgentsMdTemplate: vi.fn(),
   loadTaskSkills: vi.fn(),
+  logger: { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn(), child: vi.fn() },
 }));
 
 vi.mock('../src/config.js', () => ({ config: mocks.config }));
+vi.mock('../src/lib/logger.js', () => ({
+  logger: mocks.logger,
+  createLogger: vi.fn(() => mocks.logger),
+}));
 vi.mock('../src/lib/agent-git.js', () => ({
   applyChanges: mocks.applyChanges,
   checkoutTaskBranch: mocks.checkoutTaskBranch,
@@ -173,7 +178,10 @@ describe('reviewTask entry guards', () => {
     mocks.loadTaskWithRepo.mockResolvedValue(null);
     const error = vi.spyOn(console, 'error').mockImplementation(() => {});
     await reviewTask('task-1');
-    expect(error).toHaveBeenCalledWith(expect.stringContaining('task-1 not found'));
+    expect(mocks.logger.error).toHaveBeenCalledWith(
+      { taskId: 'task-1' },
+      'review-pr: task not found',
+    );
     expect(mocks.llmCall).not.toHaveBeenCalled();
     expect(mocks.enqueueReviewTask).not.toHaveBeenCalled();
     expect(mocks.enqueueMergeGate).not.toHaveBeenCalled();

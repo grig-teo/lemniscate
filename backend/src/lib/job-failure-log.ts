@@ -10,6 +10,7 @@
 // via setJobFailureRecorder at import time, so job-failure-log remains
 // usable in config-free/test contexts and no import cycle exists.
 
+import { logger } from './logger.js';
 import { notifyJobFailure } from './notifications.js';
 
 export interface JobFailureEntry {
@@ -55,7 +56,7 @@ export function logJobFailure(
   options: LogJobFailureOptions = {},
 ): Promise<void> {
   if (options.recordMetric !== false) recorder?.(entry.jobName, entry.errorKind);
-  console.error(JSON.stringify({ level: 'error', event: 'job_failed', ...entry }));
+  logger.error({ event: 'job_failed', ...entry });
   // User-facing notification — the single hook point (AGENTS.md §6). The
   // promise is returned so recordJobFailure can await it before its caller
   // rethrows: the in-run notification then exists before the worker 'failed'

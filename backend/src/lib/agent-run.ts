@@ -1,6 +1,7 @@
 import path from 'node:path';
 import fs from 'node:fs/promises';
 import { config } from '../config.js';
+import { logger } from './logger.js';
 import {
   applyChanges,
   cleanupWorkdir,
@@ -362,7 +363,7 @@ async function executeRunTask(
 export async function runTask(taskId: string): Promise<void> {
   const task = await loadTaskWithRepo(taskId);
   if (!task) {
-    console.error(`run-task: task ${taskId} not found`);
+    logger.error({ taskId }, 'run-task: task not found');
     return;
   }
   // Nothing to do for terminal tasks (covers 'cancelled' defensively too).
@@ -380,7 +381,7 @@ export async function runTask(taskId: string): Promise<void> {
     // A dispatch failure must not fail the run, but it is logged — silent
     // notification loss is exactly what this subsystem exists to prevent.
     await notifyTaskCompleted(taskId).catch((err: unknown) => {
-      console.error(`run-task: task_completed notification failed for ${taskId}: ${errorMessage(err)}`);
+      logger.error({ taskId, err }, 'run-task: task_completed notification failed');
     });
   } catch (err) {
     // Failure state is fully recorded on the task; the BullMQ job is allowed

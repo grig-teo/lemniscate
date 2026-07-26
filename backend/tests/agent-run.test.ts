@@ -32,9 +32,14 @@ const mocks = vi.hoisted(() => ({
   runHermesTask: vi.fn(),
   notify: vi.fn(),
   notifyTaskCompleted: vi.fn(),
+  logger: { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn(), child: vi.fn() },
 }));
 
 vi.mock('../src/config.js', () => ({ config: mocks.config }));
+vi.mock('../src/lib/logger.js', () => ({
+  logger: mocks.logger,
+  createLogger: vi.fn(() => mocks.logger),
+}));
 vi.mock('../src/lib/agent-git.js', () => ({
   applyChanges: mocks.applyChanges,
   cleanupWorkdir: mocks.cleanupWorkdir,
@@ -211,8 +216,10 @@ describe('runTask with AGENT_EXECUTOR=hermes', () => {
     try {
       await runTask('task-1');
       expect(mocks.setTaskStatus).toHaveBeenCalledWith('task-1', 'awaiting_review');
-      expect(error).toHaveBeenCalledWith(expect.stringContaining('task-1'));
-      expect(error).toHaveBeenCalledWith(expect.stringContaining('db down'));
+      expect(mocks.logger.error).toHaveBeenCalledWith(
+        expect.objectContaining({ taskId: 'task-1' }),
+        expect.stringContaining('task_completed'),
+      );
     } finally {
       error.mockRestore();
     }

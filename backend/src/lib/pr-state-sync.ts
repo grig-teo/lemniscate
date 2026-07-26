@@ -8,7 +8,8 @@ import { enqueueReviewTask, getAgentTasksQueue } from './proposal-scheduler.js';
 import { applyTaskPrStateSafe, type TaskWithConnection } from './pr-merged-handler.js';
 import { logEvent } from './agent-git.js';
 import { prisma } from './prisma.js';
-import { errorMessage, sleep } from './utils.js';
+import { logger } from './logger.js';
+import { sleep } from './utils.js';
 
 // Repeatable 'pr-state-sync' job. A task whose PR is merged manually on the
 // git host (or merged while the worker was down) would sit in awaiting_review
@@ -56,7 +57,7 @@ async function syncTaskPrState(task: TaskWithConnection): Promise<boolean> {
       baseBranch: task.repository.defaultBranch,
     });
   } catch (err) {
-    console.warn(`pr-state-sync: check failed for task ${task.id}: ${errorMessage(err)}`);
+    logger.warn({ taskId: task.id, err }, 'pr-state-sync: check failed');
     return false;
   }
   return applyTaskPrStateSafe(task, state, 'pr-state-sync');
@@ -100,9 +101,7 @@ async function syncRepositoryTasks(tasks: TaskWithConnection[]): Promise<number>
   try {
     pulls = await listRepoPullRequests(first);
   } catch (err) {
-    console.warn(
-      `pr-state-sync: list failed for repo ${first.repository.fullName}: ${errorMessage(err)}`,
-    );
+    logger.warn({ repository: first.repository.fullName, err }, 'pr-state-sync: list failed');
   }
   let marked = 0;
   for (const task of tasks) {
@@ -145,7 +144,7 @@ export async function syncMergedPullRequests(): Promise<void> {
     marked += await syncRepositoryTasks(repoTasks);
   }
   if (tasks.length > 0) {
-    console.log(`pr-state-sync: resolved ${marked}/${tasks.length} awaiting-review task(s)`);
+    logger.info({ marked, total: tasks.length }, 'pr-state-sync: resolved awaiting-review tasks');
   }
   await recoverStuckReviews();
 }
@@ -196,6 +195,6 @@ export async function recoverStuckReviews(): Promise<void> {
     recovered += 1;
   }
   if (recovered > 0) {
-    console.log(`pr-state-sync: re-enqueued review for ${recovered} stuck task(s)`);
+    logger.info({ recovered }, 'pr-state-sync: re-enqueued stuck reviews');
   }
 }

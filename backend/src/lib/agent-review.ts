@@ -2,6 +2,7 @@ import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import type { Task } from '@prisma/client';
 import { config } from '../config.js';
+import { logger } from './logger.js';
 import {
   applyChanges,
   checkoutTaskBranch,
@@ -352,7 +353,7 @@ async function executeHermesReview(
 export async function reviewTask(taskId: string, attempt = 0): Promise<void> {
   const task = await loadTaskWithRepo(taskId);
   if (!task) {
-    console.error(`review-pr: task ${taskId} not found`);
+    logger.error({ taskId }, 'review-pr: task not found');
     return;
   }
   // Only review PRs still waiting for review on an opted-in repository.

@@ -6,6 +6,7 @@
 // validation or the network.
 
 import { Client } from 'minio';
+import { logger } from './logger.js';
 import type { LifecycleConfig } from 'minio';
 
 export const DEVICE_ARTIFACTS_BUCKET = 'device-artifacts';
@@ -34,7 +35,7 @@ async function applyArtifactLifecycle(minio: Client, bucket: string): Promise<vo
   try {
     await minio.setBucketLifecycle(bucket, lifecycleRuleFor(config.DEVICE_ARTIFACT_TTL_DAYS));
   } catch (err) {
-    console.warn(`minio: failed to apply lifecycle on bucket ${bucket}`, err);
+    logger.warn({ bucket, err }, 'minio: failed to apply lifecycle');
   }
 }
 
