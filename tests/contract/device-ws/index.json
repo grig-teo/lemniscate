@@ -1,0 +1,19 @@
+{
+  "_comment": "Manifest of all device-WS protocol fixtures. Every consumer suite (backend devices-ws.test.ts, agent/lib.test.js, agent-tauri protocol.rs) MUST round-trip every file listed here. Adding a new command type requires adding its fixture to this list AND to every consumer — the lint script enforces that.",
+  "fixtures": [
+    "hello.json",
+    "heartbeat.json",
+    "capabilities.json",
+    "command-result-running.json",
+    "command-result-done.json",
+    "command-result-failed.json",
+    "command-result-failed-with-log.json",
+    "welcome.json",
+    "command-run-web.json",
+    "command-install-apk.json",
+    "command-build-android.json",
+    "command-run-desktop.json",
+    "command-run-ios.json",
+    "close-4001.json"
+  ]
+}

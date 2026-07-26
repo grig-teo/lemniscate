@@ -1,0 +1,14 @@
+{
+  "_comment": "Failure variant — the full build/run log exceeded LOG_UPLOAD_THRESHOLD_BYTES (8192) and was uploaded as a .log artifact via the device-artifact endpoint. The short tail (~2 KB) is always present inline in `log`; `logArtifactUrl` is the backend-relative download path for the full log, added only on a successful upload. Produced by fail_with_log (Tauri) and finalizeFailure (Node agent).",
+  "direction": "client-to-server",
+  "frame": {
+    "type": "command_result",
+    "id": "cmd-abc456",
+    "status": "failed",
+    "result": {
+      "error": "gradle build failed with exit code 1",
+      "log": "> Task :app:compileDebugJavaWithJavac FAILED\nExecution failed for task ':app:compileDebugJavaWithJavac'.",
+      "logArtifactUrl": "/api/devices/artifacts/dev-builder/cmd-abc456-1719432100.log"
+    }
+  }
+}

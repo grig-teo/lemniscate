@@ -1,0 +1,8 @@
+{
+  "_comment": "Server greeting — sent immediately after the WS handshake succeeds and before any queued commands are flushed. Confirms the device id the token resolved to.",
+  "direction": "server-to-client",
+  "frame": {
+    "type": "welcome",
+    "deviceId": "dev-abc123"
+  }
+}
