@@ -303,8 +303,8 @@ export const servicesInternalRoutes: FastifyPluginAsync = async (app) => {
 
 // Public HTML index of one owner's live apps — Traefik rewrites /<owner>/*
 // here (replacePath) for paths no service claimed. Public by design: the
-// service URLs themselves are publicly reachable.
-const APPS_INDEX_ROUTE = '/api/apps-index/:owner';
+// service URLs themselves are publicly reachable. Mounted under /api.
+const APPS_INDEX_ROUTE = '/apps-index/:owner';
 
 function escapeHtml(text: string): string {
   return text
