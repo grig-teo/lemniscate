@@ -9,6 +9,7 @@ import type { LlmRuntime } from './agent-runtime.js';
 import { prisma } from './prisma.js';
 import { publishTaskEvent } from './task-events.js';
 import { errorMessage, redactSecrets } from './utils.js';
+import { archiveWorkdirToMinio } from './workdir-archive.js';
 
 // Shared git/workdir/event plumbing for the agent-loop jobs (run-task,
 // review-pr, generate-proposals). Extracted from agent-loop.ts.
@@ -175,6 +176,9 @@ export async function persistTokenUsage(taskId: string, usedTokens: number): Pro
 }
 
 export async function cleanupWorkdir(workdir: string, taskId?: string): Promise<void> {
+  // Snapshot to MinIO first (silent, best-effort) so a finished task's
+  // workdir stays retrievable after the local copy is gone.
+  await archiveWorkdirToMinio(workdir).catch(() => {});
   await fs.rm(workdir, { recursive: true, force: true }).catch(() => {});
   if (taskId) await logEvent(taskId, 'cleaned up workdir').catch(() => {});
 }

@@ -1,12 +1,19 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const mocks = vi.hoisted(() => ({ publishTaskEvent: vi.fn() }));
+const mocks = vi.hoisted(() => ({
+  publishTaskEvent: vi.fn(),
+  archiveWorkdirToMinio: vi.fn(),
+}));
 
 vi.mock('../src/lib/task-events.js', () => ({
   publishTaskEvent: mocks.publishTaskEvent,
 }));
 
-import { cloneRepository, explainGitFailure, git, planWorkdirSweep, sanitizeRelativePath } from '../src/lib/agent-git.js';
+vi.mock('../src/lib/workdir-archive.js', () => ({
+  archiveWorkdirToMinio: mocks.archiveWorkdirToMinio,
+}));
+
+import { cleanupWorkdir, cloneRepository, explainGitFailure, git, planWorkdirSweep, sanitizeRelativePath } from '../src/lib/agent-git.js';
 
 // Locking tests for the LLM-path safety check extracted from agent-loop.ts,
 // plus the git() console logging: every command echoes a redacted
@@ -146,6 +153,63 @@ describe('cloneRepository empty-repo fallback', () => {
       expect(origin).not.toContain('s3cret-token');
       const gitConfig = await fs.readFile(path.join(workdir, '.git', 'config'), 'utf8');
       expect(gitConfig).not.toContain('s3cret-token');
+    } finally {
+      await fs.rm(tmp, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('cleanupWorkdir', () => {
+  async function makeWorkdir(): Promise<{ tmp: string; workdir: string }> {
+    const fs = await import('node:fs/promises');
+    const os = await import('node:os');
+    const path = await import('node:path');
+    const tmp = await fs.mkdtemp(path.join(os.tmpdir(), 'cleanup-'));
+    const workdir = path.join(tmp, 'task-1');
+    await fs.mkdir(workdir, { recursive: true });
+    return { tmp, workdir };
+  }
+
+  it('archives the workdir to MinIO before removing it, then logs the cleanup', async () => {
+    const fs = await import('node:fs/promises');
+    const { tmp, workdir } = await makeWorkdir();
+    try {
+      let existedWhenArchived = false;
+      mocks.archiveWorkdirToMinio.mockImplementation(async () => {
+        existedWhenArchived = await fs.stat(workdir).then((s) => s.isDirectory()).catch(() => false);
+      });
+      await cleanupWorkdir(workdir, 'task-1');
+      expect(mocks.archiveWorkdirToMinio).toHaveBeenCalledWith(workdir);
+      expect(existedWhenArchived).toBe(true);
+      await expect(fs.stat(workdir)).rejects.toThrow();
+      expect(mocks.publishTaskEvent).toHaveBeenCalledWith('task-1', 'log', {
+        line: 'cleaned up workdir',
+      });
+    } finally {
+      await fs.rm(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it('still removes the workdir when the archive step throws', async () => {
+    const fs = await import('node:fs/promises');
+    const { tmp, workdir } = await makeWorkdir();
+    try {
+      mocks.archiveWorkdirToMinio.mockRejectedValue(new Error('minio down'));
+      await expect(cleanupWorkdir(workdir, 'task-1')).resolves.toBeUndefined();
+      await expect(fs.stat(workdir)).rejects.toThrow();
+    } finally {
+      await fs.rm(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it('writes nothing to the task console about the archive itself', async () => {
+    const fs = await import('node:fs/promises');
+    const { tmp, workdir } = await makeWorkdir();
+    try {
+      mocks.archiveWorkdirToMinio.mockResolvedValue(undefined);
+      await cleanupWorkdir(workdir, 'task-1');
+      const lines = mocks.publishTaskEvent.mock.calls.map((c) => c[2]?.line as string);
+      expect(lines).toEqual(['cleaned up workdir']);
     } finally {
       await fs.rm(tmp, { recursive: true, force: true });
     }
