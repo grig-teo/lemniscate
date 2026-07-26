@@ -22,9 +22,9 @@ describe('buildTraefikConfig', () => {
     });
   });
 
-  it('omits empty tables when nothing is deployed', () => {
-    const cfg = buildTraefikConfig([]);
-    expect(cfg.http).toEqual({});
+  it('returns a bare empty object when nothing is deployed', () => {
+    // Traefik's YAML decoder rejects empty {} maps at any level.
+    expect(buildTraefikConfig([])).toEqual({});
   });
 
   it('handles multiple services independently', () => {
