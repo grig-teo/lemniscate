@@ -1,4 +1,4 @@
-import { promises as fs } from 'node:fs';
+import { promises as fs, writeFileSync } from 'node:fs';
 
 // Liveness signal for the BullMQ worker, which exposes no HTTP port: it
 // rewrites this file on a timer, and the container healthcheck fails once
@@ -22,7 +22,9 @@ export function heartbeatIsFresh(
 }
 
 // Returns a stop function; the timer is unref'd so it never keeps the
-// process alive on its own. Write failures are swallowed — the healthcheck
+// process alive on its own. The first beat is synchronous so the file exists
+// before the caller continues (the healthcheck is valid from t=0); later
+// beats are fire-and-forget. Write failures are swallowed — the healthcheck
 // turning unhealthy is the intended signal when /tmp is unwritable.
 export function startHeartbeat(
   file: string = WORKER_HEARTBEAT_FILE,
@@ -31,7 +33,11 @@ export function startHeartbeat(
   const beat = () => {
     void fs.writeFile(file, new Date().toISOString()).catch(() => {});
   };
-  beat();
+  try {
+    writeFileSync(file, new Date().toISOString());
+  } catch {
+    // same swallow rule as the async beats
+  }
   const timer = setInterval(beat, intervalMs);
   timer.unref();
   return () => clearInterval(timer);

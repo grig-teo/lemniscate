@@ -16,7 +16,7 @@ import {
   registerProposalAutoRunSchedule,
   registerProposalTopUpSchedule,
 } from './lib/proposal-scheduler.js';
-import { registerPrStateSyncSchedule, syncMergedPullRequests } from './lib/pr-state-sync.js';
+import { registerPrStateSyncSchedule, recoverStuckReviews, syncMergedPullRequests } from './lib/pr-state-sync.js';
 import { startHeartbeat } from './lib/worker-heartbeat.js';
 
 const runTaskDataSchema = z.object({ taskId: z.string().min(1) });
@@ -123,6 +123,10 @@ await recoverQueuedTasks();
 // Re-queue tasks left in 'running' by a killed worker (redeploy mid-run);
 // their persisted workdirs let the re-runs resume where they stopped.
 await recoverInterruptedTasks();
+
+// Re-enqueue reviews whose jobs died permanently while the worker was down
+// (or before job retries existed) — otherwise they never reach auto-merge.
+await recoverStuckReviews();
 
 for (const signal of ['SIGINT', 'SIGTERM'] as const) {
   process.once(signal, () => {

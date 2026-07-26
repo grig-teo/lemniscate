@@ -35,7 +35,7 @@ export interface ChatCompletionsParams {
   maxTokens?: number;
   /** Maps to `reasoning_effort` when set; transparently dropped on HTTP 400. */
   thinkingLevel?: ThinkingLevel;
-  /** Per-attempt timeout. Defaults to 120s. */
+  /** First-attempt timeout. Defaults to 120s. Each retry doubles it (cap 600s). */
   timeoutSeconds?: number;
   /** Retries on 429 / 5xx / network errors. Defaults to 3. */
   maxRetries?: number;
@@ -86,6 +86,14 @@ const DEFAULT_MAX_RETRIES = 3;
 const BACKOFF_BASE_MS = 500;
 const BACKOFF_MAX_MS = 10_000;
 const ERROR_BODY_MAX_CHARS = 500;
+const MAX_ATTEMPT_TIMEOUT_SECONDS = 600;
+
+// Exported for unit tests. Large-context calls on slow endpoints regularly
+// outlast the base timeout; retrying with the same timeout would just fail
+// the same way, so every attempt gets twice the room of the previous one.
+export function timeoutForAttemptSeconds(baseTimeoutSeconds: number, attempt: number): number {
+  return Math.min(baseTimeoutSeconds * 2 ** attempt, MAX_ATTEMPT_TIMEOUT_SECONDS);
+}
 
 // `scrubApiKey` keeps the historical call-site name; the implementation
 // lives in utils.ts (single home, shared with agent-loop and pull-requests).
@@ -169,9 +177,16 @@ interface FetchOutcome {
 
 // One POST with an abort-after-timeout; never throws — the caller decides
 // whether the failure is retryable.
-async function attemptFetch(state: RequestState, body: unknown): Promise<FetchOutcome> {
+async function attemptFetch(
+  state: RequestState,
+  body: unknown,
+  attempt: number,
+): Promise<FetchOutcome> {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), state.timeoutSeconds * 1000);
+  const timer = setTimeout(
+    () => controller.abort(),
+    timeoutForAttemptSeconds(state.timeoutSeconds, attempt) * 1000,
+  );
   try {
     const response = await fetch(state.url, {
       method: 'POST',
@@ -191,11 +206,15 @@ async function attemptFetch(state: RequestState, body: unknown): Promise<FetchOu
   }
 }
 
-function networkFailure(state: RequestState, outcome: FetchOutcome, attempt: number): LlmError {
+function networkFailure(
+  state: RequestState,
+  outcome: FetchOutcome,
+  attempt: number,
+): LlmError {
   if (outcome.timedOut) {
     return new LlmError(
       'timeout',
-      `Request timed out after ${state.timeoutSeconds}s (attempt ${attempt + 1} of ${state.maxRetries + 1})`,
+      `Request timed out after ${timeoutForAttemptSeconds(state.timeoutSeconds, attempt)}s (attempt ${attempt + 1} of ${state.maxRetries + 1})`,
     );
   }
   const detail = errorMessage(outcome.error);
@@ -291,7 +310,7 @@ export async function chatCompletions(
 ): Promise<ChatCompletionsResult> {
   const state = makeRequestState(params);
   for (let attempt = 0; ; attempt++) {
-    const outcome = await attemptFetch(state, buildRequestBody(state));
+    const outcome = await attemptFetch(state, buildRequestBody(state), attempt);
     if (!outcome.response) {
       if (attempt < state.maxRetries) {
         await backoffAndRetry(state, attempt, null, networkRetryReason(outcome));

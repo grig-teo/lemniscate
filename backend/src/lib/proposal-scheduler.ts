@@ -182,6 +182,8 @@ export async function enqueueGenerateProposalsNow(repositoryId: string): Promise
 // Enqueues a 'review-pr' job (LLM review → fix iterations → optional merge).
 // jobId includes the attempt so re-reviews after a fix are not deduped away.
 // Finished jobs are removed immediately (same rerun-swallow rule as run-task).
+// BullMQ retries a failed job with backoff — transient LLM/git failures used
+// to strand the task in awaiting_review forever with the PR never merging.
 export async function enqueueReviewTask(taskId: string, attempt = 0): Promise<void> {
   await getAgentTasksQueue().add(
     'review-pr',
@@ -191,6 +193,8 @@ export async function enqueueReviewTask(taskId: string, attempt = 0): Promise<vo
       removeOnComplete: true,
       removeOnFail: true,
       priority: JOB_PRIORITY.review,
+      attempts: 3,
+      backoff: { type: 'exponential', delay: 60_000 },
     },
   );
 }
