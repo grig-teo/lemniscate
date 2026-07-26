@@ -109,7 +109,7 @@ export function useImproveTask() {
  * mutation (AGENTS.md section 6) — rerun/cancel/archive/unarchive differ
  * only in the action segment.
  */
-function useTaskAction(action: 'rerun' | 'cancel' | 'archive' | 'unarchive') {
+function useTaskAction(action: 'rerun' | 'cancel' | 'archive' | 'unarchive' | 'close-pr') {
   const invalidate = useInvalidator(['tasks'], ['task']);
   return useMutation({
     mutationFn: (id: string) => api.post<unknown>(`/api/tasks/${id}/${action}`),
@@ -125,6 +125,11 @@ export function useRerunTask() {
 /** Stop a pending/queued/running task. */
 export function useCancelTask() {
   return useTaskAction('cancel');
+}
+
+/** Close a PR and delete its branch from the UI (awaiting_review tasks only). */
+export function useClosePrTask() {
+  return useTaskAction('close-pr');
 }
 
 /** Hide a task from the task lists. */
