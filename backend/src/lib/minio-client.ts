@@ -38,8 +38,8 @@ async function applyArtifactLifecycle(minio: Client, bucket: string): Promise<vo
   }
 }
 
-/** Configured client + ensured bucket, or null when MinIO env vars are unset. */
-export async function getMinioBucket(bucket: string): Promise<{ client: Client } | null> {
+/** Configured client, or null when MinIO env vars are unset. No bucket creation. */
+export async function getMinioClient(): Promise<Client | null> {
   const { config } = await import('../config.js');
   if (!config.MINIO_ENDPOINT || !config.MINIO_ROOT_USER || !config.MINIO_ROOT_PASSWORD) {
     return null;
@@ -53,14 +53,47 @@ export async function getMinioBucket(bucket: string): Promise<{ client: Client }
       secretKey: config.MINIO_ROOT_PASSWORD,
     });
   }
+  return client;
+}
+
+/** True when MinIO env vars are set, without touching the network. */
+export async function minioConfigured(): Promise<boolean> {
+  return (await getMinioClient()) !== null;
+}
+
+/** Create the bucket when missing; rejects when MinIO is unreachable. */
+async function ensureBucket(minio: Client, bucket: string): Promise<void> {
+  if (!(await minio.bucketExists(bucket))) {
+    await minio.makeBucket(bucket);
+  }
+}
+
+/**
+ * Readiness probe for the configured library bucket. Ensures the bucket
+ * rather than merely asserting it: nothing else creates MINIO_BUCKET at
+ * startup (getMinioBucket creates it lazily on first library use), so a pure
+ * existence check would 503 /health/ready forever on a fresh deployment and
+ * wedge every depends_on: service_healthy consumer. Still hits MinIO on
+ * every call, so an unreachable server keeps failing readiness. Callers must
+ * gate on minioConfigured() first.
+ */
+export async function ensureLibraryBucket(): Promise<void> {
+  const minio = await getMinioClient();
+  if (!minio) throw new Error('minio is not configured');
+  const { config } = await import('../config.js');
+  await ensureBucket(minio, config.MINIO_BUCKET);
+}
+
+/** Configured client + ensured bucket, or null when MinIO env vars are unset. */
+export async function getMinioBucket(bucket: string): Promise<{ client: Client } | null> {
+  const minio = await getMinioClient();
+  if (!minio) return null;
   if (!readyBuckets.has(bucket)) {
-    if (!(await client.bucketExists(bucket))) {
-      await client.makeBucket(bucket);
-    }
+    await ensureBucket(minio, bucket);
     if (bucket === DEVICE_ARTIFACTS_BUCKET) {
-      await applyArtifactLifecycle(client, bucket);
+      await applyArtifactLifecycle(minio, bucket);
     }
     readyBuckets.add(bucket);
   }
-  return { client };
+  return { client: minio };
 }
