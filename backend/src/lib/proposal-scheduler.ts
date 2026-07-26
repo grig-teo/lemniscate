@@ -1,3 +1,4 @@
+import type { Prisma } from '@prisma/client';
 import { Queue } from 'bullmq';
 import { Redis } from 'ioredis';
 import { config } from '../config.js';
@@ -62,20 +63,57 @@ export async function enqueueProposalAutoRuns(): Promise<void> {
 }
 
 // Returns true when a pending proposal was queued for the repository.
-async function startNextProposal(repositoryId: string): Promise<boolean> {
-  const active = await prisma.task.count({
+// The claim is atomic: a per-repository advisory lock serializes overlapping
+// autorun ticks (and ticks racing a manual start), and the pending-only
+// updateMany loses the race against a concurrent cancel instead of
+// resurrecting the task — the "one active proposal per repo" invariant holds.
+export async function startNextProposal(repositoryId: string): Promise<boolean> {
+  const claimedId = await claimNextProposal(repositoryId);
+  if (!claimedId) return false;
+  await enqueueRunTask(claimedId);
+  return true;
+}
+
+// Claims the oldest pending proposal inside one transaction guarded by
+// pg_advisory_xact_lock, so concurrent ticks cannot both pass the "no active
+// proposal" check. Returns the claimed task id, or null when there is
+// nothing (safe) to start. The lock is released at transaction end.
+async function claimNextProposal(repositoryId: string): Promise<string | null> {
+  return prisma.$transaction(async (tx) => {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${repositoryId}))`;
+    if (await hasActiveProposal(tx, repositoryId)) return null;
+    return claimOldestPending(tx, repositoryId);
+  });
+}
+
+async function hasActiveProposal(
+  tx: Prisma.TransactionClient,
+  repositoryId: string,
+): Promise<boolean> {
+  const active = await tx.task.count({
     where: { repositoryId, kind: 'proposal', status: { in: ['queued', 'running'] } },
   });
-  if (active > 0) return false;
-  const next = await prisma.task.findFirst({
+  return active > 0;
+}
+
+// Flips the oldest pending proposal to queued only when it is still pending:
+// a task cancelled between the select and the claim stays cancelled
+// (updateMany matches 0 rows and the claim is abandoned).
+async function claimOldestPending(
+  tx: Prisma.TransactionClient,
+  repositoryId: string,
+): Promise<string | null> {
+  const next = await tx.task.findFirst({
     where: { repositoryId, kind: 'proposal', status: 'pending' },
     orderBy: { createdAt: 'asc' },
     select: { id: true },
   });
-  if (!next) return false;
-  await prisma.task.update({ where: { id: next.id }, data: { status: 'queued' } });
-  await enqueueRunTask(next.id);
-  return true;
+  if (!next) return null;
+  const claimed = await tx.task.updateMany({
+    where: { id: next.id, status: 'pending' },
+    data: { status: 'queued' },
+  });
+  return claimed.count === 1 ? next.id : null;
 }
 
 // Pending proposal count per repository (repos with none are absent).

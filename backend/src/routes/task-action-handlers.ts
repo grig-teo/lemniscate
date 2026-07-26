@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import { enqueueRunTask } from '../lib/proposal-scheduler.js';
 import { prisma } from '../lib/prisma.js';
@@ -18,7 +19,13 @@ import {
   resolveAttachmentUpdate,
   startBlocker,
 } from './task-lifecycle.js';
-import { idParamsSchema, improveBodySchema, patchBodySchema, startBodySchema } from './task-schemas.js';
+import {
+  idParamsSchema,
+  improveBodySchema,
+  patchBodySchema,
+  type StartBody,
+  startBodySchema,
+} from './task-schemas.js';
 
 // Task action handlers: start, patch, rerun, cancel, archive, unarchive.
 // Every handler is ownership-scoped via ownedTaskWhere.
@@ -52,11 +59,29 @@ export async function startTask(request: FastifyRequest, reply: FastifyReply) {
   // Enqueue before the status update: a failed enqueue must not strand the
   // task in 'queued' without a job (the worker also sweeps these at boot).
   await enqueueRunTask(task.id);
-  const updated = await prisma.task.update({
-    where: { id: task.id },
-    data: { ...buildStartUpdate(body), ...(await resolveAttachmentUpdate(body, userId)) },
-  });
+  const updated = await claimPendingTask(task.id, body, userId);
+  if (!updated) {
+    return reply.code(409).send({ error: 'task is no longer pending' });
+  }
   return { task: updated };
+}
+
+// Flips a still-pending task to queued with the caller's edits in one
+// conditional update (same pending-only claim as the autorun scheduler).
+// Returns null when a concurrent cancel or scheduler claim already moved the
+// task out of pending — the losing start must not resurrect it. The
+// already-enqueued job is harmless: runTask skips non-pending terminal
+// tasks, and jobId dedupe covers a racing scheduler enqueue.
+async function claimPendingTask(taskId: string, body: StartBody, userId: string) {
+  const data = { ...buildStartUpdate(body), ...(await resolveAttachmentUpdate(body, userId)) };
+  try {
+    return await prisma.task.update({ where: { id: taskId, status: 'pending' }, data });
+  } catch (error) {
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2025') {
+      return null;
+    }
+    throw error;
+  }
 }
 
 // Save edits on a pending proposal/prompt without starting it. Same body and
