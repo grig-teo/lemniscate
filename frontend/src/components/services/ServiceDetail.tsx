@@ -1,3 +1,9 @@
+/**
+ * Center pane for one service: URL + controls (deploy/stop/delete, live
+ * logs), env-var editor (values write-only), and deployment history.
+ * The env editor lives in ServiceEnvEditor.tsx and the deployment history in
+ * ServiceDeployments.tsx (AGENTS.md section 2).
+ */
 import * as React from 'react';
 import { Copy, ExternalLink, Play, Square, Trash2, X } from 'lucide-react';
 
@@ -5,158 +11,17 @@ import { describeApiError } from '@/lib/api';
 import {
   useDeleteService,
   useDeployService,
-  useSaveServiceEnv,
-  useServiceDeployments,
   useServiceLogs,
   useServices,
   useStopService,
   useUpdateService,
 } from '@/lib/hooks';
-import { hasActiveDeployment, serviceStatusColor, type AppService } from '@/lib/services';
+import { hasActiveDeployment, serviceStatusColor } from '@/lib/services';
 import { useWorkspaceSelection } from '@/lib/selection';
+import { DeploymentList } from '@/components/services/ServiceDeployments';
+import { EnvEditor } from '@/components/services/ServiceEnvEditor';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
 
-function EnvEditor({ service }: { service: AppService }) {
-  const saveEnv = useSaveServiceEnv(service.id);
-  const [removed, setRemoved] = React.useState<string[]>([]);
-  const [added, setAdded] = React.useState<{ key: string; value: string }[]>([]);
-  const [newKey, setNewKey] = React.useState('');
-  const [newValue, setNewValue] = React.useState('');
-  const [message, setMessage] = React.useState<string | null>(null);
-
-  const visibleKeys = service.envKeys.filter((key) => !removed.includes(key));
-  const dirty = removed.length > 0 || added.length > 0;
-
-  const save = async () => {
-    setMessage(null);
-    try {
-      await saveEnv.mutateAsync({
-        set: Object.fromEntries(added.map((entry) => [entry.key, entry.value])),
-        remove: removed,
-      });
-      setRemoved([]);
-      setAdded([]);
-      setMessage('Saved — applies from the next deploy.');
-    } catch (err) {
-      setMessage(describeApiError(err as Error));
-    }
-  };
-
-  return (
-    <div className="grid gap-2">
-      <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-        Environment variables
-      </span>
-      {visibleKeys.length === 0 && added.length === 0 && (
-        <p className="text-xs text-muted-foreground/70">No env vars set.</p>
-      )}
-      {visibleKeys.map((key) => (
-        <div key={key} className="flex items-center gap-2 text-sm">
-          <code className="rounded bg-muted px-1.5 py-0.5 text-xs">{key}</code>
-          <span className="text-xs text-muted-foreground">•••</span>
-          <Button
-            variant="ghost"
-            size="icon"
-            className="ml-auto h-6 w-6"
-            aria-label={`Remove ${key}`}
-            onClick={() => setRemoved((prev) => [...prev, key])}
-          >
-            <X className="h-3 w-3" />
-          </Button>
-        </div>
-      ))}
-      {added.map((entry) => (
-        <div key={entry.key} className="flex items-center gap-2 text-sm">
-          <code className="rounded bg-muted px-1.5 py-0.5 text-xs">{entry.key}</code>
-          <span className="text-xs text-muted-foreground">(new)</span>
-        </div>
-      ))}
-      <div className="flex items-center gap-2">
-        <Input
-          className="h-8 w-40"
-          placeholder="KEY"
-          value={newKey}
-          onChange={(event) => setNewKey(event.target.value)}
-        />
-        <Input
-          className="h-8 flex-1"
-          placeholder="value"
-          type="password"
-          value={newValue}
-          onChange={(event) => setNewValue(event.target.value)}
-        />
-        <Button
-          variant="outline"
-          size="sm"
-          disabled={!/^[A-Za-z_][A-Za-z0-9_]*$/.test(newKey)}
-          onClick={() => {
-            setAdded((prev) => [...prev.filter((e) => e.key !== newKey), { key: newKey, value: newValue }]);
-            setNewKey('');
-            setNewValue('');
-          }}
-        >
-          Add
-        </Button>
-      </div>
-      <div className="flex items-center gap-2">
-        <Button size="sm" disabled={!dirty || saveEnv.isPending} onClick={() => void save()}>
-          {saveEnv.isPending ? 'Saving…' : 'Save env'}
-        </Button>
-        {message && <span className="text-xs text-muted-foreground">{message}</span>}
-      </div>
-    </div>
-  );
-}
-
-function DeploymentList({ serviceId }: { serviceId: string }) {
-  const deploymentsQuery = useServiceDeployments(serviceId);
-  const [openLogId, setOpenLogId] = React.useState<string | null>(null);
-  const deployments = deploymentsQuery.data ?? [];
-  return (
-    <div className="grid gap-2">
-      <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-        Deployments
-      </span>
-      {deployments.length === 0 && (
-        <p className="text-xs text-muted-foreground/70">No deployments yet.</p>
-      )}
-      {deployments.map((dep) => (
-        <div key={dep.id} className="rounded border">
-          <button
-            type="button"
-            className="flex w-full items-center gap-2 px-2 py-1.5 text-left text-sm hover:bg-accent"
-            onClick={() => setOpenLogId(openLogId === dep.id ? null : dep.id)}
-          >
-            <span
-              className="h-2 w-2 shrink-0 rounded-full"
-              style={{
-                backgroundColor: serviceStatusColor(
-                  dep.status === 'online' ? 'online' : dep.status === 'failed' ? 'failed' : 'deploying',
-                ),
-              }}
-            />
-            <span className="font-medium">{dep.status}</span>
-            <code className="text-xs text-muted-foreground">{dep.commitSha.slice(0, 8)}</code>
-            <span className="ml-auto text-xs text-muted-foreground">
-              {new Date(dep.createdAt).toLocaleString()}
-            </span>
-          </button>
-          {openLogId === dep.id && dep.log && (
-            <pre className="max-h-64 overflow-auto border-t bg-muted/50 p-2 text-xs whitespace-pre-wrap">
-              {dep.log}
-            </pre>
-          )}
-        </div>
-      ))}
-    </div>
-  );
-}
-
-/**
- * Center pane for one service: URL + controls (deploy/stop/delete, live
- * logs), env-var editor (values write-only), and deployment history.
- */
 export function ServiceDetail({ serviceId }: { serviceId: string }) {
   const servicesQuery = useServices();
   const { selectService } = useWorkspaceSelection();

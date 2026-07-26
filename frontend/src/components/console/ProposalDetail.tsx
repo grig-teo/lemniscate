@@ -1,3 +1,13 @@
+/**
+ * Detail view for a pending task (proposal or saved-for-later prompt): the
+ * full task is fetched, then shown as an editable title + prompt with a
+ * markdown/image attach row and the library attachments (skills, MCP
+ * servers, per-folder AGENTS.md). SAVE persists edits without starting;
+ * START posts them to POST /api/tasks/:id/start and the console view takes
+ * over once the task flips to queued.
+ *
+ * Presentational pieces live in TaskEditorFields.tsx (AGENTS.md section 2).
+ */
 import * as React from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { Hammer, Loader2, Paperclip, Save } from 'lucide-react';
@@ -10,197 +20,26 @@ import {
   taskMcpSelections,
   taskSkillSelections,
 } from '@/lib/proposal-detail';
-import { useSkills, useImproveTask, useStartTask, useTask, type Task, type TaskImage } from '@/lib/hooks';
+import { useSkills, useImproveTask, useStartTask, useTask, type TaskImage } from '@/lib/hooks';
 import { useLibraryAttachments } from '@/lib/library-attachments';
 import { IMAGE_ACCEPT, MAX_IMAGES } from '@/lib/prompt-composer';
-import { cn } from '@/lib/utils';
 import { LibraryAttachments } from '@/components/library/LibraryAttachments';
-import { MarkdownView } from '@/components/MarkdownView';
 import { PriorityBadge } from '@/components/PriorityBadge';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
+import { appendImageFiles, useAutoResizeTextarea } from '@/components/console/composer-utils';
+import { ImageThumbnails } from '@/components/console/TaskComposerFields';
 import {
-  appendImageFiles,
-  ImageThumbnails,
-  useAutoResizeTextarea,
-} from '@/components/console/TaskComposer';
-
-// Attach row accepts images (thumbnails, same rules as the task composer).
-
-/** Task row plus the library-attachment columns returned by GET /api/tasks/:id. */
-type TaskWithAttachments = Task & {
-  skills?: unknown;
-  mcpServers?: unknown;
-  agentsMdFiles?: unknown;
-};
-
-function DetailMessage({ children }: { children: React.ReactNode }) {
-  return (
-    <div className="flex flex-1 items-center justify-center gap-2 px-6 text-sm text-muted-foreground">
-      {children}
-    </div>
-  );
-}
-
-function ToggleButton({
-  active,
-  onClick,
-  label,
-}: {
-  active: boolean;
-  onClick: () => void;
-  label: string;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      aria-pressed={active}
-      className={cn(
-        'rounded px-2 py-0.5 text-[11px] text-muted-foreground hover:text-foreground',
-        active && 'bg-accent font-medium text-foreground',
-      )}
-    >
-      {label}
-    </button>
-  );
-}
-
-/** Segmented Preview/Edit toggle for the prompt field. */
-function ViewToggle({
-  preview,
-  onChange,
-  action,
-}: {
-  preview: boolean;
-  onChange: (preview: boolean) => void;
-  action?: React.ReactNode;
-}) {
-  return (
-    <div className="flex shrink-0 items-center gap-1 border-b px-2 py-1">
-      <ToggleButton active={preview} onClick={() => onChange(true)} label="Preview" />
-      <ToggleButton active={!preview} onClick={() => onChange(false)} label="Edit" />
-      <div className="flex-1" />
-      {action}
-    </div>
-  );
-}
-
-/** Improve button on the right of the Preview/Edit row: asks the LLM to
- *  rewrite the current prompt into the structured proposal-document shape. */
-function ImproveButton({
-  pending,
-  disabled,
-  onClick,
-}: {
-  pending: boolean;
-  disabled: boolean;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      disabled={disabled || pending}
-      className={cn(
-        'flex items-center gap-1 rounded px-2 py-0.5 text-[11px] text-muted-foreground',
-        'hover:text-foreground disabled:opacity-50',
-      )}
-    >
-      {pending && <Loader2 className="h-3 w-3 animate-spin" aria-hidden />}
-      {pending ? 'Improving…' : 'Improve'}
-    </button>
-  );
-}
-
-/** Prompt rendered as markdown, or the plain-text fallback for an empty prompt. */
-function PromptPreview({ prompt }: { prompt: string }) {
-  if (!prompt.trim()) {
-    return <p className="text-sm text-muted-foreground">Nothing to preview.</p>;
-  }
-  return <MarkdownView>{prompt}</MarkdownView>;
-}
-
-const PROMPT_MIN_HEIGHT = 140;
-const PROMPT_MAX_RATIO = 0.8;
-
-/** Window-level vertical drag: reports the clamped px height on each move. */
-function beginHeightDrag(
-  event: React.MouseEvent,
-  startHeight: number,
-  maxHeight: number,
-  onHeight: (height: number) => void,
-) {
-  event.preventDefault();
-  const startY = event.clientY;
-  const onMove = (e: MouseEvent) =>
-    onHeight(
-      Math.min(maxHeight, Math.max(PROMPT_MIN_HEIGHT, Math.round(startHeight + e.clientY - startY))),
-    );
-  const stop = () => {
-    window.removeEventListener('mousemove', onMove);
-    window.removeEventListener('mouseup', stop);
-  };
-  window.addEventListener('mousemove', onMove);
-  window.addEventListener('mouseup', stop);
-}
-
-/** Drag-to-resize state for the prompt field; null height = the CSS default. */
-function useResizablePrompt() {
-  const boxRef = React.useRef<HTMLDivElement>(null);
-  const [height, setHeight] = React.useState<number | null>(null);
-  const startDrag = (event: React.MouseEvent) => {
-    const startHeight = boxRef.current?.getBoundingClientRect().height ?? 0;
-    const paneHeight = boxRef.current?.parentElement?.getBoundingClientRect().height ?? 0;
-    beginHeightDrag(event, startHeight, paneHeight * PROMPT_MAX_RATIO, setHeight);
-  };
-  return { boxRef, height, startDrag };
-}
-
-/** Hidden file input plus a ghost button that opens it — one per accept kind. */
-function AttachFileButton({
-  accept,
-  label,
-  icon: Icon,
-  disabled,
-  onFiles,
-}: {
-  accept: string;
-  label: string;
-  icon: React.ComponentType<{ className?: string }>;
-  disabled?: boolean;
-  onFiles: (files: FileList | null) => void;
-}) {
-  const inputRef = React.useRef<HTMLInputElement | null>(null);
-  return (
-    <>
-      <input
-        ref={inputRef}
-        type="file"
-        accept={accept}
-        multiple
-        className="hidden"
-        aria-hidden
-        onChange={(event) => {
-          onFiles(event.target.files);
-          event.target.value = '';
-        }}
-      />
-      <Button
-        type="button"
-        size="sm"
-        variant="ghost"
-        disabled={disabled}
-        onClick={() => inputRef.current?.click()}
-      >
-        <Icon className="h-4 w-4" aria-hidden />
-        {label}
-      </Button>
-    </>
-  );
-}
+  AttachFileButton,
+  DetailMessage,
+  ImproveButton,
+  PromptPreview,
+  useResizablePrompt,
+  ViewToggle,
+  type TaskWithAttachments,
+} from '@/components/console/TaskEditorFields';
 
 /** PATCH /api/tasks/:id — save edits on a pending task without starting it. */
 function usePatchTask() {
@@ -383,14 +222,6 @@ function TaskEditorInner({
   );
 }
 
-/**
- * Detail view for a pending task (proposal or saved-for-later prompt): the
- * full task is fetched, then shown as an editable title + prompt with a
- * markdown/image attach row and the library attachments (skills, MCP
- * servers, per-folder AGENTS.md). SAVE persists edits without starting;
- * START posts them to POST /api/tasks/:id/start and the console view takes
- * over once the task flips to queued.
- */
 export function ProposalDetail({ taskId }: { taskId: string }) {
   const taskQuery = useTask(taskId);
 

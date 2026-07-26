@@ -67,6 +67,10 @@ jobs:
         working-directory: frontend
         run: npm test
 
+      - name: Module size guard (max 300 lines per AGENTS.md)
+        working-directory: frontend
+        run: npm run check:max-lines
+
   changes:
     name: Detect changed paths
     runs-on: ubuntu-latest
