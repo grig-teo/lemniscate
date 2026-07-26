@@ -7,6 +7,7 @@
     "command-result-running.json",
     "command-result-done.json",
     "command-result-failed.json",
+    "command-result-failed-with-log.json",
     "welcome.json",
     "command-run-web.json",
     "command-install-apk.json",

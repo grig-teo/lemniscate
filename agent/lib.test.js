@@ -146,10 +146,7 @@ test('detectRunStrategy returns null when nothing runnable exists', () => {
 
 test('helloMessage matches the shared hello fixture', () => {
   const fixture = loadFixture('hello.json');
-  const message = lib.helloMessage(fixture.frame.meta);
-  assert.equal(message.type, 'hello');
-  // Verify a known meta field survives — catches camelCase drift
-  assert.equal(message.meta.agentVersion, '0.4.3');
+  assert.deepEqual(lib.helloMessage(fixture.frame.meta), fixture.frame);
 });
 
 test('heartbeatMessage matches the shared heartbeat fixture', () => {
@@ -157,10 +154,13 @@ test('heartbeatMessage matches the shared heartbeat fixture', () => {
 });
 
 test('commandResultMessage matches every shared command_result fixture', () => {
-  for (const name of ['command-result-running.json', 'command-result-done.json', 'command-result-failed.json']) {
-    const fixture = loadFixture(name);
+  const cmdResults = loadAllFixtures().filter(
+    (f) => f.direction === 'client-to-server' && f.frame.type === 'command_result',
+  );
+  assert.ok(cmdResults.length >= 4, `expected >= 4 command_result fixtures, got ${cmdResults.length}`);
+  for (const fixture of cmdResults) {
     const { id, status, result } = fixture.frame;
-    assert.deepEqual(lib.commandResultMessage(id, status, result), fixture.frame, name);
+    assert.deepEqual(lib.commandResultMessage(id, status, result), fixture.frame, fixture._comment);
   }
 });
 

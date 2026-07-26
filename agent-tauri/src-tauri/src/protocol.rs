@@ -35,7 +35,9 @@ pub enum ServerMessage {
 }
 
 /// Outbound agent frames; serialized as `{type, ...}` JSON.
-#[derive(Debug, Serialize)]
+/// `Deserialize` is derived so the contract-fixture tests can round-trip
+/// every fixture through `Value → ClientMessage → Value` (structural equality).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "type")]
 pub enum ClientMessage {
     #[serde(rename = "hello")]
@@ -257,6 +259,8 @@ mod tests {
         include_str!("../../../tests/contract/device-ws/command-result-done.json");
     const CMD_RESULT_FAILED_FIXTURE: &str =
         include_str!("../../../tests/contract/device-ws/command-result-failed.json");
+    const CMD_RESULT_FAILED_WITH_LOG_FIXTURE: &str =
+        include_str!("../../../tests/contract/device-ws/command-result-failed-with-log.json");
     const WELCOME_FIXTURE: &str = include_str!("../../../tests/contract/device-ws/welcome.json");
     const CMD_RUN_WEB_FIXTURE: &str =
         include_str!("../../../tests/contract/device-ws/command-run-web.json");
@@ -276,84 +280,84 @@ mod tests {
         wrapper.get("frame").expect("fixture must have a frame key").clone()
     }
 
-    // -- client-to-server: serialize a ClientMessage and compare to the fixture --
+    // -- client-to-server: deserialize the fixture frame into a ClientMessage,
+    //    re-serialize, and assert structural equality with the fixture. This is
+    //    a true round-trip — it catches both a malformed fixture AND a drift in
+    //    the serialization (renamed field, changed tag, etc.).
 
-    #[test]
-    fn hello_fixture_matches_serialization() {
-        let frame = fixture_frame(HELLO_FIXTURE);
-        let meta: Meta = serde_json::from_value(frame["meta"].clone()).unwrap();
-        let serialized = serde_json::to_value(ClientMessage::Hello { meta }).unwrap();
-        assert_eq!(serialized, frame);
+    /// Round-trip one client fixture: Value → ClientMessage → Value.
+    fn assert_client_round_trip(raw: &str, label: &str) {
+        let frame = fixture_frame(raw);
+        let msg: ClientMessage = serde_json::from_value(frame.clone())
+            .unwrap_or_else(|e| panic!("{label}: fixture must deserialize: {e}"));
+        let reencoded = serde_json::to_value(msg)
+            .unwrap_or_else(|e| panic!("{label}: must re-serialize: {e}"));
+        assert_eq!(reencoded, frame, "fixture: {label}");
     }
 
     #[test]
-    fn heartbeat_fixture_matches_serialization() {
-        let frame = fixture_frame(HEARTBEAT_FIXTURE);
-        assert_eq!(serde_json::to_value(ClientMessage::Heartbeat).unwrap(), frame);
+    fn hello_fixture_round_trips() {
+        assert_client_round_trip(HELLO_FIXTURE, "hello");
     }
 
     #[test]
-    fn capabilities_fixture_matches_serialization() {
-        let frame = fixture_frame(CAPABILITIES_FIXTURE);
-        let caps: Capabilities = serde_json::from_value(frame["capabilities"].clone()).unwrap();
-        let serialized =
-            serde_json::to_value(ClientMessage::Capabilities { capabilities: caps }).unwrap();
-        assert_eq!(serialized, frame);
+    fn heartbeat_fixture_round_trips() {
+        assert_client_round_trip(HEARTBEAT_FIXTURE, "heartbeat");
     }
 
     #[test]
-    fn command_result_fixtures_match_serialization() {
+    fn capabilities_fixture_round_trips() {
+        assert_client_round_trip(CAPABILITIES_FIXTURE, "capabilities");
+    }
+
+    #[test]
+    fn command_result_fixtures_round_trip() {
+        // Every command_result variant — running, done, failed, and the
+        // logArtifactUrl variant — must round-trip through ClientMessage.
         let cases = [
             ("running", CMD_RESULT_RUNNING_FIXTURE),
             ("done", CMD_RESULT_DONE_FIXTURE),
             ("failed", CMD_RESULT_FAILED_FIXTURE),
+            ("failed-with-log", CMD_RESULT_FAILED_WITH_LOG_FIXTURE),
         ];
         for (label, raw) in cases {
-            let frame = fixture_frame(raw);
-            let result = frame.get("result").cloned();
-            let msg = command_result_message(
-                frame["id"].as_str().unwrap(),
-                frame["status"].as_str().unwrap(),
-                result,
-            );
-            assert_eq!(serde_json::to_value(msg).unwrap(), frame, "fixture: {label}");
+            assert_client_round_trip(raw, label);
         }
     }
 
-    // -- server-to-client: parse through parse_server_message and verify fields --
+    // -- server-to-client: parse through parse_server_message (the production
+    //    parser) and verify every field matches the fixture — not just one key.
 
     #[test]
-    fn welcome_fixture_parses() {
+    fn welcome_fixture_round_trips() {
         let frame = fixture_frame(WELCOME_FIXTURE);
-        // deviceId is hardcoded — catches a field rename that a
-        // pure round-trip through the fixture would miss.
         match parse_server_message(&frame.to_string()) {
             Some(ServerMessage::Welcome { device_id }) => {
-                assert_eq!(device_id, "dev-abc123");
+                // Full structural equality on the one payload field.
+                assert_eq!(device_id, frame["deviceId"].as_str().unwrap());
             }
             other => panic!("expected Welcome, got {other:?}"),
         }
     }
 
     #[test]
-    fn all_command_fixtures_parse() {
-        // One key payload field per command type — the field name is
-        // hardcoded so a rename in the fixture (e.g. port -> portNumber)
-        // causes payload.get(key) to return None and fail the assertion.
-        let commands: [(&str, &str, &str); 5] = [
-            ("run_web", CMD_RUN_WEB_FIXTURE, "port"),
-            ("install_apk", CMD_INSTALL_APK_FIXTURE, "apkUrl"),
-            ("build_android", CMD_BUILD_ANDROID_FIXTURE, "gradleTask"),
-            ("run_desktop", CMD_RUN_DESKTOP_FIXTURE, "startScript"),
-            ("run_ios", CMD_RUN_IOS_FIXTURE, "scheme"),
+    fn all_command_fixtures_round_trip() {
+        // Verify the FULL payload matches the fixture (not just one key) —
+        // catches any payload field-name drift.
+        let commands: [(&str, &str); 5] = [
+            ("run_web", CMD_RUN_WEB_FIXTURE),
+            ("install_apk", CMD_INSTALL_APK_FIXTURE),
+            ("build_android", CMD_BUILD_ANDROID_FIXTURE),
+            ("run_desktop", CMD_RUN_DESKTOP_FIXTURE),
+            ("run_ios", CMD_RUN_IOS_FIXTURE),
         ];
-        for (expected_type, raw, payload_key) in commands {
+        for (expected_type, raw) in commands {
             let frame = fixture_frame(raw);
             match parse_server_message(&frame.to_string()) {
-                Some(ServerMessage::Command { command_type, payload, .. }) => {
+                Some(ServerMessage::Command { id, command_type, payload }) => {
                     assert_eq!(command_type, expected_type, "{expected_type}: type");
-                    assert!(payload.get(payload_key).is_some(),
-                           "{expected_type}: payload must have key '{payload_key}'");
+                    assert_eq!(id, frame["id"].as_str().unwrap(), "{expected_type}: id");
+                    assert_eq!(payload, frame["payload"], "{expected_type}: full payload");
                 }
                 other => panic!("expected Command for {expected_type}, got {other:?}"),
             }
