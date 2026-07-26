@@ -11,6 +11,9 @@ vi.mock('../src/lib/agent-git.js', () => ({}));
 vi.mock('../src/lib/agent-runtime.js', () => ({}));
 vi.mock('../src/lib/hermes-runner.js', () => ({}));
 vi.mock('../src/lib/proposal-scheduler.js', () => ({}));
+// deploy-service imports lib/crypto at module load, which reads
+// config.ENCRYPTION_KEY — absent from the partial config mock above.
+vi.mock('../src/lib/deploy/deploy-service.js', () => ({}));
 vi.mock('../src/lib/pull-requests.js', () => ({}));
 vi.mock('../src/lib/task-events.js', () => ({}));
 
