@@ -2,10 +2,17 @@
 //! and the device tunnel lifecycle. Rust core lives in protocol/config/
 //! tunnel/commands modules.
 
+mod build_android;
 mod commands;
 mod config;
+mod exec;
+mod install_apk;
 mod protocol;
+mod run_desktop;
+mod run_ios;
+mod run_web;
 mod tunnel;
+mod xcode;
 
 use serde::Serialize;
 use serde_json::{json, Value};

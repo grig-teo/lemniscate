@@ -10,7 +10,8 @@ pub const AGENT_VERSION: &str = "0.1.0";
 /// Server close code meaning "device token rejected — pair again".
 pub const CLOSE_CODE_RE_PAIR: u16 = 4001;
 
-pub const COMMAND_TYPES: [&str; 4] = ["run_web", "install_apk", "build_android", "run_desktop"];
+pub const COMMAND_TYPES: [&str; 5] =
+    ["run_web", "install_apk", "build_android", "run_desktop", "run_ios"];
 
 /// Device metadata sent in the claim body and the WS hello.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -92,7 +93,7 @@ pub fn build_ws_url(server: &str, token: &str) -> Option<String> {
 }
 
 /// Percent-encode like encodeURIComponent (unreserved chars pass through).
-fn percent_encode(text: &str) -> String {
+pub(crate) fn percent_encode(text: &str) -> String {
     let mut out = String::new();
     for byte in text.bytes() {
         match byte {
@@ -339,6 +340,18 @@ mod tests {
         };
         assert_eq!(command_type, "run_desktop");
         assert_eq!(payload["startScript"], "electron");
+    }
+
+    #[test]
+    fn parses_run_ios_command() {
+        let raw = r#"{"type":"run_ios","id":"c1","payload":{"repoUrl":"https://x","branch":"main","scheme":"App"}}"#;
+        let Some(ServerMessage::Command { id, command_type, payload }) = parse_server_message(raw)
+        else {
+            panic!("expected a command");
+        };
+        assert_eq!(id, "c1");
+        assert_eq!(command_type, "run_ios");
+        assert_eq!(payload["scheme"], "App");
     }
 
     #[test]
