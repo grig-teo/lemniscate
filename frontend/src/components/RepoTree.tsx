@@ -133,6 +133,9 @@ export function RepoTree({ width }: { width: number }) {
           />
         </ScrollArea>
       )}
+      {/* When the repo list is hidden, this spacer takes over its flex-1
+          role so the device bar stays pinned to the bottom. */}
+      {isSectionCollapsed(collapsedSections, 'repositories') && <div className="flex-1" />}
 
       {/* Services (deployed apps): fixed block between the scrolling repo
           list and the pinned device bar. */}
