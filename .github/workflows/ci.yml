@@ -43,6 +43,13 @@ jobs:
         working-directory: backend
         run: npm test
 
+      - name: Module size guard (max 300 lines per AGENTS.md)
+        working-directory: backend
+        run: npm run check:max-lines
+
+      - name: Shared script tests (check-max-lines)
+        run: node --test scripts/check-max-lines.test.mjs
+
   frontend:
     name: Frontend — build & test
     runs-on: ubuntu-latest
@@ -79,6 +86,7 @@ jobs:
       ios: ${{ steps.filter.outputs.ios }}
       e2e: ${{ steps.filter.outputs.e2e }}
       backend: ${{ steps.filter.outputs.backend }}
+      agent: ${{ steps.filter.outputs.agent }}
     steps:
       - uses: actions/checkout@v4
 
@@ -105,6 +113,36 @@ jobs:
             backend:
               - 'backend/**'
               - '.github/workflows/ci.yml'
+            agent:
+              - 'agent/**'
+              - 'scripts/check-max-lines.mjs'
+              - '.github/workflows/ci.yml'
+
+  agent:
+    name: Agent — test & size guard
+    needs: changes
+    if: needs.changes.outputs.agent == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.18.0
+          cache: npm
+          cache-dependency-path: agent/package-lock.json
+
+      - name: Install dependencies
+        working-directory: agent
+        run: npm ci
+
+      - name: Test (node --test)
+        working-directory: agent
+        run: npm test
+
+      - name: Module size guard (max 300 lines per AGENTS.md)
+        working-directory: agent
+        run: npm run check:max-lines
 
   android:
     name: Android — test, lint & assembleDebug
