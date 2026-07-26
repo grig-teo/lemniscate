@@ -1,8 +1,8 @@
 {
-  "name": "lemniscate-agent-tauri",
+  "name": "lemniscate-connect-tauri",
   "private": true,
   "version": "0.1.0",
-  "description": "Lemniscate desktop agent (Tauri v2, Rust core) — device tunnel client",
+  "description": "Lemniscate Connect desktop app (Tauri v2, Rust core) — device tunnel client",
   "type": "module",
   "scripts": {
     "dev": "vite",

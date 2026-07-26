@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Lemniscate Agent",
+  "productName": "Lemniscate Connect",
   "version": "0.1.0",
   "identifier": "space.grig-teo.lemniscate.agent",
   "build": {
@@ -13,7 +13,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "Lemniscate Agent",
+        "title": "Lemniscate Connect",
         "width": 420,
         "height": 520,
         "resizable": false

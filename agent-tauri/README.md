@@ -1,6 +1,6 @@
-# Lemniscate Agent (Tauri)
+# Lemniscate Connect (Tauri)
 
-Cross-platform **desktop agent** for Lemniscate — a native rewrite-in-progress
+Cross-platform **desktop app** for Lemniscate (formerly "Lemniscate Agent") — a native rewrite-in-progress
 of the Node agent in [`../agent`](../agent). It pairs with your Lemniscate
 server (one-time, via a 6-char code from the web UI), keeps an **outbound**
 WebSocket tunnel open, and executes commands pushed from the web UI. No Node
@@ -32,7 +32,7 @@ agent-tauri/
 ├── index.html, src/          # minimal vanilla-TS pairing window (Vite)
 └── src-tauri/
     ├── Cargo.toml
-    ├── tauri.conf.json       # "Lemniscate Agent", single 420x520 window
+    ├── tauri.conf.json       # "Lemniscate Connect", single 420x520 window
     ├── capabilities/         # default window permissions
     └── src/
         ├── protocol.rs       # serde message types, WS URL, repo-dir naming (unit-tested)
