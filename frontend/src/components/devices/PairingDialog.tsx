@@ -90,7 +90,8 @@ function AgentDownloads() {
         ))}
       </div>
       <p className="text-xs text-muted-foreground">
-        Windows: SmartScreen → More info → Run anyway.
+        Windows: SmartScreen → More info → Run anyway. Linux: App Center warns &ldquo;third
+        party&rdquo; — Install still works, or use the AppImage (chmod +x, no install needed).
       </p>
       <div className="flex items-start gap-2">
         <p className="min-w-0 flex-1 break-all text-xs text-muted-foreground">
