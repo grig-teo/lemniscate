@@ -111,6 +111,8 @@ export type Repository = {
   /** Detected app platform ('android'|'ios'|'web'|'desktop'|'unknown'); null until first detection. */
   platform?: string | null;
   llmConfigId?: string | null;
+  /** LLM config for the review-pr job; null = standard task → repo → user-default resolution. */
+  reviewLlmConfigId?: string | null;
   /** Repository-level skill slugs injected into the agent's system prompt. */
   skillSlugs?: string[];
   /** AGENTS.md template skill applied when the repo root has no AGENTS.md. */
@@ -418,7 +420,9 @@ export function useUpdateAllRepositoryFlags() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (
-      flags: Required<Pick<RepoFlagsPatch, 'autoCreatePr' | 'autoReviewPr' | 'autoMergePr'>>,
+      flags: Required<Pick<RepoFlagsPatch, 'autoCreatePr' | 'autoReviewPr' | 'autoMergePr'>> & {
+        reviewLlmConfigId?: string | null;
+      },
     ) => api.post<{ updated: number }>('/api/repositories/flags', { ...flags }),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['repositories'] });

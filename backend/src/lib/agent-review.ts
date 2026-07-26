@@ -267,11 +267,14 @@ async function executeReviewTask(
   workdir: string,
   secrets: string[],
 ): Promise<LlmRuntime> {
+  // The repository's review LLM (when configured) wins over the task's
+  // implementation config — review and fix iterations run on it.
   const { cloneUrl, gitAuth, rt } = await prepareAgentRuntime(
     task,
     task.repository,
     secrets,
     task.llmTokensUsed,
+    task.repository.reviewLlmConfigId,
   );
   if (config.AGENT_EXECUTOR === 'hermes') {
     return executeHermesReview(task, rt, headBranch, attempt, workdir, cloneUrl, secrets, gitAuth);

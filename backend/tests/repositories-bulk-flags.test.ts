@@ -18,6 +18,12 @@ describe('bulkFlagsSchema', () => {
     expect(parsed.success).toBe(true);
   });
 
+  it('accepts an optional reviewLlmConfigId, including an explicit null', () => {
+    const base = { autoCreatePr: true, autoReviewPr: true, autoMergePr: false };
+    expect(bulkFlagsSchema.safeParse({ ...base, reviewLlmConfigId: 'cfg-1' }).success).toBe(true);
+    expect(bulkFlagsSchema.safeParse({ ...base, reviewLlmConfigId: null }).success).toBe(true);
+  });
+
   it('rejects missing or extra fields', () => {
     expect(
       bulkFlagsSchema.safeParse({ autoCreatePr: true, autoReviewPr: true }).success,
@@ -38,6 +44,19 @@ describe('buildBulkFlagsUpdate', () => {
     expect(
       buildBulkFlagsUpdate({ autoCreatePr: true, autoReviewPr: false, autoMergePr: false }),
     ).toEqual({ autoCreatePr: true, autoReviewPr: false, autoMergePr: false });
+  });
+
+  it('includes reviewLlmConfigId only when it was sent', () => {
+    const base = { autoCreatePr: true, autoReviewPr: true, autoMergePr: false };
+    expect(buildBulkFlagsUpdate(base)).toEqual(base);
+    expect(buildBulkFlagsUpdate({ ...base, reviewLlmConfigId: 'cfg-1' })).toEqual({
+      ...base,
+      reviewLlmConfigId: 'cfg-1',
+    });
+    expect(buildBulkFlagsUpdate({ ...base, reviewLlmConfigId: null })).toEqual({
+      ...base,
+      reviewLlmConfigId: null,
+    });
   });
 });
 

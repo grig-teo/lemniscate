@@ -2,8 +2,17 @@ import * as React from 'react';
 
 import { Button } from '@/components/ui/button';
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import {
+  useLlmConfigs,
   useRepositories,
   useUpdateAllRepositoryFlags,
+  type LlmConfig,
   type Repository,
 } from '@/lib/hooks';
 import { initialFlags, setAutoReview, type RepoFlags } from '@/lib/repo-flags';
@@ -71,26 +80,80 @@ function ApplyResult({ updateAll }: { updateAll: ReturnType<typeof useUpdateAllR
   return null;
 }
 
-/** Initialize the switches once the first repo's flags arrive. */
-function useInitialFlags(repos: Repository[] | undefined) {
-  const [flags, setFlags] = React.useState<RepoFlags>(() => initialFlags(repos));
+/** Initialize local state once the repository list arrives (first repo wins). */
+function useInitialFromRepos<T>(
+  repos: Repository[] | undefined,
+  read: (repos: Repository[] | undefined) => T,
+) {
+  const [value, setValue] = React.useState<T>(() => read(repos));
   const initialized = React.useRef(repos !== undefined);
   React.useEffect(() => {
     if (initialized.current || !repos) return;
     initialized.current = true;
-    setFlags(initialFlags(repos));
+    setValue(read(repos));
   }, [repos]);
-  return [flags, setFlags] as const;
+  return [value, setValue] as const;
+}
+
+/** Initial switches: first repo's flags, else PR on / review off / merge off. */
+function useInitialFlags(repos: Repository[] | undefined) {
+  return useInitialFromRepos(repos, initialFlags);
+}
+
+/** Initial review LLM: the first repo's reviewLlmConfigId, else the default. */
+function useInitialReviewLlm(repos: Repository[] | undefined) {
+  return useInitialFromRepos(repos, (list) => list?.[0]?.reviewLlmConfigId ?? null);
+}
+
+/** Review-LLM picker: 'default' keeps the task → repo → user-default resolution. */
+function ReviewLlmSelect({
+  configs,
+  value,
+  onChange,
+}: {
+  configs: LlmConfig[];
+  value: string | null;
+  onChange: (id: string | null) => void;
+}) {
+  return (
+    <div className="flex flex-col gap-1">
+      <p className="text-xs text-muted-foreground">
+        LLM that reviews pull requests and applies review fixes. Default: the task / repository
+        model.
+      </p>
+      <Select value={value ?? 'default'} onValueChange={(v) => onChange(v === 'default' ? null : v)}>
+        <SelectTrigger className="h-8" aria-label="Review LLM">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="default">Default (task / repository model)</SelectItem>
+          {configs.map((config) => (
+            <SelectItem key={config.id} value={config.id}>
+              <span className="truncate">
+                {config.name} · {config.model}
+              </span>
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+    </div>
+  );
 }
 
 /**
- * Repositories tab: bulk-apply PR / review / merge automation flags.
- * Applying rewrites these settings on ALL repositories.
+ * Repositories tab: bulk-apply PR / review / merge automation flags and the
+ * review LLM. Applying rewrites these settings on ALL repositories.
  */
 export function RepoFlagsSection() {
   const repos = useRepositories();
+  const llmConfigs = useLlmConfigs();
   const updateAll = useUpdateAllRepositoryFlags();
   const [flags, setFlags] = useInitialFlags(repos.data);
+  const [reviewLlmConfigId, setReviewLlmConfigId] = useInitialReviewLlm(repos.data);
+  const enabledConfigs = React.useMemo(
+    () => (llmConfigs.data ?? []).filter((config) => config.enabled),
+    [llmConfigs.data],
+  );
 
   return (
     <div className="flex flex-col gap-4 py-2">
@@ -106,11 +169,20 @@ export function RepoFlagsSection() {
         }}
       />
 
+      <ReviewLlmSelect
+        configs={enabledConfigs}
+        value={reviewLlmConfigId}
+        onChange={(id) => {
+          updateAll.reset();
+          setReviewLlmConfigId(id);
+        }}
+      />
+
       <div>
         <Button
           variant="outline"
           disabled={updateAll.isPending}
-          onClick={() => updateAll.mutate(flags)}
+          onClick={() => updateAll.mutate({ ...flags, reviewLlmConfigId })}
         >
           Apply to all repositories
         </Button>

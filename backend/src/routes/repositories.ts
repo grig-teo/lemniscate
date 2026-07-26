@@ -32,6 +32,9 @@ const patchBodySchema = z
     hidden: z.boolean().optional(),
     // null explicitly detaches the LLM config.
     llmConfigId: z.string().min(1).nullable().optional(),
+    // LLM config for the review-pr job; null detaches it (review then uses
+    // the standard task → repo → user-default resolution).
+    reviewLlmConfigId: z.string().min(1).nullable().optional(),
     // Slugs of skills injected into the agent's system prompt for tasks on
     // this repository; existence validated against the Skill table below.
     skillSlugs: z.array(z.string().min(1)).max(20).optional(),
@@ -46,6 +49,8 @@ export const bulkFlagsSchema = z
     autoCreatePr: z.boolean(),
     autoReviewPr: z.boolean(),
     autoMergePr: z.boolean(),
+    // Optional: bulk-set the review LLM on all repositories; null detaches.
+    reviewLlmConfigId: z.string().min(1).nullable().optional(),
   })
   .strict();
 
@@ -61,17 +66,24 @@ export function buildPatchData(data: PatchBody) {
     ...(data.autoRunProposals !== undefined ? { autoRunProposals: data.autoRunProposals } : {}),
     ...(data.hidden !== undefined ? { hidden: data.hidden } : {}),
     ...(data.llmConfigId !== undefined ? { llmConfigId: data.llmConfigId } : {}),
+    ...(data.reviewLlmConfigId !== undefined
+      ? { reviewLlmConfigId: data.reviewLlmConfigId }
+      : {}),
     ...(data.skillSlugs !== undefined ? { skillSlugs: data.skillSlugs } : {}),
     ...(data.agentsMdSkillId !== undefined ? { agentsMdSkillId: data.agentsMdSkillId } : {}),
   };
 }
 
-// Bulk writes set every flag, so the update object is the body itself.
+// Bulk writes set every flag, so the update object is the body itself
+// (reviewLlmConfigId rides along only when it was sent).
 export function buildBulkFlagsUpdate(data: BulkFlagsBody) {
   return {
     autoCreatePr: data.autoCreatePr,
     autoReviewPr: data.autoReviewPr,
     autoMergePr: data.autoMergePr,
+    ...(data.reviewLlmConfigId !== undefined
+      ? { reviewLlmConfigId: data.reviewLlmConfigId }
+      : {}),
   };
 }
 
@@ -105,6 +117,15 @@ async function ownedLlmConfigExists(userId: string, llmConfigId: string): Promis
     select: { id: true },
   });
   return llmConfig !== null;
+}
+
+// True when a sent (non-null) LLM config reference points at a config the
+// user does not own — shared by the PATCH and bulk-flags handlers.
+async function invalidLlmConfigRef(
+  userId: string,
+  llmConfigId: string | null | undefined,
+): Promise<boolean> {
+  return Boolean(llmConfigId) && !(await ownedLlmConfigExists(userId, llmConfigId as string));
 }
 
 // Slugs from the patch body that have no Skill row — used to 400 with the
@@ -143,6 +164,11 @@ const repositoriesRoutes: FastifyPluginAsync = async (app) => {
     if (data === null) return;
     if (autoMergeViolation(data)) {
       return reply.code(400).send({ error: 'autoMergePr requires autoReviewPr to be enabled' });
+    }
+    if (await invalidLlmConfigRef(userId, data.reviewLlmConfigId)) {
+      return reply
+        .code(400)
+        .send({ error: 'reviewLlmConfigId does not reference your LLM config' });
     }
 
     const result = await prisma.repository.updateMany({
@@ -278,8 +304,13 @@ const repositoriesRoutes: FastifyPluginAsync = async (app) => {
     if (autoMergeViolation(effectiveFlags)) {
       return reply.code(400).send({ error: 'autoMergePr requires autoReviewPr to be enabled' });
     }
-    if (data.llmConfigId && !(await ownedLlmConfigExists(userId, data.llmConfigId))) {
+    if (await invalidLlmConfigRef(userId, data.llmConfigId)) {
       return reply.code(400).send({ error: 'llmConfigId does not reference your LLM config' });
+    }
+    if (await invalidLlmConfigRef(userId, data.reviewLlmConfigId)) {
+      return reply
+        .code(400)
+        .send({ error: 'reviewLlmConfigId does not reference your LLM config' });
     }
     if (data.skillSlugs) {
       const unknown = await findUnknownSkillSlugs(data.skillSlugs);

@@ -29,6 +29,23 @@ describe('buildPatchData', () => {
     expect(buildPatchData({ hidden: true })).toEqual({ hidden: true });
   });
 
+  it('passes llmConfigId through, including an explicit null detach', () => {
+    expect(buildPatchData({ llmConfigId: 'cfg-1' })).toEqual({ llmConfigId: 'cfg-1' });
+    expect(buildPatchData({ llmConfigId: null })).toEqual({ llmConfigId: null });
+  });
+
+  it('passes reviewLlmConfigId through, including an explicit null detach', () => {
+    expect(buildPatchData({ reviewLlmConfigId: 'cfg-2' })).toEqual({
+      reviewLlmConfigId: 'cfg-2',
+    });
+    expect(buildPatchData({ reviewLlmConfigId: null })).toEqual({ reviewLlmConfigId: null });
+  });
+
+  it('omits llmConfigId and reviewLlmConfigId when they were not sent', () => {
+    expect(buildPatchData({})).toEqual({});
+    expect(buildPatchData({ hidden: true })).toEqual({ hidden: true });
+  });
+
   it('passes autoRunProposals through when sent', () => {
     expect(buildPatchData({ autoRunProposals: true })).toEqual({ autoRunProposals: true });
   });
