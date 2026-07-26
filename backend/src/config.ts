@@ -104,11 +104,6 @@ const envSchema = z.object({
   // Shared secret between Traefik (HTTP provider) and the backend's
   // /api/internal/traefik/dynamic endpoint. Empty = endpoint disabled (503).
   TRAEFIK_PROVIDER_TOKEN: z.string().default(''),
-  // Shared secret guarding GET /metrics (Prometheus scrape of the API
-  // process; x-metrics-token header or Bearer auth). Empty = disabled (503).
-  // The worker's :WORKER_HEALTH_PORT/metrics is unauthenticated but only
-  // reachable on the internal compose network.
-  METRICS_TOKEN: z.string().default(''),
   // Docker bridge network service containers join (isolated from platform
   // internals; Traefik is the only member shared with the platform).
   APPS_NETWORK: z.string().min(1).default('lemniscate-apps'),
