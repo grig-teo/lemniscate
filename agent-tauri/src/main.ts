@@ -16,6 +16,7 @@ const statusEl = document.querySelector<HTMLParagraphElement>('#status')!;
 const form = document.querySelector<HTMLFormElement>('#pair-form')!;
 const pairedNote = document.querySelector<HTMLParagraphElement>('#paired-note')!;
 const pairButton = document.querySelector<HTMLButtonElement>('#pair-button')!;
+const unpairButton = document.querySelector<HTMLButtonElement>('#unpair-button')!;
 const serverInput = document.querySelector<HTMLInputElement>('#server')!;
 const codeInput = document.querySelector<HTMLInputElement>('#code')!;
 const nameInput = document.querySelector<HTMLInputElement>('#name')!;
@@ -29,6 +30,7 @@ function render(state: StateView): void {
   setStatus(state.status, state.detail);
   pairedNote.hidden = !state.paired;
   form.hidden = state.paired;
+  unpairButton.hidden = !state.paired;
   if (state.server) serverInput.value = state.server;
 }
 
@@ -54,9 +56,22 @@ async function submitPairing(event: SubmitEvent): Promise<void> {
   }
 }
 
+async function submitUnpair(): Promise<void> {
+  unpairButton.disabled = true;
+  try {
+    await invoke('unpair');
+    await refresh();
+  } catch (error) {
+    setStatus('error', String(error));
+  } finally {
+    unpairButton.disabled = false;
+  }
+}
+
 listen<StatusEvent>('agent-status', (event) => {
   setStatus(event.payload.status, event.payload.detail);
 });
 
 form.addEventListener('submit', submitPairing);
+unpairButton.addEventListener('click', () => void submitUnpair());
 refresh().catch((error) => setStatus('error', String(error)));

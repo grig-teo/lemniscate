@@ -163,6 +163,17 @@ async fn pair(
     Ok(json!({ "deviceId": claimed.device_id, "name": claimed.name }))
 }
 
+/// Unpair: stop the tunnel, wipe the saved credentials, back to the form.
+#[tauri::command]
+fn unpair(app: AppHandle, state: State<'_, AppState>) {
+    if let Some(handle) = state.tunnel.lock().unwrap().take() {
+        handle.abort();
+    }
+    config::clear(&config::config_path());
+    *state.config.lock().unwrap() = None;
+    set_status(&app, "disconnected", Some("not paired"));
+}
+
 /// POST /api/devices/claim — mirrors claimPairingCode in agent/index.js.
 async fn claim_device(server: &str, code: &str, name: &str, meta: &Meta) -> Result<Config, String> {
     let base = server.trim_end_matches('/');
@@ -250,7 +261,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_autostart::init(MacosLauncher::LaunchAgent, Some(vec![])))
         .manage(AppState::default())
-        .invoke_handler(tauri::generate_handler![get_state, pair])
+        .invoke_handler(tauri::generate_handler![get_state, pair, unpair])
         .setup(|app| {
             build_tray(app.handle())?;
             maybe_resume_tunnel(app.handle());
