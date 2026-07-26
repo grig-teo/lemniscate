@@ -55,20 +55,30 @@ export async function publishTaskEvent(
 }
 
 // Updates the task status (plus optional extra columns) and emits the
-// matching status event.
+// matching status event. The errorCode is included in the event payload so
+// the frontend can render the ErrorBanner immediately on the SSE update.
 export async function setTaskStatus(
   taskId: string,
   status: TaskStatus,
-  extra: { error?: string | null; prUrl?: string | null; branchName?: string | null } = {},
+  extra: {
+    error?: string | null;
+    errorCode?: string | null;
+    prUrl?: string | null;
+    branchName?: string | null;
+  } = {},
 ): Promise<void> {
   await prisma.task.update({
     where: { id: taskId },
     data: {
       status,
       ...(extra.error !== undefined ? { error: extra.error } : {}),
+      ...(extra.errorCode !== undefined ? { errorCode: extra.errorCode } : {}),
       ...(extra.prUrl !== undefined ? { prUrl: extra.prUrl } : {}),
       ...(extra.branchName !== undefined ? { branchName: extra.branchName } : {}),
     },
   });
-  await publishTaskEvent(taskId, 'status', { status });
+  await publishTaskEvent(taskId, 'status', {
+    status,
+    ...(extra.errorCode ? { errorCode: extra.errorCode } : {}),
+  });
 }

@@ -78,9 +78,15 @@ export function rerunBlocker(task: { status: string }): string | null {
 }
 
 // Rerunning resets the run state: re-queued from scratch with a fresh
-// branch, no leftover error or PR link.
+// branch, no leftover error code/message or PR link.
 export function buildRerunUpdate() {
-  return { status: 'queued' as const, error: null, branchName: null, prUrl: null };
+  return {
+    status: 'queued' as const,
+    error: null,
+    errorCode: null,
+    branchName: null,
+    prUrl: null,
+  };
 }
 
 // Async part of the attachment update: slugs are resolved to the stored

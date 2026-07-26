@@ -131,6 +131,7 @@ describe('buildRerunUpdate', () => {
     expect(buildRerunUpdate()).toEqual({
       status: 'queued',
       error: null,
+      errorCode: null,
       branchName: null,
       prUrl: null,
     });

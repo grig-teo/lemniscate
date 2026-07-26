@@ -8,6 +8,7 @@ import { useWorkspaceSelection } from '@/lib/selection';
 
 import { ConsoleHeader } from '@/components/console/ConsoleHeader';
 import { ConsoleLog } from '@/components/console/ConsoleLog';
+import { ErrorBanner } from '@/components/console/ErrorBanner';
 import { ArchivedPane } from '@/components/console/ArchivedPane';
 import { ProposalDetail } from '@/components/console/ProposalDetail';
 import { ComposerCard, TaskComposerFab } from '@/components/console/TaskComposer';
@@ -75,6 +76,14 @@ export function ConsolePane() {
       }
     : undefined;
 
+  // When a task fails via the SSE stream, the polling has stopped (it only
+  // runs while status === 'running'). Refetch once so the errorCode is
+  // available for the ErrorBanner without waiting for a manual refresh.
+  React.useEffect(() => {
+    if (status === 'failed') void taskQuery.refetch();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [status]);
+
   // Run-on-device dialog: auto-opens once per task when its live status flips
   // to done (and a target has an online device); also opened manually from the
   // console header button for done / awaiting_review tasks.
@@ -119,6 +128,7 @@ export function ConsolePane() {
   if (!selectedTask) return <EmptyConsole />;
 
   const showTaskDetail = isStartableTask(selectedTask) && status === 'pending';
+  const errorCode = status === 'failed' ? taskQuery.data?.errorCode : undefined;
   return (
     <section className="relative flex h-full min-w-0 flex-1 flex-col">
       <ConsoleHeader
@@ -127,6 +137,7 @@ export function ConsolePane() {
         usage={usage}
         onRunOnDevice={() => setRunDialogOpen(true)}
       />
+      <ErrorBanner errorCode={errorCode} />
       {showTaskDetail ? (
         <ProposalDetail key={selectedTask.id} taskId={selectedTask.id} />
       ) : (
