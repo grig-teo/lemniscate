@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  AGENT_DOWNLOADS,
+  agentDownloadUrl,
   agentPairCommand,
   androidRepos,
   builderDevices,
@@ -9,6 +11,7 @@ import {
   commandTypeLabel,
   defaultRunPort,
   desktopRepos,
+  detectClientPlatform,
   devicePlatformLabel,
   formatLastSeen,
   pairingExpirySeconds,
@@ -203,5 +206,61 @@ describe('desktopRepos', () => {
 describe('commandTypeLabel run_desktop', () => {
   it('labels run_desktop', () => {
     expect(commandTypeLabel('run_desktop')).toBe('Run desktop app');
+  });
+});
+
+describe('detectClientPlatform', () => {
+  it('detects macOS from the user agent', () => {
+    const ua = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36';
+    expect(detectClientPlatform(ua, 'MacIntel')).toBe('macos');
+  });
+
+  it('detects macOS from the platform alone', () => {
+    expect(detectClientPlatform('', 'MacIntel')).toBe('macos');
+    expect(detectClientPlatform('', 'MacPPC')).toBe('macos');
+  });
+
+  it('detects Windows from the user agent or platform', () => {
+    const ua = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36';
+    expect(detectClientPlatform(ua, 'Win32')).toBe('windows');
+    expect(detectClientPlatform('', 'Win64')).toBe('windows');
+  });
+
+  it('detects Linux from the user agent', () => {
+    const ua = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36';
+    expect(detectClientPlatform(ua, 'Linux x86_64')).toBe('linux');
+  });
+
+  it('treats Android as unknown (no android installer)', () => {
+    const ua = 'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36';
+    expect(detectClientPlatform(ua, 'Linux armv81')).toBe('unknown');
+  });
+
+  it('treats ChromeOS as unknown (no chromeOS installer)', () => {
+    const ua = 'Mozilla/5.0 (X11; CrOS x86_64 14541.0.0) AppleWebKit/537.36';
+    expect(detectClientPlatform(ua, 'Linux x86_64')).toBe('unknown');
+  });
+
+  it('returns unknown for empty input', () => {
+    expect(detectClientPlatform('', '')).toBe('unknown');
+  });
+});
+
+describe('AGENT_DOWNLOADS / agentDownloadUrl', () => {
+  it('offers macos, windows and linux downloads in order', () => {
+    expect(AGENT_DOWNLOADS.map((d) => d.platform)).toEqual(['macos', 'windows', 'linux']);
+  });
+
+  it('gives each download a label and a stable file name', () => {
+    for (const download of AGENT_DOWNLOADS) {
+      expect(download.label.length).toBeGreaterThan(0);
+      expect(download.fileName).toMatch(/^lemniscate-agent-/);
+    }
+  });
+
+  it('builds a stable agent-latest release URL', () => {
+    expect(agentDownloadUrl('lemniscate-agent-macos.dmg')).toBe(
+      'https://github.com/grig-teo/lemniscate/releases/download/agent-latest/lemniscate-agent-macos.dmg',
+    );
   });
 });

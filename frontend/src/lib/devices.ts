@@ -95,3 +95,49 @@ export function pairingExpirySeconds(expiresAt: string, now: Date): number {
 export function agentPairCommand(origin: string, code: string): string {
   return `cd agent && npm install && node index.js --server ${origin} --pair ${code}`;
 }
+
+export type ClientPlatform = 'macos' | 'windows' | 'linux' | 'unknown';
+
+/**
+ * Best-effort client OS detection from navigator.userAgent / navigator.platform.
+ * Android and ChromeOS map to 'unknown': we ship no installer for them, so the
+ * dialog falls back to the CLI instructions.
+ */
+export function detectClientPlatform(userAgent: string, platform: string): ClientPlatform {
+  if (/android/i.test(userAgent)) return 'unknown';
+  if (/cros/i.test(userAgent)) return 'unknown';
+  if (/mac os x|macintosh|macintel|macppc/i.test(userAgent) || platform.startsWith('Mac')) {
+    return 'macos';
+  }
+  if (/windows|win32|win64/i.test(userAgent) || platform.startsWith('Win')) return 'windows';
+  if (/linux/i.test(userAgent) || /linux/i.test(platform)) return 'linux';
+  return 'unknown';
+}
+
+export interface AgentDownload {
+  platform: Exclude<ClientPlatform, 'unknown'>;
+  label: string;
+  fileName: string;
+}
+
+const AGENT_RELEASE_BASE =
+  'https://github.com/grig-teo/lemniscate/releases/download/agent-latest';
+
+/** Desktop-agent installers published by the agent-latest GitHub release. */
+export const AGENT_DOWNLOADS: AgentDownload[] = [
+  { platform: 'macos', label: 'macOS (.dmg)', fileName: 'lemniscate-agent-macos.dmg' },
+  { platform: 'windows', label: 'Windows (.msi)', fileName: 'lemniscate-agent-windows.msi' },
+  { platform: 'linux', label: 'Linux (.AppImage)', fileName: 'lemniscate-agent-linux.AppImage' },
+];
+
+/** Debian package, offered next to the AppImage for Linux users. */
+export const AGENT_DOWNLOAD_LINUX_DEB: AgentDownload = {
+  platform: 'linux',
+  label: 'Linux (.deb)',
+  fileName: 'lemniscate-agent-linux.deb',
+};
+
+/** Stable public download URL for a release asset (no auth needed). */
+export function agentDownloadUrl(fileName: string): string {
+  return `${AGENT_RELEASE_BASE}/${fileName}`;
+}

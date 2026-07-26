@@ -1,10 +1,17 @@
 import * as React from 'react';
-import { Check, Copy } from 'lucide-react';
+import { Check, Copy, Download } from 'lucide-react';
 
 import { describeApiError } from '@/lib/api';
-import { agentPairCommand, pairingExpirySeconds } from '@/lib/devices';
+import {
+  AGENT_DOWNLOADS,
+  AGENT_DOWNLOAD_LINUX_DEB,
+  agentDownloadUrl,
+  agentPairCommand,
+  detectClientPlatform,
+  pairingExpirySeconds,
+} from '@/lib/devices';
 import { useCreatePairing, useDevices } from '@/lib/hooks';
-import { Button } from '@/components/ui/button';
+import { Button, buttonVariants } from '@/components/ui/button';
 import {
   Dialog,
   DialogContent,
@@ -53,6 +60,37 @@ function PairingCode({ code, expiresAt }: { code: string; expiresAt: string }) {
         {secondsLeft > 0
           ? `Expires in ${Math.floor(secondsLeft / 60)}:${String(secondsLeft % 60).padStart(2, '0')}`
           : 'Expired — generate a new code'}
+      </p>
+    </div>
+  );
+}
+
+/** Download buttons for the desktop agent installers; detected OS is primary. */
+function AgentDownloads() {
+  const nav = typeof window === 'undefined' ? undefined : window.navigator;
+  const clientOs = nav ? detectClientPlatform(nav.userAgent, nav.platform ?? '') : 'unknown';
+  const downloads = [...AGENT_DOWNLOADS, AGENT_DOWNLOAD_LINUX_DEB];
+  return (
+    <div className="flex min-w-0 flex-col gap-2 text-sm">
+      <p className="font-medium">Download the desktop app</p>
+      <div className="flex flex-wrap gap-2">
+        {downloads.map((download) => (
+          <a
+            key={download.fileName}
+            href={agentDownloadUrl(download.fileName)}
+            className={buttonVariants({
+              variant: download.platform === clientOs ? 'default' : 'outline',
+              size: 'sm',
+            })}
+          >
+            <Download className="h-4 w-4" />
+            {download.label}
+          </a>
+        ))}
+      </div>
+      <p className="text-xs text-muted-foreground">
+        macOS: unsigned — right-click → Open the first time. Windows: SmartScreen → More info →
+        Run anyway.
       </p>
     </div>
   );
@@ -129,7 +167,10 @@ export function PairingDialog({
             <>
               <PairingCode code={pairing.data.code} expiresAt={pairing.data.expiresAt} />
 
+              <AgentDownloads />
+
               <div className="flex min-w-0 flex-col gap-2 text-sm">
+                <p className="font-medium">Advanced: CLI agent (Termux/servers)</p>
                 <p>
                   On the device, clone this repository (or download the <code>agent/</code>{' '}
                   folder), then run:

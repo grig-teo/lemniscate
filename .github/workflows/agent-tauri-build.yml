@@ -72,3 +72,65 @@ jobs:
           path: |
             agent-tauri/src-tauri/target/release/bundle/**
           if-no-files-found: warn
+
+  release:
+    name: Publish agent-latest release
+    needs: build
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist/
+
+      # Rename to stable file names so the release URLs never change:
+      # https://github.com/grig-teo/lemniscate/releases/download/agent-latest/<name>
+      - name: Normalize installer names
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          dmg=$(find dist -type f -name '*.dmg' | head -n 1)
+          msi=$(find dist -type f -name '*.msi' | head -n 1)
+          nsis=$(find dist -type f -name '*-setup.exe' | head -n 1)
+          appimage=$(find dist -type f -name '*.AppImage' | head -n 1)
+          deb=$(find dist -type f -name '*.deb' | head -n 1)
+
+          if [ -z "$dmg" ]; then
+            echo '::error::macOS .dmg missing from build artifacts'
+            exit 1
+          fi
+          cp "$dmg" out/lemniscate-agent-macos.dmg
+
+          if [ -n "$msi" ]; then
+            cp "$msi" out/lemniscate-agent-windows.msi
+          elif [ -n "$nsis" ]; then
+            cp "$nsis" out/lemniscate-agent-windows-setup.exe
+          else
+            echo '::error::Windows installer (.msi or nsis .exe) missing from build artifacts'
+            exit 1
+          fi
+
+          if [ -n "$appimage" ]; then
+            cp "$appimage" out/lemniscate-agent-linux.AppImage
+          else
+            echo '::warning::Linux .AppImage missing from build artifacts'
+          fi
+          if [ -n "$deb" ]; then
+            cp "$deb" out/lemniscate-agent-linux.deb
+          else
+            echo '::warning::Linux .deb missing from build artifacts'
+          fi
+          ls -la out/
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: agent-latest
+          name: Lemniscate Agent (latest)
+          prerelease: true
+          files: out/*
