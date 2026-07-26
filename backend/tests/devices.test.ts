@@ -52,10 +52,13 @@ vi.mock('../src/lib/prisma.js', () => ({
   },
 }));
 
-vi.mock('../src/lib/device-artifacts.js', () => ({
+// Keep the real pure key helpers (artifactKeyFor/artifactOwnerDeviceId/…)
+// so the ownership check parses keys exactly as production does; only the
+// MinIO-touching functions are stubbed.
+vi.mock('../src/lib/device-artifacts.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../src/lib/device-artifacts.js')>()),
   storeDeviceArtifact: mocks.storeDeviceArtifact,
   deviceArtifactStream: mocks.deviceArtifactStream,
-  artifactDownloadPath: (key: string) => `/api/devices/artifacts/${key}`,
 }));
 
 import devicesRoutes from '../src/routes/devices.js';
@@ -538,6 +541,51 @@ describe('GET /api/devices/artifacts/*', () => {
     const app = await buildApp();
     expect((await download(app, 'good-token', '..%2F..%2Fetc')).statusCode).toBe(400);
     expect((await download(app, 'good-token')).statusCode).toBe(404);
+  });
+
+  it('400s when the key has no owner device segment', async () => {
+    mocks.deviceFindUnique.mockResolvedValue({ id: 'dev-phone', userId: 'user-1' });
+    const app = await buildApp();
+    expect((await download(app, 'good-token', 'app.apk')).statusCode).toBe(400);
+    expect(mocks.deviceArtifactStream).not.toHaveBeenCalled();
+  });
+
+  it('404s when the artifact belongs to another user\'s device', async () => {
+    mocks.deviceFindUnique.mockImplementation(
+      async ({ where }: { where: { tokenHash?: string; id?: string } }) =>
+        where.id === 'dev-builder'
+          ? { id: 'dev-builder', userId: 'user-2' }
+          : { id: 'dev-phone', userId: 'user-1' },
+    );
+    const app = await buildApp();
+    expect((await download(app, 'good-token')).statusCode).toBe(404);
+    expect(mocks.deviceArtifactStream).not.toHaveBeenCalled();
+  });
+
+  it('404s when the owner device no longer exists', async () => {
+    mocks.deviceFindUnique.mockImplementation(async ({ where }: { where: { id?: string } }) =>
+      where.id ? null : { id: 'dev-phone', userId: 'user-1' },
+    );
+    const app = await buildApp();
+    expect((await download(app, 'good-token')).statusCode).toBe(404);
+    expect(mocks.deviceArtifactStream).not.toHaveBeenCalled();
+  });
+
+  it('streams across devices of the same user', async () => {
+    mocks.deviceFindUnique.mockImplementation(
+      async ({ where }: { where: { tokenHash?: string; id?: string } }) =>
+        where.id === 'dev-builder'
+          ? { id: 'dev-builder', userId: 'user-1' }
+          : { id: 'dev-phone', userId: 'user-1' },
+    );
+    mocks.deviceArtifactStream.mockResolvedValue({
+      stream: Readable.from([Buffer.from('apk-bytes')]),
+      size: 9,
+    });
+    const app = await buildApp();
+    const response = await download(app, 'good-token');
+    expect(response.statusCode).toBe(200);
+    expect(mocks.deviceArtifactStream).toHaveBeenCalledWith('dev-builder/u1-app.apk');
   });
 
   it('streams the artifact for an authenticated device', async () => {
