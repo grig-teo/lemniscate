@@ -20,6 +20,8 @@ const NUMERIC_INPUT_LABELS: Record<NumericField, { label: string; placeholder: s
   maxRetries: { label: 'Max retries', placeholder: '3', min: 0 },
   requestsPerMinute: { label: 'Requests per minute', placeholder: '60', min: 1 },
   maxTokensPerRun: { label: 'Max tokens per run', placeholder: '500000', min: 1 },
+  inputPricePerMillion: { label: 'Input price per 1M tokens ($)', placeholder: '0.15', min: 0, step: 0.01 },
+  outputPricePerMillion: { label: 'Output price per 1M tokens ($)', placeholder: '0.60', min: 0, step: 0.01 },
 };
 
 function NumericInput({

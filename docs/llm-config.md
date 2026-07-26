@@ -39,8 +39,26 @@ All endpoints must expose an OpenAI-compatible `/v1/chat/completions` API
 | `maxRetries` | Default 3, with backoff |
 | `requestsPerMinute` | Rate-limit guard; enforced as a throttle in the agent loop |
 | `maxTokensPerRun` | Hard token budget per run; the loop aborts with `TokenBudgetExceededError` when exceeded |
-| `maxCostPerRunUsd` | **Not implemented (future)** — no cost tracking yet; use `maxTokensPerRun` as the budget cap |
+| `inputPricePerMillion` / `outputPricePerMillion` | Optional user-entered USD prices per million tokens. Both must be set for the API to return `estimatedCostUsd` (task DTOs and `GET /api/usage`); with either unset the cost field is omitted rather than guessed. Prices can go stale — the UI labels figures "estimated". |
+| `maxCostPerRunUsd` | **Not implemented (future)** — costs are *observed* via the price fields above; use `maxTokensPerRun` as the budget cap |
 | `customHeaders` | JSON key/value for gateways needing extra auth/routing headers |
+
+## Usage & cost visibility (implemented)
+
+`chatCompletions()` parses the per-call usage; the runtime accumulates a
+cumulative total **and** a prompt/completion split per task
+(`Task.llmTokensUsed`, `Task.llmPromptTokens`, `Task.llmCompletionTokens`,
+written by `persistTokenUsage`). Rows created before the split columns keep a
+NULL split — they contribute token totals but no cost estimate (no fabricated
+backfill).
+
+- Task list/detail responses include `llmTokensUsed`, the split, the
+  effective `maxTokensPerRun` (task config → repo config → user default), and
+  `estimatedCostUsd` when the effective config has both prices.
+- `GET /api/usage?period=7d|30d` aggregates per repository and per UTC day.
+  Attribution semantics: `llmTokensUsed` is cumulative per task, so a task's
+  whole total is attributed to the day it was *created* — an approximation,
+  not per-event deltas.
 
 ### Housekeeping
 | Field | Notes |

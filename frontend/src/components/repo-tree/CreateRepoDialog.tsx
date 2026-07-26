@@ -2,6 +2,7 @@ import * as React from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 
 import { api, describeApiError } from '@/lib/api';
+import { SUPPRESS_ERROR_TOAST_META } from '@/lib/mutation-error-toast';
 import {
   buildCreateRepoBody,
   type CreateRepoBody,
@@ -60,6 +61,7 @@ function useCreateRepository(
       void queryClient.invalidateQueries({ queryKey: ['repositories'] });
       onCreated(data.initialized, data.initTask ?? null);
     },
+    meta: SUPPRESS_ERROR_TOAST_META, // the dialog renders the error inline
   });
 }
 

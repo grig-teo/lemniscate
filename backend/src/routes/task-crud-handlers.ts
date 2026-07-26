@@ -4,6 +4,11 @@ import { getAgentTasksQueue, JOB_PRIORITY } from '../lib/proposal-scheduler.js';
 import { prisma } from '../lib/prisma.js';
 import { attachmentsData } from '../lib/task-attachments.js';
 import { parseSkillSlugs } from '../lib/task-skills.js';
+import {
+  serializeTaskWithUsage,
+  USAGE_CONFIG_SELECT,
+  type UsageConfigInfo,
+} from '../lib/usage.js';
 import { authenticatedUserId } from '../plugins/auth.js';
 import { parseOrReply } from './helpers.js';
 import {
@@ -19,6 +24,12 @@ import { createBodySchema, idParamsSchema, listQuerySchema } from './task-schema
 
 export const RUN_TASK_JOB = 'run-task';
 const TASK_LIST_LIMIT = 100;
+
+// Enabled configs of the user, fetched once per request to resolve each
+// task's effective maxTokensPerRun budget (and prices for the cost estimate).
+async function loadUsageConfigs(userId: string): Promise<UsageConfigInfo[]> {
+  return prisma.llmConfig.findMany({ where: { userId, enabled: true }, select: USAGE_CONFIG_SELECT });
+}
 
 // List tasks, newest first. Optional ?repositoryId= filter; always scoped
 // to repositories owned by the authenticated user.
@@ -37,7 +48,20 @@ export async function listTasks(request: FastifyRequest, reply: FastifyReply) {
     orderBy: { createdAt: 'desc' },
     take: TASK_LIST_LIMIT,
   });
-  return { tasks };
+  const repoIds = Array.from(new Set(tasks.map((task) => task.repositoryId)));
+  const [repositories, configs] = await Promise.all([
+    prisma.repository.findMany({
+      where: { id: { in: repoIds } },
+      select: { id: true, llmConfigId: true },
+    }),
+    loadUsageConfigs(userId),
+  ]);
+  const repoConfigById = new Map(repositories.map((repo) => [repo.id, repo.llmConfigId]));
+  return {
+    tasks: tasks.map((task) =>
+      serializeTaskWithUsage(task, repoConfigById.get(task.repositoryId) ?? null, configs),
+    ),
+  };
 }
 
 // Explicit composer choice wins; then repo config; then the user's default.
@@ -134,7 +158,8 @@ export async function createTask(request: FastifyRequest, reply: FastifyReply) {
     );
   }
 
-  return reply.code(201).send({ task });
+  const configs = await loadUsageConfigs(userId);
+  return reply.code(201).send({ task: serializeTaskWithUsage(task, repository.llmConfigId, configs) });
 }
 
 // Single task (with its repository), ownership-scoped.
@@ -149,5 +174,6 @@ export async function getTask(request: FastifyRequest, reply: FastifyReply) {
   if (!task) {
     return reply.code(404).send({ error: 'Task not found' });
   }
-  return { task };
+  const configs = await loadUsageConfigs(userId);
+  return { task: serializeTaskWithUsage(task, task.repository.llmConfigId, configs) };
 }

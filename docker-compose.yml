@@ -121,7 +121,10 @@ services:
       minio:
         condition: service_started
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:3100/health"]
+      # curl is installed in the backend runtime image (see backend/Dockerfile).
+      # Readiness, not liveness: 503s when the queue's Redis is unreachable
+      # or the BullMQ consumer stopped (src/lib/worker-health.ts).
+      test: ["CMD", "curl", "-f", "http://localhost:3100/health/ready"]
       interval: 10s
       timeout: 5s
       retries: 3

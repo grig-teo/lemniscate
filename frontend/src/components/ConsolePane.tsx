@@ -2,8 +2,8 @@ import * as React from 'react';
 import { Terminal } from 'lucide-react';
 
 import { isStartableTask } from '@/lib/repo-tasks';
-import { isRunningStatus } from '@/lib/running-tasks';
-import { useTaskRunTargets } from '@/lib/hooks';
+import { IN_FLIGHT_POLL_INTERVAL_MS, isRunningStatus } from '@/lib/running-tasks';
+import { useTask, useTaskRunTargets } from '@/lib/hooks';
 import { useWorkspaceSelection } from '@/lib/selection';
 
 import { ConsoleHeader } from '@/components/console/ConsoleHeader';
@@ -61,6 +61,20 @@ export function ConsolePane() {
   const taskId = selectedTask?.id ?? null;
   const consoleState = useTaskConsole(taskId);
 
+  const status = liveStatus ?? consoleState.historyStatus ?? selectedTask?.status ?? '';
+  // Poll the task row while it runs so the header's token badge tracks the
+  // worker-side persistTokenUsage writes (and the 80% budget warning fires).
+  const taskQuery = useTask(taskId, {
+    refetchInterval: status === 'running' ? IN_FLIGHT_POLL_INTERVAL_MS : false,
+  });
+  const usage = taskQuery.data
+    ? {
+        used: taskQuery.data.llmTokensUsed,
+        max: taskQuery.data.maxTokensPerRun ?? null,
+        costUsd: taskQuery.data.estimatedCostUsd ?? null,
+      }
+    : undefined;
+
   // Run-on-device dialog: auto-opens once per task when its live status flips
   // to done (and a target has an online device); also opened manually from the
   // console header button for done / awaiting_review tasks.
@@ -104,13 +118,13 @@ export function ConsolePane() {
   if (archivedRepoId) return <ArchivedPane repositoryId={archivedRepoId} />;
   if (!selectedTask) return <EmptyConsole />;
 
-  const status = liveStatus ?? consoleState.historyStatus ?? selectedTask.status;
   const showTaskDetail = isStartableTask(selectedTask) && status === 'pending';
   return (
     <section className="relative flex h-full min-w-0 flex-1 flex-col">
       <ConsoleHeader
         task={selectedTask}
         status={status}
+        usage={usage}
         onRunOnDevice={() => setRunDialogOpen(true)}
       />
       {showTaskDetail ? (

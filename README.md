@@ -86,7 +86,7 @@ Both processes expose a Prometheus exposition (`prom-client`, registry in
   counters, and LLM request/token metrics, plus default Node.js metrics.
 - **API** — `GET :3000/metrics`, guarded by the `METRICS_TOKEN` shared
   secret (unset = 503, disabled). Send it as `x-metrics-token: <token>` or
-  `Authorization: Bearer <token>`; the payload is aggregate-only.
+  `Authorization: Bearer <token>`. The payload is aggregate-only.
 
 Metrics (labels stay bounded — job name, error kind, model — never
 taskId/userId):

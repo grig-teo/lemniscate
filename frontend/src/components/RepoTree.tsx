@@ -2,6 +2,7 @@ import * as React from 'react';
 import { GitBranch, Loader2, Plus } from 'lucide-react';
 
 import { useRepositories, useSyncConnection } from '@/lib/hooks';
+import { describeApiError } from '@/lib/api';
 import { groupByConnection, type ConnectionGroup as ConnectionGroupData } from '@/lib/group-repos';
 import { isSectionCollapsed, useSidebarSections } from '@/lib/sidebar-sections';
 import { Button } from '@/components/ui/button';
@@ -41,6 +42,7 @@ function RepoTreeBody({
   reposQuery,
   groups,
   syncing,
+  syncError,
   onSync,
   expanded,
   onToggleRepo,
@@ -48,6 +50,7 @@ function RepoTreeBody({
   reposQuery: ReposQuery;
   groups: ConnectionGroupData[];
   syncing: boolean;
+  syncError: { connectionId: string; message: string } | null;
   onSync: (connectionId: string) => void;
   expanded: Record<string, boolean>;
   onToggleRepo: (repoId: string) => void;
@@ -68,6 +71,7 @@ function RepoTreeBody({
           key={group.connectionId}
           group={group}
           syncing={syncing}
+          syncError={syncError?.connectionId === group.connectionId ? syncError.message : null}
           onSync={onSync}
           expanded={expanded}
           onToggleRepo={onToggleRepo}
@@ -127,6 +131,14 @@ export function RepoTree({ width }: { width: number }) {
             reposQuery={reposQuery}
             groups={groups}
             syncing={syncConnection.isPending}
+            syncError={
+              syncConnection.isError
+                ? {
+                    connectionId: syncConnection.variables as string,
+                    message: describeApiError(syncConnection.error),
+                  }
+                : null
+            }
             onSync={(connectionId) => syncConnection.mutate(connectionId)}
             expanded={expanded}
             onToggleRepo={toggle}
