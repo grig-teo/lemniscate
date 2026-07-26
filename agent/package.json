@@ -1,6 +1,6 @@
 {
   "name": "lemniscate-device-agent",
-  "version": "0.4.1",
+  "version": "0.4.2",
   "description": "Lemniscate local device agent — pairs with the server and runs commands over an outbound WebSocket tunnel",
   "type": "module",
   "bin": {

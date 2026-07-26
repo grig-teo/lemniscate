@@ -77,7 +77,9 @@ Commands run one at a time, queued in arrival order.
    least one device/emulator, the APK — downloaded from the artifact URL, or
    the local `apkPath` handed over from a `build_android` chain — is installed
    with `adb install -r`; the result reports the target serial (e.g.
-   `emulator-5554`) as `installedTo` with `method: 'adb'`
+   `emulator-5554`) as `installedTo` with `method: 'adb'`.
+   `payload.deviceSerial` selects the adb target; an unknown serial fails the
+   command with a message listing the attached serials.
 2. Otherwise the previous behavior applies unchanged: the APK is saved under
    `~/.lemniscate-agent/apks/` and, on Termux, an install intent is fired
    (`am start` VIEW, falling back to `termux-open`)

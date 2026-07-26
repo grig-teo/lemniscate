@@ -412,6 +412,42 @@ test('parseAdbDevices returns [] when nothing is attached', () => {
   assert.deepEqual(lib.parseAdbDevices('List of devices attached\n\n'), []);
 });
 
+test('pickAdbDevice returns the requested serial when attached', () => {
+  const devices = [
+    { serial: '0a1b2c3d', transport: 'usb' },
+    { serial: 'emulator-5554', transport: 'usb' },
+  ];
+  assert.equal(lib.pickAdbDevice(devices, 'emulator-5554'), 'emulator-5554');
+});
+
+test('pickAdbDevice defaults to the first device without a requested serial', () => {
+  const devices = [
+    { serial: '0a1b2c3d', transport: 'usb' },
+    { serial: 'emulator-5554', transport: 'usb' },
+  ];
+  assert.equal(lib.pickAdbDevice(devices, null), '0a1b2c3d');
+  assert.equal(lib.pickAdbDevice(devices, undefined), '0a1b2c3d');
+});
+
+test('pickAdbDevice returns null when nothing is attached and no serial requested', () => {
+  assert.equal(lib.pickAdbDevice([], null), null);
+  assert.equal(lib.pickAdbDevice([], undefined), null);
+});
+
+test('pickAdbDevice throws for an unknown serial, listing the available ones', () => {
+  const devices = [{ serial: '0a1b2c3d', transport: 'usb' }, { serial: 'emulator-5554', transport: 'usb' }];
+  assert.throws(() => lib.pickAdbDevice(devices, 'deadbeef'), (error) => {
+    assert.ok(error.message.includes('deadbeef'));
+    assert.ok(error.message.includes('0a1b2c3d'));
+    assert.ok(error.message.includes('emulator-5554'));
+    return true;
+  });
+});
+
+test('pickAdbDevice reports "none" available for an unknown serial on an empty list', () => {
+  assert.throws(() => lib.pickAdbDevice([], 'deadbeef'), /adb device "deadbeef" not found \(available: none\)/);
+});
+
 // --- capabilities probes ---------------------------------------------------------
 
 test('capabilitiesMessage wraps the report in the capabilities envelope', () => {
@@ -419,12 +455,12 @@ test('capabilitiesMessage wraps the report in the capabilities envelope', () => 
   assert.deepEqual(lib.capabilitiesMessage(capabilities), { type: 'capabilities', capabilities });
 });
 
-test('parseSimctlDevices lists available simulators with runtime and state', () => {
+test('parseSimctlDevices lists available simulators with udid, runtime and state', () => {
   const simulators = lib.parseSimctlDevices(SIMCTL_JSON);
   assert.deepEqual(simulators, [
-    { name: 'iPhone 15', runtime: 'iOS 17.5', state: 'Booted' },
-    { name: 'iPhone SE', runtime: 'iOS 17.5', state: 'Shutdown' },
-    { name: 'Apple Watch', runtime: 'watchOS 10.5', state: 'Shutdown' },
+    { name: 'iPhone 15', udid: 'SIM-BOOTED', runtime: 'iOS 17.5', state: 'Booted' },
+    { name: 'iPhone SE', udid: 'SIM-SHUTDOWN', runtime: 'iOS 17.5', state: 'Shutdown' },
+    { name: 'Apple Watch', udid: 'WATCH-1', runtime: 'watchOS 10.5', state: 'Shutdown' },
   ]);
 });
 

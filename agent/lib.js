@@ -9,7 +9,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 
-export const AGENT_VERSION = '0.4.1';
+export const AGENT_VERSION = '0.4.2';
 
 /** install_apk downloads are refused beyond this size. */
 export const APK_MAX_BYTES = 100 * 1024 * 1024;
@@ -180,6 +180,18 @@ function adbTransport(serial) {
   return serial.includes(':5555') || serial.includes('._adb-tls-connect') ? 'wifi' : 'usb';
 }
 
+/**
+ * Serial to target from a parseAdbDevices list: the requested serial when it
+ * is attached (throws otherwise, naming what is available), else the first
+ * device, else null.
+ */
+export function pickAdbDevice(devices, serial) {
+  if (serial == null) return devices[0]?.serial ?? null;
+  if (devices.some((device) => device.serial === serial)) return serial;
+  const available = devices.map((device) => device.serial).join(', ') || 'none';
+  throw new Error(`adb device "${serial}" not found (available: ${available})`);
+}
+
 // --- capabilities probes ---------------------------------------------------------
 
 /** capabilities envelope reporting the device's live run targets. */
@@ -188,7 +200,7 @@ export function capabilitiesMessage(capabilities) {
 }
 
 /**
- * Available simulators ({name, runtime, state}) from
+ * Available simulators ({name, udid, runtime, state}) from
  * `xcrun simctl list devices -j available` JSON.
  */
 export function parseSimctlDevices(jsonText) {
@@ -202,7 +214,7 @@ export function parseSimctlDevices(jsonText) {
   for (const [runtime, devices] of Object.entries(data.devices ?? {})) {
     for (const device of devices) {
       if (device.isAvailable === false || !device.name) continue;
-      simulators.push({ name: device.name, runtime: simRuntimeLabel(runtime), state: device.state });
+      simulators.push({ name: device.name, udid: device.udid, runtime: simRuntimeLabel(runtime), state: device.state });
     }
   }
   return simulators;

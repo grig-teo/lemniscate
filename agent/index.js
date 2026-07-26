@@ -262,12 +262,12 @@ async function findAdb() {
   return null;
 }
 
-/** Serial of the first attached device/emulator, or null when none is online. */
-async function firstAdbDevice(log, adb) {
+/** Attached devices/emulators (parseAdbDevices entries); [] when adb fails. */
+async function adbDeviceSerials(log, adb) {
   const result = await run(adb, ['devices', '-l'], { timeout: 15_000 });
   log.text += `$ ${adb} devices -l\n${result.output}`;
-  if (!result.ok) return null;
-  return lib.parseAdbDevices(result.output)[0]?.serial ?? null;
+  if (!result.ok) return [];
+  return lib.parseAdbDevices(result.output);
 }
 
 /** Local path of the APK to install: the chained build output when given. */
@@ -288,7 +288,7 @@ async function executeInstallApk(send, config, { id, payload }) {
   send(lib.commandResultMessage(id, 'running'));
   try {
     const adb = await findAdb();
-    const device = adb ? await firstAdbDevice(log, adb) : null;
+    const device = adb ? lib.pickAdbDevice(await adbDeviceSerials(log, adb), payload.deviceSerial) : null;
     const apkPath = await obtainApk(log, config, payload);
     if (device) {
       await step(log, adb, ['-s', device, 'install', '-r', apkPath]);
