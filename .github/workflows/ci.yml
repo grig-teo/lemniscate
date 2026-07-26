@@ -7,7 +7,7 @@ on:
 
 jobs:
   backend:
-    name: Backend — build & test (Node 22)
+    name: Backend — build & test (Node 24.18.0)
     runs-on: ubuntu-latest
     env:
       # Dummy URL: prisma validate/generate require the env var to exist, and
@@ -19,7 +19,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24.18.0
           cache: npm
           cache-dependency-path: backend/package-lock.json
 
@@ -51,7 +51,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24.18.0
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
