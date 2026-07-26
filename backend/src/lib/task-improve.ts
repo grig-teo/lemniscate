@@ -64,7 +64,7 @@ export async function requestImprovedPrompt(
       { role: 'system', content: improvePromptSystemPrompt(cfg.systemPromptExtra) },
       { role: 'user', content: improvePromptUserContent(input.title, input.prompt) },
     ],
-    temperature: 0.3,
+    temperature: cfg.temperature,
     maxTokens: Math.min(cfg.maxTokens, 8000),
     timeoutSeconds: cfg.timeoutSeconds,
     maxRetries: 1,

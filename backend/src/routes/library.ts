@@ -62,7 +62,7 @@ async function requestStructureFolders(prompt: string, userId: string): Promise<
       { role: 'system', content: SYSTEM_PROMPT },
       { role: 'user', content: prompt },
     ],
-    temperature: 0.2,
+    temperature: cfg.temperature,
     maxTokens: Math.min(cfg.maxTokens, 2000),
     timeoutSeconds: cfg.timeoutSeconds,
     maxRetries: 1,

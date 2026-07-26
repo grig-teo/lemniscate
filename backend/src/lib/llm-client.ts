@@ -138,6 +138,8 @@ interface RequestState {
   startedAt: number;
   /** Flipped off after an HTTP 400 so the retry drops reasoning_effort. */
   includeReasoningEffort: boolean;
+  /** Flipped off after an HTTP 400 so the retry drops temperature. */
+  includeTemperature: boolean;
 }
 
 function makeRequestState(params: ChatCompletionsParams): RequestState {
@@ -150,6 +152,7 @@ function makeRequestState(params: ChatCompletionsParams): RequestState {
     maxRetries: params.maxRetries ?? DEFAULT_MAX_RETRIES,
     startedAt: Date.now(),
     includeReasoningEffort: params.thinkingLevel !== undefined,
+    includeTemperature: params.temperature !== undefined,
   };
   if (params.temperature !== undefined) state.temperature = params.temperature;
   if (params.maxTokens !== undefined) state.maxTokens = params.maxTokens;
@@ -161,7 +164,9 @@ function makeRequestState(params: ChatCompletionsParams): RequestState {
 
 function buildRequestBody(state: RequestState): Record<string, unknown> {
   const body: Record<string, unknown> = { model: state.model, messages: state.messages };
-  if (state.temperature !== undefined) body.temperature = state.temperature;
+  if (state.includeTemperature && state.temperature !== undefined) {
+    body.temperature = state.temperature;
+  }
   if (state.maxTokens !== undefined) body.max_tokens = state.maxTokens;
   if (state.includeReasoningEffort && state.thinkingLevel !== undefined) {
     body.reasoning_effort = toReasoningEffort(state.thinkingLevel);
@@ -326,6 +331,12 @@ export async function chatCompletions(
     const detail = await errorDetail(state, response);
     if (status === 400 && state.includeReasoningEffort) {
       state.includeReasoningEffort = false;
+      continue;
+    }
+    // Some models pin a fixed sampling temperature and 400 on any other
+    // value; retrying without the field lets the server default apply.
+    if (status === 400 && state.includeTemperature) {
+      state.includeTemperature = false;
       continue;
     }
     if (isRetryableStatus(status) && attempt < state.maxRetries) {

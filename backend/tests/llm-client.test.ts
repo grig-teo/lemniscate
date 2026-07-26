@@ -79,6 +79,40 @@ describe('chatCompletions', () => {
     expect(JSON.parse(String(calls[1]?.init.body)).reasoning_effort).toBeUndefined();
   });
 
+  it('drops temperature transparently on HTTP 400 and retries without it', async () => {
+    // Some models (e.g. Kimi k3) reject any temperature but their fixed one;
+    // retrying without the field lets the server default apply.
+    const calls = stubFetch(
+      jsonResponse({ error: 'invalid temperature: only 1 is allowed for this model' }, 400),
+      jsonResponse({ choices: [{ message: { content: 'ok' } }] }),
+    );
+    const result = await chatCompletions({ ...BASE, temperature: 0.3 });
+    expect(result.content).toBe('ok');
+    expect(calls).toHaveLength(2);
+    expect(JSON.parse(String(calls[0]?.init.body)).temperature).toBe(0.3);
+    expect(JSON.parse(String(calls[1]?.init.body)).temperature).toBeUndefined();
+  });
+
+  it('drops reasoning_effort first, then temperature, when both are rejected', async () => {
+    const calls = stubFetch(
+      jsonResponse({ error: 'unknown field reasoning_effort' }, 400),
+      jsonResponse({ error: 'invalid temperature' }, 400),
+      jsonResponse({ choices: [{ message: { content: 'ok' } }] }),
+    );
+    const result = await chatCompletions({ ...BASE, temperature: 0.3, thinkingLevel: 'high' });
+    expect(result.content).toBe('ok');
+    expect(calls).toHaveLength(3);
+    const third = JSON.parse(String(calls[2]?.init.body));
+    expect(third.reasoning_effort).toBeUndefined();
+    expect(third.temperature).toBeUndefined();
+  });
+
+  it('does not retry forever when the 400 is unrelated to optional fields', async () => {
+    const calls = stubFetch(jsonResponse({ error: 'model not found' }, 400));
+    await expect(chatCompletions({ ...BASE, temperature: 0.3 })).rejects.toThrow(LlmError);
+    expect(calls).toHaveLength(2);
+  });
+
   it('maps thinkingLevel max to reasoning_effort xhigh', async () => {
     const calls = stubFetch(jsonResponse({ choices: [{ message: { content: 'ok' } }] }));
     await chatCompletions({ ...BASE, thinkingLevel: 'max' });
