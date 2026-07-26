@@ -10,12 +10,15 @@
 // via setJobFailureRecorder at import time, so job-failure-log remains
 // usable in config-free/test contexts and no import cycle exists.
 
+import { notifyJobFailure } from './notifications.js';
+
 export interface JobFailureEntry {
   jobName: string;
   errorKind: string;
   message: string;
   taskId?: string;
   jobId?: string;
+  repositoryId?: string;
 }
 
 export interface LogJobFailureOptions {
@@ -41,7 +44,7 @@ export function errorKind(err: unknown): string {
 export function jobFailureFromError(
   jobName: string,
   err: unknown,
-  ids: { taskId?: string; jobId?: string } = {},
+  ids: { taskId?: string; jobId?: string; repositoryId?: string } = {},
 ): JobFailureEntry {
   const message = err instanceof Error ? err.message : String(err);
   return { jobName, errorKind: errorKind(err), message, ...ids };
@@ -50,7 +53,15 @@ export function jobFailureFromError(
 export function logJobFailure(
   entry: JobFailureEntry,
   options: LogJobFailureOptions = {},
-): void {
+): Promise<void> {
   if (options.recordMetric !== false) recorder?.(entry.jobName, entry.errorKind);
   console.error(JSON.stringify({ level: 'error', event: 'job_failed', ...entry }));
+  // User-facing notification — the single hook point (AGENTS.md §6). The
+  // promise is returned so recordJobFailure can await it before its caller
+  // rethrows: the in-run notification then exists before the worker 'failed'
+  // hook funnels the same throw through here again, and the unread dedupe in
+  // notifyOncePerTask stays sequential instead of racing two concurrent
+  // findFirst-then-insert flows. Errors are swallowed either way — logging
+  // must never fail the job that produced the entry.
+  return notifyJobFailure(entry).catch(() => {});
 }

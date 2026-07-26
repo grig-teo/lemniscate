@@ -153,7 +153,27 @@ credentials, since the e2e suite logs in via PAT by design:
 3. Open http://localhost:8080 and log in with GitHub **and** GitLab OAuth
    (the token-refresh flow for GitLab OAuth is exercised only on real
    provider tokens).
-4. Optional: merge the PR the agent opens and confirm a "PR merged"
-   notification appears within one pr-state-sync interval (5 min), and set a
-   webhook URL via `PUT /api/notifications/settings` to verify the
-   HMAC-signed POST (`x-lemniscate-signature: sha256=…`) reaches your bridge.
+4. Sync repositories from the connections page.
+5. Add an LLM config (base URL, API key, model) and click **Test connection**.
+6. Pick a repository and submit a new prompt/task.
+7. Watch the live console (SSE) and the proposed diff.
+8. Approve/let the worker finish, then confirm the branch and pull request
+   appear on the git host.
+9. `curl -s localhost:3101/metrics | grep lemniscate` — after one run the
+   queue gauges, `lemniscate_jobs_total`, `lemniscate_job_duration_seconds`,
+   and `lemniscate_llm_*` series should be present; token totals should
+   roughly match the run's token usage shown in the live console. With
+   `METRICS_TOKEN` set, `curl -s -H "Authorization: Bearer ***
+   localhost:3000/metrics` answers 200 (and 401 without it).
+10. Confirm the TopNav bell shows an unread "PR opened" notification within
+    30s of the PR being created, and that clicking it opens the PR; merge the
+    PR on the git host and confirm a "PR merged" notification appears within
+    one pr-state-sync interval (5 min). Optionally set a webhook URL via
+    `PUT /api/notifications/settings` or add a webhook channel in
+    Settings → Notifications (or `POST /api/notifications/channels`), hit
+    **Test**, and verify the HMAC-signed POST
+    (`x-lemniscate-signature: sha256=…`) reaches the bridge.
+
+> Note: the live OAuth login, LLM calls, and branch/PR creation paths could
+> not be exercised without real provider and LLM credentials — verify them
+> with the checklist above.

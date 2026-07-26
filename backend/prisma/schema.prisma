@@ -55,11 +55,7 @@ model User {
   devices        Device[]
   devicePairings DevicePairing[]
   notifications  Notification[]
-  // Optional outbound webhook for async agent events (Slack/Discord/Telegram
-  // bridges): POSTed on every notification, HMAC-signed with webhookSecretEnc
-  // (AES-256-GCM at rest via lib/crypto.ts). Null = in-app notifications only.
-  webhookUrl       String?
-  webhookSecretEnc String?
+  notificationSettings NotificationSetting[]
 }
 
 model GitConnection {
@@ -345,6 +341,49 @@ model Notification {
   user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId, readAt])
+}
+
+// Outbound notification channel (AGENTS.md §6 single home for delivery
+// config): a webhook URL POSTed HMAC-signed JSON, or an email address
+// reached via the optional SMTP_* env config. `channel` is TEXT
+// ('webhook'|'email'), `events` the subscribed Notification.kind list —
+// both validated in lib/notifications.ts. `secretEnc` holds the webhook
+// HMAC secret, AES-256-GCM at rest via lib/crypto.ts (null for email).
+model NotificationSetting {
+  id        String   @id @default(cuid())
+  userId    String
+  channel   String
+  target    String
+  secretEnc String?
+  events    String[]
+  enabled   Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  user         User                   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  deliveries   NotificationDelivery[]
+
+  @@index([userId])
+}
+
+// Audit log of outbound delivery attempts: one row per (setting, event)
+// enqueue, updated by the 'notification-delivery' BullMQ job with attempts,
+// last HTTP status/error, and the terminal status ('queued'|'delivered'|
+// 'failed'|'skipped'). `payload` is the exact JSON body sent.
+model NotificationDelivery {
+  id             String   @id @default(cuid())
+  settingId      String
+  notificationId String?
+  event          String
+  status         String   @default("queued")
+  attempts       Int      @default(0)
+  lastStatusCode Int?
+  lastError      String?
+  payload        String
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  setting        NotificationSetting @relation(fields: [settingId], references: [id], onDelete: Cascade)
+
+  @@index([settingId, createdAt])
 }
 
 enum ServiceStatus {
