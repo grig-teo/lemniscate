@@ -1,6 +1,6 @@
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import type { Prisma } from '@prisma/client';
-import { deviceArtifactStream, storeDeviceArtifact } from '../lib/device-artifacts.js';
+import { artifactOwnerDeviceId, deviceArtifactStream, storeDeviceArtifact } from '../lib/device-artifacts.js';
 import { dispatchCommand } from '../lib/device-dispatch.js';
 import { deviceHub } from '../lib/device-hub.js';
 import {
@@ -174,12 +174,23 @@ export async function uploadArtifact(request: FastifyRequest, reply: FastifyRepl
 
 // GET /artifacts/* — install-target agents download the built APK through
 // the backend (MinIO's own endpoint is internal-only). Same device-token
-// auth as uploads; keys are scoped to the builder's device id.
+// auth as uploads; keys are scoped to the builder's device id, and downloads
+// are limited to devices of the SAME user as the key's owner (IDOR guard).
+async function assertArtifactAccess(ownerDeviceId: string, userId: string): Promise<boolean> {
+  const owner = await prisma.device.findUnique({ where: { id: ownerDeviceId } });
+  return owner?.userId === userId;
+}
+
 export async function downloadArtifact(request: FastifyRequest, reply: FastifyReply) {
   const device = await deviceByToken(deviceTokenFromHeader(request.headers.authorization));
   if (!device) return reply.code(401).send({ error: 'Invalid device token' });
   const key = (request.params as { '*': string })['*'];
-  if (!key || key.includes('..')) return reply.code(400).send({ error: 'Invalid artifact key' });
+  const ownerDeviceId = key && !key.includes('..') ? artifactOwnerDeviceId(key) : null;
+  if (!ownerDeviceId) return reply.code(400).send({ error: 'Invalid artifact key' });
+  // 404 (not 403): cross-user artifact existence must not leak.
+  if (!(await assertArtifactAccess(ownerDeviceId, device.userId))) {
+    return reply.code(404).send({ error: 'Artifact not found' });
+  }
   const artifact = await deviceArtifactStream(key);
   if (!artifact) return reply.code(404).send({ error: 'Artifact not found' });
   return reply

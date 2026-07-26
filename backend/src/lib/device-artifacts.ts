@@ -21,6 +21,13 @@ export function artifactKeyFor(deviceId: string, filename: string, uniqueId: str
   return `${deviceId}/${uniqueId}-${safeArtifactFilename(filename)}`;
 }
 
+/** Owning device id (the first key segment, matching artifactKeyFor); null when malformed. */
+export function artifactOwnerDeviceId(key: string): string | null {
+  const slash = key.indexOf('/');
+  if (slash <= 0 || slash === key.length - 1) return null;
+  return key.slice(0, slash);
+}
+
 /** Store one uploaded artifact; throws when MinIO is not configured. */
 export async function storeDeviceArtifact(
   deviceId: string,
