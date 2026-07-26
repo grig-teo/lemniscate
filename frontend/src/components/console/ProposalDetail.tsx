@@ -10,7 +10,7 @@
  */
 import * as React from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { Hammer, Loader2, Paperclip, Save } from 'lucide-react';
+import { Hammer, Loader2, Paperclip, Save, GitPullRequestClosed } from 'lucide-react';
 
 import { api } from '@/lib/api';
 import { SUPPRESS_ERROR_TOAST_META } from '@/lib/mutation-error-toast';
@@ -20,7 +20,7 @@ import {
   taskMcpSelections,
   taskSkillSelections,
 } from '@/lib/proposal-detail';
-import { useSkills, useImproveTask, useStartTask, useTask, type TaskImage } from '@/lib/hooks';
+import { useSkills, useImproveTask, useStartTask, useClosePrTask, useTask, type TaskImage } from '@/lib/hooks';
 import { useLibraryAttachments } from '@/lib/library-attachments';
 import { IMAGE_ACCEPT, MAX_IMAGES } from '@/lib/prompt-composer';
 import { LibraryAttachments } from '@/components/library/LibraryAttachments';
@@ -81,6 +81,7 @@ function TaskEditorInner({
   const startTask = useStartTask();
   const patchTask = usePatchTask();
   const improveTask = useImproveTask();
+  const closePrTask = useClosePrTask();
   const [title, setTitle] = React.useState(task.title);
   const [prompt, setPrompt] = React.useState(task.prompt ?? '');
   const [preview, setPreview] = React.useState(true);
@@ -122,7 +123,13 @@ function TaskEditorInner({
       { onSuccess: (data) => setPrompt(data.prompt) },
     );
   };
-  const actionError = startTask.error ?? patchTask.error ?? improveTask.error;
+  const closePr = () => {
+    if (!window.confirm('Close the pull request and delete the branch? This cannot be undone.')) {
+      return;
+    }
+    closePrTask.mutate(task.id);
+  };
+  const actionError = startTask.error ?? patchTask.error ?? improveTask.error ?? closePrTask.error;
 
   return (
     <div className="flex h-full min-h-0 flex-1 flex-col gap-3 overflow-hidden p-4">
@@ -192,6 +199,22 @@ function TaskEditorInner({
         <LibraryAttachments state={attachments} columns repositoryId={task.repositoryId} />
       </div>
       <div className="flex shrink-0 items-center gap-2">
+        {task.status === 'awaiting_review' && task.branchName && (
+          <Button
+            size="sm"
+            variant="destructive"
+            onClick={closePr}
+            disabled={closePrTask.isPending}
+            aria-label="Close PR and delete branch"
+          >
+            {closePrTask.isPending ? (
+              <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+            ) : (
+              <GitPullRequestClosed className="h-4 w-4" aria-hidden />
+            )}
+            Close PR
+          </Button>
+        )}
         <div className="flex-1" />
         <AttachFileButton
           accept={IMAGE_ACCEPT}

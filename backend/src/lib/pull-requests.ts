@@ -116,6 +116,31 @@ export async function pullRequestState(
   );
 }
 
+// Closes the open PR for the head branch (no merge). The head branch is left
+// in place — deleteBranch is a separate call so a branch-protection failure
+// does not strand the PR in an open state.
+export async function closePullRequest(
+  connection: PrConnectionInput,
+  input: PullRequestRefInput,
+): Promise<void> {
+  return withGitlabRefreshRetry(connection, (token) =>
+    providerPrApi(connection, token).close(input),
+  );
+}
+
+// Deletes the head branch from the remote. Best-effort at the call site: a
+// branch-protection refusal or a missing branch should not fail the whole
+// close-PR operation — the caller logs and continues.
+export async function deleteBranch(
+  connection: PrConnectionInput,
+  repoFullName: string,
+  branch: string,
+): Promise<void> {
+  return withGitlabRefreshRetry(connection, (token) =>
+    providerPrApi(connection, token).deleteBranch(repoFullName, branch),
+  );
+}
+
 // Batched listing of all PRs of a repo (open + recently closed), for the
 // pr-state-sync job: one list call replaces one state call per task. The
 // result is capped at a few pages — callers fall back to pullRequestState

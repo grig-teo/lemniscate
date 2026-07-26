@@ -184,6 +184,31 @@ async function gitversePullRequestDiff(
   return assembleUnifiedDiff(gitverseFilesSchema.parse(body));
 }
 
+// Closes the open PR (no merge) via PATCH /pulls/{n} with state=closed
+// (GitHub-shaped API).
+async function gitverseClosePullRequest(
+  connection: PrConnectionInput,
+  token: string,
+  input: PullRequestRefInput,
+): Promise<void> {
+  const { number } = await gitverseLookupPullNumber(connection, token, input);
+  const url = `${gitversePullsUrl(connection, input.repoFullName)}/${number}`;
+  await apiRequest('gitverse', 'PATCH', url, gitverseHeaders(token), token, { state: 'closed' });
+}
+
+// Deletes the head branch via DELETE /git/refs/heads/{branch} (GitHub-shaped).
+async function gitverseDeleteBranch(
+  connection: PrConnectionInput,
+  token: string,
+  repoFullName: string,
+  branch: string,
+): Promise<void> {
+  const repoPath = encodeRepoPath(repoFullName);
+  const ref = encodeURIComponent(branch);
+  const url = `${gitverseApiBase(connection.baseUrl)}/repos/${repoPath}/git/refs/heads/${ref}`;
+  await apiRequest('gitverse', 'DELETE', url, gitverseHeaders(token), token);
+}
+
 async function gitverseOpenPullRequest(
   connection: PrConnectionInput,
   token: string,
@@ -279,5 +304,8 @@ export function gitversePrApi(connection: PrConnectionInput, token: string): Pro
     diff: (input) => gitversePullRequestDiff(connection, token, input),
     state: (input) => gitversePullRequestState(connection, token, input),
     list: (repoFullName) => gitverseListPullRequests(connection, token, repoFullName),
+    close: (input) => gitverseClosePullRequest(connection, token, input),
+    deleteBranch: (repoFullName, branch) =>
+      gitverseDeleteBranch(connection, token, repoFullName, branch),
   };
 }
