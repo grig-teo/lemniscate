@@ -25,6 +25,8 @@ const mocks = vi.hoisted(() => ({
   commandUpdate: vi.fn(),
   storeDeviceArtifact: vi.fn(),
   deviceArtifactStream: vi.fn(),
+  redisIncr: vi.fn(),
+  redisExpire: vi.fn(),
 }));
 
 vi.mock('../src/lib/prisma.js', () => ({
@@ -61,6 +63,12 @@ vi.mock('../src/lib/device-artifacts.js', async (importOriginal) => ({
   deviceArtifactStream: mocks.deviceArtifactStream,
 }));
 
+vi.mock('../src/lib/redis.js', () => ({
+  getRedisClient: () => ({ incr: mocks.redisIncr, expire: mocks.redisExpire }),
+}));
+
+import { config } from '../src/config.js';
+
 import devicesRoutes from '../src/routes/devices.js';
 import { deviceHub } from '../src/lib/device-hub.js';
 import { hashDeviceToken } from '../src/lib/device-tokens.js';
@@ -92,6 +100,8 @@ beforeEach(() => {
     status: 'queued',
     ...data,
   }));
+  mocks.redisIncr.mockResolvedValue(1);
+  mocks.redisExpire.mockResolvedValue(1);
 });
 
 describe('POST /api/devices/pairings', () => {
@@ -515,6 +525,24 @@ describe('POST /api/devices/artifacts', () => {
     mocks.storeDeviceArtifact.mockRejectedValue(new Error('MinIO is not configured'));
     const app = await buildApp();
     expect((await upload(app, 'good-token')).statusCode).toBe(503);
+  });
+
+  it('counts the upload against the device’s daily Redis quota', async () => {
+    mocks.deviceFindUnique.mockResolvedValue({ id: 'dev-builder', userId: 'user-1' });
+    mocks.storeDeviceArtifact.mockResolvedValue({ key: 'dev-builder/u1-my-app.apk' });
+    const app = await buildApp();
+    expect((await upload(app, 'good-token')).statusCode).toBe(201);
+    expect(mocks.redisIncr).toHaveBeenCalledWith('artifact-quota:dev-builder');
+  });
+
+  it('429s when the daily artifact quota is exceeded and stores nothing', async () => {
+    mocks.deviceFindUnique.mockResolvedValue({ id: 'dev-builder', userId: 'user-1' });
+    mocks.redisIncr.mockResolvedValue(config.DEVICE_ARTIFACT_MAX_PER_DAY + 1);
+    const app = await buildApp();
+    const response = await upload(app, 'good-token');
+    expect(response.statusCode).toBe(429);
+    expect(response.json().error).toContain('quota');
+    expect(mocks.storeDeviceArtifact).not.toHaveBeenCalled();
   });
 });
 
