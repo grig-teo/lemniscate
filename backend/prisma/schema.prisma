@@ -215,6 +215,10 @@ model Task {
   // diff failed (run-targets falls back to the repository platform).
   changedPaths Json?
   error        String?
+  // Structured error code from the classifyError() mapping (errors.ts);
+  // null for tasks that succeeded or haven't run yet. The frontend maps
+  // these codes to user-friendly banners with actionable hints.
+  errorCode    String?
   // Soft-archive timestamp: archived tasks are hidden from task lists but
   // never deleted; null = active.
   archivedAt   DateTime?

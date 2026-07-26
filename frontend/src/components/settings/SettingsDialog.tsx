@@ -11,14 +11,13 @@ import {
   DialogTrigger,
 } from '@/components/ui/dialog';
 import { cn } from '@/lib/utils';
+import { OPEN_SETTINGS_EVENT, type SettingsTab } from '@/lib/error-codes';
 
 import { ConnectionsSection } from '@/components/settings/ConnectionsSection';
 import { LlmConfigsSection } from '@/components/settings/LlmConfigsSection';
 import { NotificationsSection } from '@/components/settings/NotificationsSection';
 import { RepoFlagsSection } from '@/components/settings/RepoFlagsSection';
 import { UsageSection } from '@/components/settings/UsageSection';
-
-type SettingsTab = 'llm' | 'git' | 'repos' | 'notifications' | 'usage';
 
 /**
  * Settings dialog: LLM configurations, git host connections, and repository
@@ -27,6 +26,18 @@ type SettingsTab = 'llm' | 'git' | 'repos' | 'notifications' | 'usage';
 export function SettingsDialog() {
   const [open, setOpen] = React.useState(false);
   const [tab, setTab] = React.useState<SettingsTab>('llm');
+
+  // Allows external components (e.g. ErrorBanner) to open the dialog at a
+  // specific tab via openSettingsTab().
+  React.useEffect(() => {
+    const handler = (event: Event) => {
+      const detail = (event as CustomEvent<{ tab?: SettingsTab }>).detail;
+      if (detail?.tab) setTab(detail.tab);
+      setOpen(true);
+    };
+    window.addEventListener(OPEN_SETTINGS_EVENT, handler);
+    return () => window.removeEventListener(OPEN_SETTINGS_EVENT, handler);
+  }, []);
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>

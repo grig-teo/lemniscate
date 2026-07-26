@@ -28,6 +28,7 @@ import {
   type TaskWithRepo,
 } from './agent-runtime.js';
 import { runHermesTask } from './hermes-runner.js';
+import { classifyError } from './errors.js';
 import { notify, notifyTaskCompleted } from './notifications.js';
 import { prisma } from './prisma.js';
 import { enqueueReviewTask } from './proposal-scheduler.js';
@@ -385,7 +386,8 @@ export async function runTask(taskId: string): Promise<void> {
     // Failure state is fully recorded on the task; the BullMQ job is allowed
     // to complete so it is not retried into a duplicate branch/PR.
     const message = await recordJobFailure('run-task', taskId, err, secrets);
-    await setTaskStatus(taskId, 'failed', { error: message }).catch(() => {});
+    const errorCode = classifyError(err);
+    await setTaskStatus(taskId, 'failed', { error: message, errorCode }).catch(() => {});
   } finally {
     await persistTokenUsage(
       taskId,

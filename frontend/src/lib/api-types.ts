@@ -177,6 +177,8 @@ export type Task = {
   status: TaskStatus;
   /** Full prompt — only included by GET /api/tasks/:id, not by list endpoints. */
   prompt?: string;
+  /** Structured error code for failed tasks (LLM_AUTH_FAILED, GIT_PERMISSION_DENIED, …). */
+  errorCode?: string | null;
   branchName?: string | null;
   prUrl?: string | null;
   thinkingLevel?: TaskThinkingLevel | null;
