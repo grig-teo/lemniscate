@@ -8,6 +8,11 @@ import {
   syncConnectionRepos,
 } from './connection-handlers.js';
 import { createConnectionRepo } from './connection-repo-create.js';
+import {
+  configureWebhook,
+  deleteWebhookConfig,
+  getWebhookConfig,
+} from './connection-webhook.js';
 
 // Connections API. Thin registration layer: zod schemas live in
 // connection-schemas.ts, the PAT identity store in connection-pat-store.ts,
@@ -27,6 +32,11 @@ const connectionsRoutes: FastifyPluginAsync = async (app) => {
   app.delete('/connections/:id', { preHandler: requireAuth }, deleteConnection);
   app.post('/connections/:id/sync', { preHandler: requireAuth }, syncConnectionRepos);
   app.post('/connections/:id/repositories', { preHandler: requireAuth }, createConnectionRepo);
+  // Inbound webhook configuration: generate/rotate the shared secret, view the
+  // webhook URL, or clear the secret (falls back to the 5-min poller).
+  app.post('/connections/:id/webhook-config', { preHandler: requireAuth }, configureWebhook);
+  app.get('/connections/:id/webhook-config', { preHandler: requireAuth }, getWebhookConfig);
+  app.delete('/connections/:id/webhook-config', { preHandler: requireAuth }, deleteWebhookConfig);
 };
 
 // Re-export so existing consumers (tests) keep a single import site.
