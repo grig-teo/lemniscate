@@ -17,6 +17,7 @@ import {
 } from '@/lib/notification-channels';
 
 import { NotificationChannelForm } from '@/components/settings/NotificationChannelForm';
+import { BrowserNotificationsSection } from '@/components/settings/BrowserNotificationsSection';
 
 function deliveryVariant(status: string): 'secondary' | 'outline' | 'destructive' {
   if (status === 'delivered') return 'secondary';
@@ -121,6 +122,13 @@ export function NotificationsSection() {
 
   return (
     <div className="flex flex-col gap-4 py-2">
+      <BrowserNotificationsSection />
+
+      <div className="flex items-center gap-2">
+        <span className="text-xs font-medium text-muted-foreground">Outbound channels</span>
+        <span className="h-px flex-1 bg-border" />
+      </div>
+
       {channels.isLoading && <p className="text-sm text-muted-foreground">Loading…</p>}
       {channels.isError && (
         <p className="text-sm text-destructive">
