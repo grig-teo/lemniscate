@@ -45,6 +45,9 @@ export function buildTraefikConfig(
       entryPoints: ['web'],
       service: key,
       middlewares: [`${key}-strip`],
+      // Must outrank the owner index router below — the index rule (with
+      // its ||) is LONGER, so rule-length priority would pick it first.
+      priority: 100,
     };
     backends[key] = {
       loadBalancer: {
@@ -62,6 +65,8 @@ export function buildTraefikConfig(
       entryPoints: ['web'],
       service: key,
       middlewares: [`${key}-rewrite`],
+      // Catch-all for the owner namespace: every service router (100) wins.
+      priority: 1,
     };
     backends[key] = { loadBalancer: { servers: [{ url: backendUrl }] } };
     middlewares[`${key}-rewrite`] = {

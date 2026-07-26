@@ -16,6 +16,7 @@ describe('buildTraefikConfig', () => {
       entryPoints: ['web'],
       service: 'grig-teo-my-app',
       middlewares: ['grig-teo-my-app-strip'],
+      priority: 100,
     });
     expect(cfg.http?.middlewares?.['grig-teo-my-app-strip']).toEqual({
       stripPrefix: { prefixes: ['/grig-teo/my-app'] },
@@ -35,6 +36,7 @@ describe('buildTraefikConfig', () => {
       entryPoints: ['web'],
       service: 'grig-teo-index',
       middlewares: ['grig-teo-index-rewrite'],
+      priority: 1,
     });
     expect(cfg.http?.services?.['grig-teo-index']).toEqual({
       loadBalancer: { servers: [{ url: BACKEND }] },
