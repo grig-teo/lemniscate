@@ -235,12 +235,12 @@ fn node_arch() -> &'static str {
 }
 
 async fn docker_available() -> bool {
-    Command::new("docker")
-        .arg("info")
-        .output()
-        .await
-        .map(|output| output.status.success())
-        .unwrap_or(false)
+    // Docker Desktop can wedge — never let the probe hang the pairing flow.
+    let probe = Command::new("docker").arg("info").output();
+    match tokio::time::timeout(std::time::Duration::from_secs(5), probe).await {
+        Ok(Ok(output)) => output.status.success(),
+        _ => false,
+    }
 }
 
 // --- entry -------------------------------------------------------------------------
