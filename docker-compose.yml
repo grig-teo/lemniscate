@@ -61,6 +61,7 @@ services:
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-lemniscate-minio}
       MINIO_BUCKET: ${MINIO_BUCKET:-lemniscate-library}
       TRAEFIK_PROVIDER_TOKEN: ${TRAEFIK_PROVIDER_TOKEN:-}
+      METRICS_TOKEN: ${METRICS_TOKEN:-}
     # docker.sock: service stop/delete and live container logs run docker
     # from the API (same trust level as the worker; see the note there).
     group_add:

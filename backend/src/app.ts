@@ -6,6 +6,7 @@ import websocket from '@fastify/websocket';
 import { config } from './config.js';
 import apiRoutes from './routes/index.js';
 import healthRoutes from './routes/health.js';
+import metricsRoutes from './routes/metrics.js';
 import llmConfigRoutes from './routes/llm-configs.js';
 import skillsRoutes from './routes/skills.js';
 import mcpServersRoutes from './routes/mcp-servers.js';
@@ -45,6 +46,8 @@ async function registerRoutes(app: FastifyInstance) {
   await app.register(appsIndexRoute, { prefix: '/api' });
   // Liveness (/health) + readiness (/health/ready), unprefixed.
   await app.register(healthRoutes);
+  // Prometheus exposition (GET /metrics), unprefixed, shared-secret guarded.
+  await app.register(metricsRoutes);
 }
 
 export async function buildApp(): Promise<FastifyInstance> {

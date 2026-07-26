@@ -6,6 +6,7 @@ import {
   timeoutForAttemptSeconds,
   toReasoningEffort,
 } from '../src/lib/llm-client.js';
+import { metricsRegistry } from '../src/lib/metrics.js';
 
 // Locking tests for the OpenAI-compatible chat client. fetch is stubbed;
 // no network is touched. apiKey 'sk-secret' must never appear in errors.
@@ -293,5 +294,39 @@ describe('timeoutForAttemptSeconds', () => {
   it('caps the grown timeout at 600s', () => {
     expect(timeoutForAttemptSeconds(120, 3)).toBe(600);
     expect(timeoutForAttemptSeconds(120, 10)).toBe(600);
+  });
+});
+
+describe('chatCompletions metrics', () => {
+  it('records request, latency, and token metrics on success', async () => {
+    metricsRegistry.resetMetrics();
+    stubFetch(
+      jsonResponse({
+        choices: [{ message: { content: 'hi' } }],
+        model: 'echo-model',
+        usage: { prompt_tokens: 3, completion_tokens: 4, total_tokens: 7 },
+      }),
+    );
+
+    await chatCompletions({ ...BASE });
+
+    const text = await metricsRegistry.metrics();
+    expect(text).toContain('lemniscate_llm_requests_total{model="echo-model",status="ok"} 1');
+    expect(text).toContain('lemniscate_llm_request_duration_seconds_count{model="echo-model"} 1');
+    expect(text).toContain('lemniscate_llm_tokens_total{model="echo-model",kind="prompt"} 3');
+    expect(text).toContain(
+      'lemniscate_llm_tokens_total{model="echo-model",kind="completion"} 4',
+    );
+  });
+
+  it('records a failed request labeled by error kind, without token counters', async () => {
+    metricsRegistry.resetMetrics();
+    stubFetch(jsonResponse({ error: 'overloaded' }, 500));
+
+    await expect(chatCompletions({ ...BASE })).rejects.toBeInstanceOf(LlmError);
+
+    const text = await metricsRegistry.metrics();
+    expect(text).toContain('lemniscate_llm_requests_total{model="test-model",status="http"} 1');
+    expect(text).not.toContain('lemniscate_llm_tokens_total{');
   });
 });
