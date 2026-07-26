@@ -5,10 +5,10 @@ import path from 'node:path';
 import { PassThrough } from 'node:stream';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const mocks = vi.hoisted(() => ({ spawn: vi.fn(), logEvent: vi.fn(), taskFindUnique: vi.fn() }));
+const mocks = vi.hoisted(() => ({ spawn: vi.fn(), logBatch: vi.fn(), taskFindUnique: vi.fn() }));
 
 vi.mock('node:child_process', () => ({ spawn: mocks.spawn }));
-vi.mock('../src/lib/agent-git.js', () => ({ logEvent: mocks.logEvent }));
+vi.mock('../src/lib/agent-git.js', () => ({ logBatch: mocks.logBatch }));
 vi.mock('../src/lib/prisma.js', () => ({ prisma: { task: { findUnique: mocks.taskFindUnique } } }));
 
 import {
@@ -40,7 +40,7 @@ let workdir: string;
 
 beforeEach(async () => {
   vi.clearAllMocks();
-  mocks.logEvent.mockResolvedValue(undefined);
+  mocks.logBatch.mockResolvedValue(undefined);
   workdir = await fs.mkdtemp(path.join(os.tmpdir(), 'hermes-runner-test-'));
   await fs.mkdir(path.join(workdir, '.git', 'info'), { recursive: true });
 });
@@ -80,7 +80,7 @@ async function closeWith(child: FakeChild, code: number): Promise<void> {
 }
 
 function loggedLines(): string[] {
-  return mocks.logEvent.mock.calls.map((call) => call[1] as string);
+  return mocks.logBatch.mock.calls.flatMap((call) => call[1] as string[]);
 }
 
 describe('runHermesTask', () => {
@@ -154,7 +154,7 @@ describe('runHermesTask', () => {
     await promise;
 
     expect(loggedLines()).toEqual(expect.arrayContaining(['first line', 'second line']));
-    for (const call of mocks.logEvent.mock.calls) expect(call[0]).toBe('task-1');
+    for (const call of mocks.logBatch.mock.calls) expect(call[0]).toBe('task-1');
   });
 
   it('strips ANSI escape codes from streamed lines', async () => {
@@ -230,7 +230,7 @@ describe('runHermesTask without a taskId', () => {
     await closeWith(child, 0);
     await promise;
 
-    expect(mocks.logEvent).not.toHaveBeenCalled();
+    expect(mocks.logBatch).not.toHaveBeenCalled();
     expect(mocks.taskFindUnique).not.toHaveBeenCalled();
   });
 
@@ -242,7 +242,7 @@ describe('runHermesTask without a taskId', () => {
     await closeWith(child, 1);
 
     await expect(promise).rejects.toThrow('boom failure');
-    expect(mocks.logEvent).not.toHaveBeenCalled();
+    expect(mocks.logBatch).not.toHaveBeenCalled();
   });
 });
 

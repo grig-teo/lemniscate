@@ -184,6 +184,11 @@ export async function checkoutTaskBranch(
 export const logEvent = (taskId: string, line: string): Promise<void> =>
   publishTaskEvent(taskId, 'log', { line });
 
+// Batched variant: emits multiple lines as a single TaskEvent to reduce DB
+// write pressure during agent runs. Payload shape: { lines: string[] }.
+export const logBatch = (taskId: string, lines: string[]): Promise<void> =>
+  publishTaskEvent(taskId, 'log', { lines });
+
 // Persists cumulative LLM usage so maxTokensPerRun spans every job of a task
 // (run-task plus review/fix iterations), not just one job's runtime. The
 // prompt/completion split rides along when the runtime is known; jobs that

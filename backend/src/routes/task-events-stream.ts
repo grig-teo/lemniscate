@@ -12,11 +12,14 @@ import { idParamsSchema } from './task-schemas.js';
 // implemented in src/lib/task-events.ts): Redis pub/sub channel
 // `task-events:<taskId>`, message JSON {id, kind, payload, createdAt} with
 // createdAt as an ISO string. Payloads:
-//   log    → { line: string }
+//   log    → { line: string } | { lines: string[] }
 //   status → { status: 'pending'|'queued'|'running'|'awaiting_review'|'done'|'failed'|'closed' }
 //   diff   → { path: string, diff: string } | { path: string, action: 'created'|'modified'|'deleted' }
 
 const SSE_HEARTBEAT_MS = 15_000;
+// Maximum events returned in a single JSON or SSE-replay response. Bounds
+// response size and latency regardless of how many events a task accumulated.
+const HISTORY_TAKE = 1_000;
 
 // Task events: full history as JSON when the client asks for it,
 // otherwise a live SSE stream (history replay + pub/sub follow).
@@ -33,23 +36,28 @@ export async function getTaskEvents(request: FastifyRequest, reply: FastifyReply
   }
 
   if (!wantsSse(request.headers.accept)) {
+    // Query newest N then reverse so the payload is chronological but the
+    // response size is bounded regardless of task age.
     const events = await prisma.taskEvent.findMany({
       where: { taskId: task.id },
-      orderBy: { createdAt: 'asc' },
+      orderBy: { createdAt: 'desc' },
+      take: HISTORY_TAKE,
     });
-    return events.map(serializeTaskEvent);
+    return events.reverse().map(serializeTaskEvent);
   }
 
   return streamTaskEvents(request, reply, task.id);
 }
 
-// Replay persisted history first (ascending), then follow live events.
+// Replay the most recent N persisted events (descending query, reversed so
+// they are written in chronological order), then follow live events.
 async function replayHistory(reply: FastifyReply, taskId: string): Promise<void> {
   const history = await prisma.taskEvent.findMany({
     where: { taskId },
-    orderBy: { createdAt: 'asc' },
+    orderBy: { createdAt: 'desc' },
+    take: HISTORY_TAKE,
   });
-  for (const event of history) {
+  for (const event of history.reverse()) {
     reply.raw.write(`data: ${JSON.stringify(serializeTaskEvent(event))}\n\n`);
   }
 }
