@@ -31,6 +31,8 @@ function makeConfig(id: string, over: Partial<LlmConfig> = {}): LlmConfig {
     maxRetries: 3,
     requestsPerMinute: 60,
     maxTokensPerRun: 0,
+    inputPricePerMillion: null,
+    outputPricePerMillion: null,
     customHeaders: null,
     isDefault: false,
     enabled: true,

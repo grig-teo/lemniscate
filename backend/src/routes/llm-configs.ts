@@ -41,6 +41,10 @@ const configFields = {
   maxRetries: z.number().int().min(0).max(10).default(3),
   requestsPerMinute: z.number().int().positive(),
   maxTokensPerRun: z.number().int().positive().optional(),
+  // Optional USD prices per million tokens; both are required for the
+  // estimated-cost fields (a partial price would produce a wrong number).
+  inputPricePerMillion: z.number().min(0).optional(),
+  outputPricePerMillion: z.number().min(0).optional(),
   customHeaders: z.record(z.string(), z.string()).default({}),
   isDefault: z.boolean().default(false),
   enabled: z.boolean().default(true),

@@ -15,8 +15,9 @@ import { cn } from '@/lib/utils';
 import { ConnectionsSection } from '@/components/settings/ConnectionsSection';
 import { LlmConfigsSection } from '@/components/settings/LlmConfigsSection';
 import { RepoFlagsSection } from '@/components/settings/RepoFlagsSection';
+import { UsageSection } from '@/components/settings/UsageSection';
 
-type SettingsTab = 'llm' | 'git' | 'repos';
+type SettingsTab = 'llm' | 'git' | 'repos' | 'usage';
 
 /**
  * Settings dialog: LLM configurations, git host connections, and repository
@@ -51,12 +52,16 @@ export function SettingsDialog() {
           <TabButton active={tab === 'repos'} onClick={() => setTab('repos')}>
             Repositories
           </TabButton>
+          <TabButton active={tab === 'usage'} onClick={() => setTab('usage')}>
+            Usage
+          </TabButton>
         </div>
 
         <div className="max-h-[60vh] overflow-y-auto pr-1">
           {tab === 'llm' && <LlmConfigsSection />}
           {tab === 'git' && <ConnectionsSection />}
           {tab === 'repos' && <RepoFlagsSection />}
+          {tab === 'usage' && <UsageSection />}
         </div>
       </DialogContent>
     </Dialog>
