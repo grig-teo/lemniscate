@@ -2,8 +2,12 @@ import { describe, expect, it } from 'vitest';
 import {
   buildConflictResolutionMessages,
   buildFixUserPrompt,
+  buildHermesConflictPrompt,
+  buildHermesFixPrompt,
+  buildHermesReviewPrompt,
   buildReviewMessages,
   hasConflictMarkers,
+  HERMES_REVIEW_FILENAME,
   parsePrReview,
   parseResolvedFile,
   type PrReview,
@@ -123,5 +127,70 @@ describe('prompt builders', () => {
     expect(system?.content).toContain('STRICT JSON');
     expect(user?.content).toContain('src/a.ts');
     expect(user?.content).toContain('<<<<<<< HEAD');
+  });
+});
+
+describe('hermes prompt builders', () => {
+  it('review prompt names the branches, the two-dot diff, and the verdict file', () => {
+    const prompt = buildHermesReviewPrompt({
+      taskTitle: 'Add tests',
+      taskPrompt: 'cover the payments module',
+      baseBranch: 'main',
+      headBranch: 'lemniscate/add-tests',
+      systemPromptExtra: null,
+    });
+    expect(prompt).toContain('Add tests');
+    expect(prompt).toContain('cover the payments module');
+    expect(prompt).toContain('git diff origin/main HEAD');
+    expect(prompt).toContain('origin/main');
+    expect(prompt).toContain(HERMES_REVIEW_FILENAME);
+    expect(prompt).toContain('"verdict"');
+    expect(prompt).toContain('Do NOT git commit, push, or create branches');
+  });
+
+  it('review prompt appends the owner instructions when present', () => {
+    const prompt = buildHermesReviewPrompt({
+      taskTitle: 't',
+      taskPrompt: null,
+      baseBranch: 'main',
+      headBranch: 'b',
+      systemPromptExtra: 'keep diffs small',
+    });
+    expect(prompt).toContain('keep diffs small');
+  });
+
+  it('fix prompt lists numbered review issues with paths', () => {
+    const review: PrReview = {
+      verdict: 'changes_requested',
+      summary: 'needs fixes',
+      issues: [
+        { path: 'src/a.ts', comment: 'off by one' },
+        { comment: 'add tests' },
+      ],
+    };
+    const prompt = buildHermesFixPrompt({
+      taskTitle: 'Add tests',
+      taskPrompt: null,
+      review,
+      systemPromptExtra: null,
+    });
+    expect(prompt).toContain('needs fixes');
+    expect(prompt).toContain('1. `src/a.ts`: off by one');
+    expect(prompt).toContain('2. add tests');
+    expect(prompt).toContain('Do NOT git commit, push, or create branches');
+  });
+
+  it('conflict prompt lists the conflicted files and forbids git add', () => {
+    const prompt = buildHermesConflictPrompt({
+      baseBranch: 'main',
+      headBranch: 'lemniscate/x',
+      conflictedPaths: ['src/a.ts', 'src/b.ts'],
+      systemPromptExtra: null,
+    });
+    expect(prompt).toContain("Merging branch 'lemniscate/x' into 'main'");
+    expect(prompt).toContain('- src/a.ts');
+    expect(prompt).toContain('- src/b.ts');
+    expect(prompt).toContain('<<<<<<<');
+    expect(prompt).toContain('Do NOT git commit, push, or run git add');
   });
 });

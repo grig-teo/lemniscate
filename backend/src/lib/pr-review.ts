@@ -138,3 +138,86 @@ export function buildConflictResolutionMessages(input: {
     },
   ];
 }
+
+// ---------------------------------------------------------------------------
+// Hermes agent prompts (executor 'hermes') — the same agent that implements
+// the task also reviews it, fixes review findings, and resolves merge
+// conflicts, so the whole pipeline shares one executor end to end.
+// ---------------------------------------------------------------------------
+
+// Verdict file the hermes review run writes into the workdir. Read and
+// deleted by agent-review.ts before any fix commit so it never ships.
+export const HERMES_REVIEW_FILENAME = '.lemniscate-review.json';
+
+export function buildHermesReviewPrompt(input: {
+  taskTitle: string;
+  taskPrompt: string | null;
+  baseBranch: string;
+  headBranch: string;
+  systemPromptExtra?: string | null;
+}): string {
+  return [
+    `# Task under review\n${input.taskTitle}`,
+    input.taskPrompt ? `\n${input.taskPrompt}` : '',
+    '',
+    `You are reviewing the pull request for this task. The current directory is a clone of the repository with the head branch '${input.headBranch}' checked out; the base branch tip is available as 'origin/${input.baseBranch}'.`,
+    '',
+    'Steps:',
+    `1. Inspect the changes: run \`git diff origin/${input.baseBranch} HEAD\` (two dots — the clone is shallow, there is no merge base) and read the affected files.`,
+    '2. Decide whether the implementation correctly and completely implements the task: correctness, missing pieces, regressions, unrelated changes.',
+    `3. Write your verdict as JSON to the file ${HERMES_REVIEW_FILENAME} with exactly this shape:`,
+    '{"verdict": "approve" | "changes_requested", "summary": "<one paragraph>", "issues": [{"path": "<file>", "comment": "<what must change>"}]}',
+    'Use "approve" only when the change is correct, minimal, and safe to merge. List concrete blocking issues; omit "path" for general ones. Use "issues": [] when approving.',
+    '',
+    `Do NOT git commit, push, or create branches. Do NOT modify any file other than ${HERMES_REVIEW_FILENAME}.`,
+    ...(input.systemPromptExtra
+      ? ['', 'Additional instructions from the repository owner:', input.systemPromptExtra]
+      : []),
+  ].join('\n');
+}
+
+export function buildHermesFixPrompt(input: {
+  taskTitle: string;
+  taskPrompt: string | null;
+  review: PrReview;
+  systemPromptExtra?: string | null;
+}): string {
+  const issues = input.review.issues
+    .map((issue, index) => `${index + 1}. ${issue.path ? `\`${issue.path}\`: ` : ''}${issue.comment}`)
+    .join('\n');
+  return [
+    `# Original task\n${input.taskTitle}`,
+    input.taskPrompt ? `\n${input.taskPrompt}` : '',
+    '',
+    'The review of your implementation requested changes. Address every issue below with minimal, focused edits in the current checkout (the task branch is already checked out).',
+    '',
+    `Review summary: ${input.review.summary}`,
+    '',
+    issues || '(no specific issues listed)',
+    '',
+    'Do NOT git commit, push, or create branches — git is handled externally.',
+    ...(input.systemPromptExtra
+      ? ['', 'Additional instructions from the repository owner:', input.systemPromptExtra]
+      : []),
+  ].join('\n');
+}
+
+export function buildHermesConflictPrompt(input: {
+  baseBranch: string;
+  headBranch: string;
+  conflictedPaths: string[];
+  systemPromptExtra?: string | null;
+}): string {
+  return [
+    `Merging branch '${input.headBranch}' into '${input.baseBranch}' produced conflicts in:`,
+    '',
+    ...input.conflictedPaths.map((p) => `- ${p}`),
+    '',
+    'The current directory contains the merge in progress, with conflict markers (<<<<<<< / ======= / >>>>>>>) in the files above.',
+    'Resolve every conflicted file: keep the intent of both sides so the pull request change is preserved, and remove ALL conflict markers.',
+    'Do NOT git commit, push, or run git add — just edit the files.',
+    ...(input.systemPromptExtra
+      ? ['', 'Additional instructions from the repository owner:', input.systemPromptExtra]
+      : []),
+  ].join('\n');
+}
