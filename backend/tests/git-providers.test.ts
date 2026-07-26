@@ -678,3 +678,128 @@ describe('createFile', () => {
     );
   });
 });
+
+// ---------------------------------------------------------------------------
+// Characterization tests locking github/gitlab listRepos + profile behavior
+// before the module split (AGENTS.md section 7: locking test first).
+// ---------------------------------------------------------------------------
+
+describe('github API client', () => {
+  it('validates the token via GET /user', async () => {
+    const fetchMock = stubFetch((url) => {
+      expect(url).toBe('https://api.github.com/user');
+      return jsonResponse({ login: 'octo' });
+    });
+    const profile = await fetchProviderProfile('github', 'tok');
+    expect(profile).toEqual({ username: 'octo' });
+    const headers = (fetchMock.mock.calls[0]?.[1] as { headers: Record<string, string> })
+      .headers;
+    expect(headers.Authorization).toBe('Bearer tok');
+  });
+
+  it('lists repos across per_page/page pagination', async () => {
+    const pageOne = Array.from({ length: 100 }, (_, i) => ({
+      id: i,
+      name: `repo-${i}`,
+      full_name: `octo/repo-${i}`,
+      clone_url: `https://github.com/octo/repo-${i}.git`,
+      default_branch: null,
+    }));
+    stubFetch((url) => {
+      const page = new URL(url).searchParams.get('page');
+      if (page === '1') return jsonResponse(pageOne);
+      if (page === '2') {
+        return jsonResponse([
+          {
+            id: 100,
+            name: 'last',
+            full_name: 'octo/last',
+            clone_url: 'https://github.com/octo/last.git',
+            default_branch: 'dev',
+          },
+        ]);
+      }
+      throw new Error(`unexpected url ${url}`);
+    });
+    const client = getProviderClient({
+      provider: 'github',
+      baseUrl: null,
+      accessTokenEnc: encrypt('tok'),
+    });
+    const repos = await client.listRepos();
+    expect(repos).toHaveLength(101);
+    expect(repos[0]).toMatchObject({
+      externalId: '0',
+      fullName: 'octo/repo-0',
+      cloneUrl: 'https://github.com/octo/repo-0.git',
+      defaultBranch: 'main',
+    });
+    expect(repos[100]).toMatchObject({ externalId: '100', defaultBranch: 'dev' });
+  });
+});
+
+describe('gitlab API client', () => {
+  it('validates a PAT via GET /user with the PRIVATE-TOKEN header', async () => {
+    const fetchMock = stubFetch((url) => {
+      expect(url).toBe('https://gitlab.com/api/v4/user');
+      return jsonResponse({ username: 'gl-user' });
+    });
+    const profile = await fetchProviderProfile('gitlab', 'tok');
+    expect(profile).toEqual({ username: 'gl-user' });
+    const headers = (fetchMock.mock.calls[0]?.[1] as { headers: Record<string, string> })
+      .headers;
+    expect(headers['PRIVATE-TOKEN']).toBe('tok');
+  });
+
+  it('validates an OAuth token via GET /user with a Bearer header', async () => {
+    const fetchMock = stubFetch(() => jsonResponse({ username: 'gl-oauth' }));
+    const profile = await fetchProviderProfile('gitlab', 'tok', null, 'oauth');
+    expect(profile).toEqual({ username: 'gl-oauth' });
+    const headers = (fetchMock.mock.calls[0]?.[1] as { headers: Record<string, string> })
+      .headers;
+    expect(headers.Authorization).toBe('Bearer tok');
+  });
+
+  it('lists member projects across per_page/page pagination', async () => {
+    const pageOne = Array.from({ length: 100 }, (_, i) => ({
+      id: i,
+      path: `proj-${i}`,
+      path_with_namespace: `group/proj-${i}`,
+      http_url_to_repo: `https://gitlab.com/group/proj-${i}.git`,
+      default_branch: null,
+    }));
+    stubFetch((url) => {
+      expect(url).toContain('https://gitlab.com/api/v4/projects?membership=true');
+      const page = new URL(url).searchParams.get('page');
+      if (page === '1') return jsonResponse(pageOne);
+      if (page === '2') {
+        return jsonResponse([
+          {
+            id: 100,
+            path: 'last',
+            path_with_namespace: 'group/last',
+            http_url_to_repo: 'https://gitlab.com/group/last.git',
+            default_branch: 'dev',
+          },
+        ]);
+      }
+      throw new Error(`unexpected url ${url}`);
+    });
+    const client = getProviderClient({
+      provider: 'gitlab',
+      baseUrl: null,
+      accessTokenEnc: encrypt('tok'),
+      tokenType: 'pat',
+    });
+    const repos = await client.listRepos();
+    expect(repos).toHaveLength(101);
+    expect(repos[0]).toMatchObject({
+      externalId: '0',
+      name: 'proj-0',
+      fullName: 'group/proj-0',
+      cloneUrl: 'https://gitlab.com/group/proj-0.git',
+      defaultBranch: 'main',
+    });
+    expect(repos[100]).toMatchObject({ externalId: '100', defaultBranch: 'dev' });
+  });
+});

@@ -549,3 +549,136 @@ describe('pullRequestState', () => {
     expect(await pullRequestState(giteeConnection, gvRef)).toBe('closed');
   });
 });
+
+// ---------------------------------------------------------------------------
+// Characterization tests locking github/gitlab open/merge/diff behavior
+// before the module split (AGENTS.md section 7: locking test first).
+// ---------------------------------------------------------------------------
+
+const ghPullsUrl = 'https://api.github.com/repos/ivan/repo/pulls';
+const ghOpenPullsQuery =
+  `${ghPullsUrl}?state=open&head=${encodeURIComponent('ivan:lemniscate/t-1')}&per_page=100`;
+const ghLookupPull = { number: 7, html_url: 'https://github.com/ivan/repo/pull/7', base: { ref: 'main' } };
+
+describe('github openPullRequest', () => {
+  it('creates the PR via POST /repos/{full}/pulls', async () => {
+    stubFetch((url, init) => {
+      expect(url).toBe(ghPullsUrl);
+      expect(init?.method).toBe('POST');
+      return mockResponse(201, { html_url: 'https://github.com/ivan/repo/pull/1' });
+    });
+    const result = await openPullRequest(ghConnection, gvInput);
+    expect(result).toEqual({ prUrl: 'https://github.com/ivan/repo/pull/1' });
+  });
+
+  it('recovers the existing PR on a 422 already-exists response', async () => {
+    stubFetch((url, init) => {
+      if (init?.method === 'POST') return mockResponse(422, { message: 'Validation Failed' });
+      expect(url).toBe(ghOpenPullsQuery);
+      return mockResponse(200, [{ html_url: 'https://github.com/ivan/repo/pull/9', base: { ref: 'main' } }]);
+    });
+    const result = await openPullRequest(ghConnection, gvInput);
+    expect(result).toEqual({ prUrl: 'https://github.com/ivan/repo/pull/9' });
+  });
+});
+
+describe('github mergePullRequest', () => {
+  it('merges via PUT /pulls/{number}/merge', async () => {
+    stubFetch((url, init) => {
+      if (init?.method === 'PUT') {
+        expect(url).toBe(`${ghPullsUrl}/7/merge`);
+        return mockResponse(200, { merged: true });
+      }
+      expect(url).toBe(ghOpenPullsQuery);
+      return mockResponse(200, [ghLookupPull]);
+    });
+    const result = await mergePullRequest(ghConnection, gvRef);
+    expect(result).toEqual({ merged: true, prUrl: ghLookupPull.html_url });
+  });
+
+  it('maps a 405 refusal to a conflict result', async () => {
+    stubFetch((url, init) => {
+      if (init?.method === 'PUT') return mockResponse(405, { message: 'Not mergeable' });
+      return mockResponse(200, [ghLookupPull]);
+    });
+    const result = await mergePullRequest(ghConnection, gvRef);
+    expect(result).toEqual({ merged: false, conflict: true, prUrl: ghLookupPull.html_url });
+  });
+});
+
+describe('github getPullRequestDiff', () => {
+  it('fetches the diff with the github diff Accept header', async () => {
+    stubFetch((url, init) => {
+      if (url === ghOpenPullsQuery) return mockResponse(200, [ghLookupPull]);
+      expect(url).toBe(`${ghPullsUrl}/7`);
+      expect((init?.headers as Record<string, string>).Accept).toBe('application/vnd.github.diff');
+      return mockResponse(200, 'diff --git a/f b/f');
+    });
+    expect(await getPullRequestDiff(ghConnection, gvRef)).toBe('diff --git a/f b/f');
+  });
+});
+
+const glMrsUrl = 'https://gitlab.com/api/v4/projects/ivan%2Frepo/merge_requests';
+const glOpenedMrsQuery =
+  `${glMrsUrl}?state=opened&source_branch=lemniscate%2Ft-1&target_branch=main`;
+
+describe('gitlab openPullRequest', () => {
+  it('creates the MR via POST /projects/{full}/merge_requests', async () => {
+    stubFetch((url, init) => {
+      expect(url).toBe(glMrsUrl);
+      expect(init?.method).toBe('POST');
+      return mockResponse(201, { web_url: 'https://gitlab.com/ivan/repo/-/merge_requests/1' });
+    });
+    const result = await openPullRequest(gitlabConnection, gvInput);
+    expect(result).toEqual({ prUrl: 'https://gitlab.com/ivan/repo/-/merge_requests/1' });
+  });
+
+  it('recovers the existing MR on a 409 already-exists response', async () => {
+    stubFetch((url, init) => {
+      if (init?.method === 'POST') return mockResponse(409, { message: 'MR exists' });
+      expect(url).toBe(glOpenedMrsQuery);
+      return mockResponse(200, [{ web_url: 'https://gitlab.com/ivan/repo/-/merge_requests/9' }]);
+    });
+    const result = await openPullRequest(gitlabConnection, gvInput);
+    expect(result).toEqual({ prUrl: 'https://gitlab.com/ivan/repo/-/merge_requests/9' });
+  });
+});
+
+describe('gitlab mergePullRequest', () => {
+  it('merges via PUT /merge_requests/{iid}/merge', async () => {
+    stubFetch((url, init) => {
+      if (init?.method === 'PUT') {
+        expect(url).toBe(`${glMrsUrl}/5/merge`);
+        return mockResponse(200, { state: 'merged' });
+      }
+      expect(url).toBe(glOpenedMrsQuery);
+      return mockResponse(200, [{ iid: 5, web_url: 'https://gitlab.com/ivan/repo/-/merge_requests/5' }]);
+    });
+    const result = await mergePullRequest(gitlabConnection, gvRef);
+    expect(result).toEqual({ merged: true, prUrl: 'https://gitlab.com/ivan/repo/-/merge_requests/5' });
+  });
+
+  it('maps a 406 refusal to a conflict result', async () => {
+    stubFetch((url, init) => {
+      if (init?.method === 'PUT') return mockResponse(406, { message: 'Conflict' });
+      return mockResponse(200, [{ iid: 5, web_url: 'w' }]);
+    });
+    const result = await mergePullRequest(gitlabConnection, gvRef);
+    expect(result).toEqual({ merged: false, conflict: true, prUrl: 'w' });
+  });
+});
+
+describe('gitlab getPullRequestDiff', () => {
+  it('reassembles a unified diff from the MR changes payload', async () => {
+    stubFetch((url) => {
+      if (url === glOpenedMrsQuery) return mockResponse(200, [{ iid: 5, web_url: 'w' }]);
+      expect(url).toBe(`${glMrsUrl}/5/changes`);
+      return mockResponse(200, {
+        changes: [{ old_path: 'a.ts', new_path: 'a.ts', diff: '@@ -1 +1 @@' }],
+      });
+    });
+    expect(await getPullRequestDiff(gitlabConnection, gvRef)).toBe(
+      '--- a/a.ts\n+++ b/a.ts\n@@ -1 +1 @@',
+    );
+  });
+});
