@@ -108,7 +108,7 @@ services:
     group_add:
       - "${DOCKER_GID:-990}"
     ports:
-      - "${WORKER_HEALTH_BIND:-127.0.0.1:3100}:3100"
+      - "${WORKER_HEALTH_BIND:-127.0.0.1:3101}:3100"
     volumes:
       - agent-workdir:/tmp/lemniscate-repos
       - /var/run/docker.sock:/var/run/docker.sock
