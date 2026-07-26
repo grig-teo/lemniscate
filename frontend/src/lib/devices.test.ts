@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  AGENT_CLI_ZIP_FILE,
   AGENT_DOWNLOADS,
   agentDownloadUrl,
   agentPairCommand,
@@ -261,6 +262,12 @@ describe('AGENT_DOWNLOADS / agentDownloadUrl', () => {
   it('builds a stable agent-latest release URL', () => {
     expect(agentDownloadUrl('lemniscate-agent-macos.dmg')).toBe(
       'https://github.com/grig-teo/lemniscate/releases/download/agent-latest/lemniscate-agent-macos.dmg',
+    );
+  });
+
+  it('points the CLI agent zip at the same release', () => {
+    expect(agentDownloadUrl(AGENT_CLI_ZIP_FILE)).toBe(
+      'https://github.com/grig-teo/lemniscate/releases/download/agent-latest/lemniscate-agent-cli.zip',
     );
   });
 });

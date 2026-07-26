@@ -137,6 +137,9 @@ export const AGENT_DOWNLOAD_LINUX_DEB: AgentDownload = {
   fileName: 'lemniscate-agent-linux.deb',
 };
 
+/** Zip of the Node CLI agent folder (agent/), for Termux/servers. */
+export const AGENT_CLI_ZIP_FILE = 'lemniscate-agent-cli.zip';
+
 /** Stable public download URL for a release asset (no auth needed). */
 export function agentDownloadUrl(fileName: string): string {
   return `${AGENT_RELEASE_BASE}/${fileName}`;

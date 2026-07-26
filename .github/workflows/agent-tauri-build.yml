@@ -5,10 +5,12 @@ on:
     branches: [main]
     paths:
       - 'agent-tauri/**'
+      - 'agent/**'
       - '.github/workflows/agent-tauri-build.yml'
   pull_request:
     paths:
       - 'agent-tauri/**'
+      - 'agent/**'
       - '.github/workflows/agent-tauri-build.yml'
   workflow_dispatch:
 
@@ -82,13 +84,26 @@ jobs:
       contents: write
 
     steps:
+      - name: Checkout (for the CLI agent zip)
+        uses: actions/checkout@v4
+
       - name: Download all build artifacts
         uses: actions/download-artifact@v4
         with:
           path: dist/
 
-      # Rename to stable file names so the release URLs never change:
-      # https://github.com/grig-teo/lemniscate/releases/download/agent-latest/<name>
+      # Zip the Node CLI agent (agent/) so the web UI can offer it as a
+      # standalone download: lemniscate-agent-cli.zip.
+      - name: Zip the CLI agent folder
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          cd agent
+          zip -r ../out/lemniscate-agent-cli.zip . -x 'node_modules/*'
+          cd ..
+          ls -la out/lemniscate-agent-cli.zip
+
       - name: Normalize installer names
         shell: bash
         run: |

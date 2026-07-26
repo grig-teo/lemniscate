@@ -3,6 +3,7 @@ import { Check, Copy, Download } from 'lucide-react';
 
 import { describeApiError } from '@/lib/api';
 import {
+  AGENT_CLI_ZIP_FILE,
   AGENT_DOWNLOADS,
   AGENT_DOWNLOAD_LINUX_DEB,
   agentDownloadUrl,
@@ -180,6 +181,15 @@ export function PairingDialog({
                     {installCommand}
                   </pre>
                   <CopyButton text={installCommand ?? ''} label="Copy install command" />
+                </div>
+                <div>
+                  <a
+                    href={agentDownloadUrl(AGENT_CLI_ZIP_FILE)}
+                    className={buttonVariants({ variant: 'outline', size: 'sm' })}
+                  >
+                    <Download className="h-4 w-4" />
+                    Download agent/ folder (.zip)
+                  </a>
                 </div>
                 <p className="text-xs text-muted-foreground">
                   Docker must be installed on the device to run web apps on it.
