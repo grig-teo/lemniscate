@@ -85,6 +85,8 @@ export type LlmTestResult = {
   latencyMs?: number;
   modelEcho?: string;
   reply?: string;
+  /** Set when the reply hit the probe token budget (thinking models). */
+  truncated?: boolean;
   error?: string;
 };
 

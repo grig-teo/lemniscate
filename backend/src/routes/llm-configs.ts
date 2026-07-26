@@ -87,9 +87,11 @@ function toClientParams(record: LlmConfig) {
 }
 
 const TEST_PROMPT = 'Reply with the word ok';
-// Reasoning models (e.g. Kimi k3) spend tokens on reasoning_content first —
-// 8 tokens would be exhausted before any visible reply.
-const TEST_MAX_TOKENS = 64;
+// Reasoning models (e.g. Kimi k3, GLM-5.2 on high thinking) spend tokens on
+// reasoning_content first — a tiny budget is exhausted before any visible
+// reply. 1024 is still a trivial probe cost, and allowTruncated below makes
+// a cut-off reply a pass anyway: any response proves URL/key/model work.
+const TEST_MAX_TOKENS = 1024;
 const TEST_TIMEOUT_CAP_SECONDS = 30;
 
 // Clears the isDefault flag on the user's other configs (single home for
@@ -122,6 +124,7 @@ function buildTestParams(params: ConnectionTestParams): ChatCompletionsParams {
     model: params.model,
     messages: [{ role: 'user', content: TEST_PROMPT }],
     maxTokens: TEST_MAX_TOKENS,
+    allowTruncated: true,
     ...(params.thinkingLevel ? { thinkingLevel: params.thinkingLevel } : {}),
     // Timeout capped at 30s regardless of the configured value.
     timeoutSeconds: Math.min(
@@ -141,6 +144,7 @@ async function runConnectionTest(params: ConnectionTestParams) {
       latencyMs: result.latencyMs,
       modelEcho: result.model,
       reply: result.content,
+      ...(result.truncated ? { truncated: true } : {}),
     };
   } catch (err) {
     // Errors from llm-client are already scrubbed of the API key.

@@ -198,6 +198,31 @@ describe('chatCompletions', () => {
     expect((err as LlmError).message).toMatch(/raise maxTokens in the LLM config/);
   });
 
+  it('returns a truncated result instead of throwing when allowTruncated is set', async () => {
+    // Connectivity probes (test-connection button): any reply — even one cut
+    // short by the tiny probe budget — proves URL/key/model work. Reasoning
+    // models burn the probe budget on thinking before visible content.
+    stubFetch(
+      jsonResponse({
+        choices: [{ message: { content: '' }, finish_reason: 'length' }],
+        model: 'echo-model',
+      }),
+    );
+    const result = await chatCompletions({ ...BASE, maxTokens: 64, allowTruncated: true });
+    expect(result.truncated).toBe(true);
+    expect(result.content).toBe('');
+    expect(result.model).toBe('echo-model');
+  });
+
+  it('omits the truncated flag on a complete reply when allowTruncated is set', async () => {
+    stubFetch(
+      jsonResponse({ choices: [{ message: { content: 'ok' }, finish_reason: 'stop' }] }),
+    );
+    const result = await chatCompletions({ ...BASE, maxTokens: 64, allowTruncated: true });
+    expect(result.truncated).toBeUndefined();
+    expect(result.content).toBe('ok');
+  });
+
   it('reports the real attempt number in the timeout message', async () => {
     vi.stubGlobal(
       'fetch',

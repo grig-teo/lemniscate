@@ -42,6 +42,13 @@ export interface ChatCompletionsParams {
   customHeaders?: Record<string, string>;
   /** Called before each backoff wait, with 1-based attempt info. */
   onRetry?: (info: LlmRetryInfo) => void;
+  /**
+   * Connectivity probes (test-connection): return the result with
+   * `truncated: true` instead of throwing when finish_reason is 'length'.
+   * Any reply — even cut short by the tiny probe budget — proves the
+   * URL/key/model work. Real agent calls leave this unset.
+   */
+  allowTruncated?: boolean;
 }
 
 export interface LlmRetryInfo {
@@ -90,6 +97,8 @@ export interface ChatCompletionsResult {
   model: string;
   usage?: ChatUsage;
   latencyMs: number;
+  /** Set only when allowTruncated is on and the reply hit the token cap. */
+  truncated?: boolean;
 }
 
 export class LlmError extends Error {
@@ -158,6 +167,7 @@ interface RequestState {
   onRetry?: (info: LlmRetryInfo) => void;
   timeoutSeconds: number;
   maxRetries: number;
+  allowTruncated: boolean;
   startedAt: number;
   /** Flipped off after an HTTP 400 so the retry drops reasoning_effort. */
   includeReasoningEffort: boolean;
@@ -173,6 +183,7 @@ function makeRequestState(params: ChatCompletionsParams): RequestState {
     messages: params.messages,
     timeoutSeconds: params.timeoutSeconds ?? DEFAULT_TIMEOUT_SECONDS,
     maxRetries: params.maxRetries ?? DEFAULT_MAX_RETRIES,
+    allowTruncated: params.allowTruncated ?? false,
     startedAt: Date.now(),
     includeReasoningEffort: params.thinkingLevel !== undefined,
     includeTemperature: params.temperature !== undefined,
@@ -276,17 +287,14 @@ function extractUsage(usage: ChatCompletionsResponseBody['usage']): ChatUsage | 
   return undefined;
 }
 
-function assertNotTruncated(parsed: ChatCompletionsResponseBody, state: RequestState): void {
-  if (parsed.choices?.[0]?.finish_reason === 'length') {
+function toResult(parsed: ChatCompletionsResponseBody, state: RequestState): ChatCompletionsResult {
+  const truncated = parsed.choices?.[0]?.finish_reason === 'length';
+  if (truncated && !state.allowTruncated) {
     throw new LlmError(
       'protocol',
       `LLM response truncated at maxTokens=${state.maxTokens ?? 'unset'} — raise maxTokens in the LLM config`,
     );
   }
-}
-
-function toResult(parsed: ChatCompletionsResponseBody, state: RequestState): ChatCompletionsResult {
-  assertNotTruncated(parsed, state);
   const content = parsed.choices?.[0]?.message?.content;
   if (typeof content !== 'string') {
     throw new LlmError(
@@ -300,6 +308,7 @@ function toResult(parsed: ChatCompletionsResponseBody, state: RequestState): Cha
     model: parsed.model ?? state.model,
     ...(usage ? { usage } : {}),
     latencyMs: Date.now() - state.startedAt,
+    ...(truncated ? { truncated: true } : {}),
   };
 }
 

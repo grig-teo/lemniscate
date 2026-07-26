@@ -7,7 +7,8 @@ function TestOkBanner({ result }: { result: LlmTestResult }) {
         Connection OK{result.latencyMs !== undefined ? ` in ${result.latencyMs} ms` : ''}
       </p>
       <p className="mt-1 text-muted-foreground">
-        Model: {result.modelEcho ?? '—'} · Reply: {result.reply ?? '—'}
+        Model: {result.modelEcho ?? '—'} · Reply:{' '}
+        {result.reply ? result.reply : result.truncated ? '(cut off by the probe token budget — normal for thinking models)' : '—'}
       </p>
     </div>
   );
