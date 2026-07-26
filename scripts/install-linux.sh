@@ -6,7 +6,9 @@ set -euo pipefail
 
 REPO_URL="https://github.com/grig-teo/lemniscate.git"
 TARGET_DIR="./lemniscate"
-HEALTH_URL="http://localhost:3000/health"
+# Readiness (not bare liveness) as the deploy gate: the install only reports
+# success once Postgres and Redis are verified reachable by the API.
+HEALTH_URL="http://localhost:3000/health/ready"
 
 step() { printf '\n\033[1m==> %s\033[0m\n' "$1"; }
 note() { printf '    %s\n' "$1"; }
@@ -187,5 +189,11 @@ cat <<EOF
 
     Useful commands (run inside $TARGET_DIR):
       $COMPOSE logs -f        # follow logs
+      $COMPOSE ps             # container health status (backend/worker)
       $COMPOSE down           # stop everything
+
+    Monitoring: point your uptime checker at
+      http://localhost:3000/health/ready   # 200 = serving, 503 = a dependency is down
+    (/health is a dependency-free liveness probe; /health/ready verifies
+    Postgres and Redis and reports per-check status as JSON.)
 EOF

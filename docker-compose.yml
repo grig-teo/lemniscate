@@ -64,6 +64,13 @@ services:
       MINIO_BUCKET: ${MINIO_BUCKET:-lemniscate-library}
     ports:
       - "${BACKEND_BIND:-127.0.0.1:3000}:3000"
+    healthcheck:
+      # Readiness, not liveness: 503s when Postgres or Redis are unreachable.
+      test: ["CMD-SHELL", "curl -fsS \"http://localhost:$${PORT:-3000}/health/ready\" || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
     depends_on:
       postgres:
         condition: service_healthy
@@ -92,6 +99,14 @@ services:
       # so the recovered task resumes instead of restarting. Must match
       # AGENT_WORKDIR in backend/.env.
       - agentworkdir:/tmp/lemniscate-repos
+    healthcheck:
+      # The worker has no HTTP port; it rewrites a heartbeat file on a timer
+      # (src/lib/worker-heartbeat.ts). Stale > 30s = wedged, restart it.
+      test: ["CMD-SHELL", "node -e \"const fs=require('fs');try{process.exit(Date.now()-fs.statSync('/tmp/lemniscate-worker-heartbeat').mtimeMs<30000?0:1)}catch{process.exit(1)}\""]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
     depends_on:
       postgres:
         condition: service_healthy
@@ -112,7 +127,8 @@ services:
     ports:
       - "${FRONTEND_BIND:-8080}:80"
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
 
 volumes:
   pgdata:

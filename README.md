@@ -54,6 +54,27 @@ docker compose up --build
 - Frontend: http://localhost:8080
 - Backend API: http://localhost:3000
 
+## Health checks and monitoring
+
+The API splits liveness from readiness:
+
+- `GET /health` — liveness. Always `200 { "ok": true }` while the process
+  answers HTTP; touches no dependencies, so it never flaps on a DB blip.
+- `GET /health/ready` — readiness. Runs `SELECT 1` against Postgres (Prisma)
+  and `PING` against Redis, each with a ~2s timeout. Answers
+  `200 { "ok": true, "postgres": true, "redis": true }` when serving, or
+  `503` with the failing check(s) set to `false`.
+
+Both compose stacks wire these up: the `backend` healthcheck curls
+`/health/ready`, the `worker` healthcheck verifies a heartbeat file the
+BullMQ consumer rewrites on a timer (`backend/src/lib/worker-heartbeat.ts`),
+and `frontend` only starts once `backend` is `service_healthy`. Inspect with
+`docker compose ps` or
+`docker inspect --format '{{.State.Health.Status}}' <container>`.
+
+Point external uptime monitoring at `/health/ready`: a 503 means Postgres or
+Redis is down and the deploy/proxy should stop routing traffic to the API.
+
 ## OAuth app setup
 
 Login is via GitHub or GitLab OAuth. Register an OAuth app at each provider
