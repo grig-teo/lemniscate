@@ -1,9 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 // Locking tests for the pr-state-sync job: awaiting_review tasks whose PR was
-// merged on the git host must be marked done; open/closed PRs and provider
-// failures leave the task untouched. prisma, the PR API, and event helpers
-// are mocked so no DB/network is contacted.
+// merged on the git host are marked done, closed-without-merge are marked
+// closed; open PRs and provider failures leave the task untouched. prisma,
+// the PR API, and event helpers are mocked so no DB/network is contacted.
 
 const mocks = vi.hoisted(() => ({
   taskFindMany: vi.fn(),
@@ -48,10 +48,10 @@ beforeEach(() => {
 });
 
 describe('taskStatusForPrState', () => {
-  it('maps merged to done and leaves open/closed unchanged', () => {
+  it('maps merged to done, closed to closed, and leaves open unchanged', () => {
     expect(taskStatusForPrState('merged')).toBe('done');
     expect(taskStatusForPrState('open')).toBeNull();
-    expect(taskStatusForPrState('closed')).toBeNull();
+    expect(taskStatusForPrState('closed')).toBe('closed');
   });
 });
 
@@ -75,18 +75,27 @@ describe('syncMergedPullRequests', () => {
     expect(mocks.cleanupWorkdir).toHaveBeenCalledWith('/tmp/test-workdirs/t1', 't1');
   });
 
-  it('leaves tasks with open or closed PRs unchanged', async () => {
+  it('leaves tasks with open PRs unchanged', async () => {
     mocks.taskFindMany.mockResolvedValue([awaitingTask({ id: 't-open' })]);
     mocks.pullRequestState.mockResolvedValue('open');
-    await syncMergedPullRequests();
-
-    mocks.taskFindMany.mockResolvedValue([awaitingTask({ id: 't-closed' })]);
-    mocks.pullRequestState.mockResolvedValue('closed');
     await syncMergedPullRequests();
 
     expect(mocks.setTaskStatus).not.toHaveBeenCalled();
     expect(mocks.logEvent).not.toHaveBeenCalled();
     expect(mocks.cleanupWorkdir).not.toHaveBeenCalled();
+  });
+
+  it('marks a task closed when its PR was closed without merge', async () => {
+    mocks.taskFindMany.mockResolvedValue([awaitingTask({ id: 't-closed' })]);
+    mocks.pullRequestState.mockResolvedValue('closed');
+    await syncMergedPullRequests();
+
+    expect(mocks.setTaskStatus).toHaveBeenCalledWith('t-closed', 'closed');
+    expect(mocks.logEvent).toHaveBeenCalledWith(
+      't-closed',
+      'pull request closed without merge on the git host — task marked closed',
+    );
+    expect(mocks.cleanupWorkdir).toHaveBeenCalledWith('/tmp/test-workdirs/t-closed', 't-closed');
   });
 
   it('skips provider failures and keeps syncing the remaining tasks', async () => {

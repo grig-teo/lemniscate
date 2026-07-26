@@ -28,7 +28,7 @@ import { parseOrReply } from './helpers.js';
 // message JSON {id, kind, payload, createdAt} with createdAt as an ISO
 // string. Payloads:
 //   log    → { line: string }
-//   status → { status: 'pending'|'queued'|'running'|'awaiting_review'|'done'|'failed' }
+//   status → { status: 'pending'|'queued'|'running'|'awaiting_review'|'done'|'failed'|'closed' }
 //   diff   → { path: string, diff: string } | { path: string, action: 'created'|'modified'|'deleted' }
 
 const RUN_TASK_JOB = 'run-task';

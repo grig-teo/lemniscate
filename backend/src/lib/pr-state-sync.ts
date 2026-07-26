@@ -30,12 +30,14 @@ export async function registerPrStateSyncSchedule(): Promise<void> {
 }
 
 /** Task status for a polled PR state; null leaves the task unchanged. */
-export function taskStatusForPrState(state: PrState): 'done' | null {
-  return state === 'merged' ? 'done' : null;
+export function taskStatusForPrState(state: PrState): 'done' | 'closed' | null {
+  if (state === 'merged') return 'done';
+  if (state === 'closed') return 'closed';
+  return null;
 }
 
-// Polls one task's PR; returns true when the task was marked done. Provider
-// failures are logged and skipped — the next run retries.
+// Polls one task's PR; returns true when the task left awaiting_review.
+// Provider failures are logged and skipped — the next run retries.
 async function syncTaskPrState(task: TaskWithConnection): Promise<boolean> {
   if (!task.branchName) return false;
   try {
@@ -44,10 +46,13 @@ async function syncTaskPrState(task: TaskWithConnection): Promise<boolean> {
       headBranch: task.branchName,
       baseBranch: task.repository.defaultBranch,
     });
-    if (taskStatusForPrState(state) !== 'done') return false;
-    await setTaskStatus(task.id, 'done');
-    await logEvent(task.id, 'pull request merged on the git host — task marked done');
-    // The run workdir was kept for the review window — merged means cleanup.
+    const status = taskStatusForPrState(state);
+    if (status === null) return false;
+    await setTaskStatus(task.id, status);
+    const what = status === 'done' ? 'merged' : 'closed without merge';
+    await logEvent(task.id, `pull request ${what} on the git host — task marked ${status}`);
+    // The run workdir was kept for the review window — the PR is finished
+    // either way, so the clone can go.
     await cleanupWorkdir(path.join(config.AGENT_WORKDIR, task.id), task.id);
     return true;
   } catch (err) {
@@ -56,8 +61,8 @@ async function syncTaskPrState(task: TaskWithConnection): Promise<boolean> {
   }
 }
 
-// Job: pr-state-sync — marks awaiting_review tasks done when their PR was
-// merged on the git host. Closed-without-merge PRs are left untouched.
+// Job: pr-state-sync — moves awaiting_review tasks to done when their PR was
+// merged on the git host, or to closed when it was closed without merging.
 export async function syncMergedPullRequests(): Promise<void> {
   const tasks = await prisma.task.findMany({
     where: {
@@ -74,6 +79,6 @@ export async function syncMergedPullRequests(): Promise<void> {
     if (await syncTaskPrState(task)) marked += 1;
   }
   if (tasks.length > 0) {
-    console.log(`pr-state-sync: marked ${marked}/${tasks.length} awaiting-review task(s) done`);
+    console.log(`pr-state-sync: resolved ${marked}/${tasks.length} awaiting-review task(s)`);
   }
 }

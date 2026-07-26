@@ -33,6 +33,7 @@ enum TaskStatus {
   awaiting_review
   done
   failed
+  closed
 }
 
 enum TaskEventKind {

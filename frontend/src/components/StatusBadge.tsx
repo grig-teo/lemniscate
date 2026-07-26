@@ -6,11 +6,14 @@ const STATUS_STYLES: Record<string, string> = {
   queued: 'border-yellow-500/40 bg-yellow-500/10 text-yellow-600 dark:text-yellow-400',
   running: 'border-blue-500/40 bg-blue-500/10 text-blue-600 dark:text-blue-400',
   awaiting_review: 'border-purple-500/40 bg-purple-500/10 text-purple-600 dark:text-purple-400',
-  done: 'border-green-500/40 bg-green-500/10 text-green-600 dark:text-green-400',
+  // GitHub's merged-PR purple.
+  done: 'border-[#8250df]/40 bg-[#8250df]/10 text-[#8250df]',
   failed: 'border-red-500/40 bg-red-500/10 text-red-600 dark:text-red-400',
+  // PR closed without merge — same red family as failed, distinct from done.
+  closed: 'border-red-500/40 bg-red-500/10 text-red-600 dark:text-red-400',
 };
 
-/** Colored badge for a task status (pending/queued/running/awaiting_review/done/failed). */
+/** Colored badge for a task status (pending/queued/running/awaiting_review/done/failed/closed). */
 export function StatusBadge({ status, className }: { status: string; className?: string }) {
   const style = STATUS_STYLES[status] ?? 'border-muted-foreground/40 bg-muted text-muted-foreground';
   return (
