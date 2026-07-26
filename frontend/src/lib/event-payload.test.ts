@@ -36,6 +36,19 @@ describe('payloadToLogText', () => {
     expect(payloadToLogText({ text: 't' })).toBe('t');
   });
 
+  it('joins { lines: string[] } batched payloads into multiline text', () => {
+    expect(payloadToLogText({ lines: ['line one', 'line two'] })).toBe('line one\nline two');
+    expect(payloadToLogText({ lines: ['only'] })).toBe('only');
+  });
+
+  it('joins batched lines even when message/line/text are absent', () => {
+    expect(payloadToLogText({ lines: ['a', 'b'], line: 'ignored' })).toBe('a\nb');
+  });
+
+  it('filters non-string entries from a lines array', () => {
+    expect(payloadToLogText({ lines: ['a', 42, 'b'] })).toBe('a\nb');
+  });
+
   it('falls back to JSON for other shapes', () => {
     expect(payloadToLogText({ other: 1 })).toBe(JSON.stringify({ other: 1 }));
     expect(payloadToLogText(42)).toBe('42');

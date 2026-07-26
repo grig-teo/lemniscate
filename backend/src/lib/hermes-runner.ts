@@ -2,7 +2,8 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import readline from 'node:readline';
-import { logEvent } from './agent-git.js';
+import { logBatch } from './agent-git.js';
+import { LineBatcher } from './line-batcher.js';
 import { prisma } from './prisma.js';
 import { redactSecrets } from './utils.js';
 
@@ -39,6 +40,10 @@ export interface HermesTaskOptions {
 const HERMES_HOME_DIR = '.hermes-home';
 const OUTPUT_TAIL_CHARS = 500;
 const CANCEL_POLL_MS = 5_000;
+// Line coalescing: buffer agent stdout/stderr and flush as a single batched
+// log event. Cuts DB writes ~10x without perceptible console lag.
+const BATCH_MAX_LINES = 50;
+const BATCH_FLUSH_MS = 500;
 
 // The cancel endpoint marks the task failed; the runner notices on the next
 // poll and kills the agent — a real stop, not just a status flip.
@@ -120,17 +125,31 @@ function makeOutputTail(maxChars: number): { push: (line: string) => void; text:
 
 type OutputTail = ReturnType<typeof makeOutputTail>;
 
+// Creates a readline interface over the stream, pushing each processed line
+// to the output tail and (when a taskId is set) to the LineBatcher for
+// coalesced DB writes. Returns the batcher so the caller can flush on close.
 function streamLines(
   stream: NodeJS.ReadableStream,
   opts: HermesTaskOptions,
   tail: OutputTail,
-): void {
+): LineBatcher | undefined {
   const rl = readline.createInterface({ input: stream, terminal: false });
+  if (!opts.taskId) {
+    rl.on('line', (raw) => tail.push(redactSecrets(stripAnsi(raw), opts.secrets)));
+    return undefined;
+  }
+  const batcher = new LineBatcher(
+    (lines) => logBatch(opts.taskId!, lines),
+    BATCH_MAX_LINES,
+    BATCH_FLUSH_MS,
+  );
   rl.on('line', (raw) => {
     const line = redactSecrets(stripAnsi(raw), opts.secrets);
     tail.push(line);
-    if (opts.taskId) void logEvent(opts.taskId, line).catch(() => {});
+    batcher.push(line);
   });
+  rl.on('close', () => batcher.close());
+  return batcher;
 }
 
 function spawnError(err: NodeJS.ErrnoException): Error {
@@ -155,9 +174,11 @@ function waitForHermes(child: ChildProcess, opts: HermesTaskOptions): Promise<vo
           });
         }, opts.pollMs ?? CANCEL_POLL_MS)
       : undefined;
+    const batchers: LineBatcher[] = [];
     const settle = (fn: () => void) => {
       clearTimeout(timer);
       if (cancelPoll) clearInterval(cancelPoll);
+      batchers.forEach((b) => b.close());
       fn();
     };
     const timer = setTimeout(() => {
@@ -166,8 +187,14 @@ function waitForHermes(child: ChildProcess, opts: HermesTaskOptions): Promise<vo
         reject(timeoutError(opts.timeoutMs));
       });
     }, opts.timeoutMs);
-    if (child.stdout) streamLines(child.stdout, opts, tail);
-    if (child.stderr) streamLines(child.stderr, opts, tail);
+    if (child.stdout) {
+      const b = streamLines(child.stdout, opts, tail);
+      if (b) batchers.push(b);
+    }
+    if (child.stderr) {
+      const b = streamLines(child.stderr, opts, tail);
+      if (b) batchers.push(b);
+    }
     child.on('error', (err) => {
       settle(() => reject(spawnError(err as NodeJS.ErrnoException)));
     });
