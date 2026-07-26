@@ -7,4 +7,4 @@
 // second slash: https:/$()/host/path
 
 // Base URL of the deployed lemniscate backend (no trailing slash).
-SERVER_URL = https:/$()/grig-teo.space/lemniscate
+SERVER_URL = https:/$()/lemniscate.grig-teo.space

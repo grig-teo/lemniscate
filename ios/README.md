@@ -13,7 +13,7 @@ third-party dependencies (URLSession + Codable only).
    ```
 
    `Config.xcconfig` is git-ignored and optionally included from
-   `Base.xcconfig`; without it the default `https://grig-teo.space/lemniscate`
+   `Base.xcconfig`; without it the default `https://lemniscate.grig-teo.space`
    is used. Note that xcconfig treats `//` as a comment, so URLs are written
    as `https:/$()/host/path`.
 
