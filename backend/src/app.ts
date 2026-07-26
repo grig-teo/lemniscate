@@ -1,9 +1,10 @@
-import Fastify, { type FastifyError, type FastifyInstance } from 'fastify';
+import Fastify, { type FastifyBaseLogger, type FastifyError, type FastifyInstance } from 'fastify';
 import cookie from '@fastify/cookie';
 import cors from '@fastify/cors';
 import rateLimit from '@fastify/rate-limit';
 import websocket from '@fastify/websocket';
 import { config, MONITORED_SECRETS } from './config.js';
+import { logger } from './lib/logger.js';
 import { metrics, registerHttpMetricsHook, registerMetricsRoute } from './lib/metrics.js';
 import { initErrorReporting, reportError } from './lib/sentry.js';
 import apiRoutes from './routes/index.js';
@@ -77,10 +78,12 @@ function registerErrorReporting(app: FastifyInstance): void {
 
 export async function buildApp(): Promise<FastifyInstance> {
   const app = Fastify({
-    logger:
-      config.NODE_ENV === 'test'
-        ? false
-        : { level: config.NODE_ENV === 'production' ? 'info' : 'debug' },
+    // Share the base Pino logger (lib/logger.ts) with Fastify so request-scoped
+    // logs (request.log) flow through the same structured-JSON pipeline as the
+    // worker. Fastify v5 requires the pre-built instance via loggerInstance
+    // (the logger option only accepts a config object). In test mode the
+    // logger is silent.
+    loggerInstance: logger as FastifyBaseLogger,
     // Honor X-Forwarded-For from the frontend nginx so rate limits key on
     // the real client IP, not the proxy's container IP (see config.ts).
     trustProxy: config.TRUST_PROXY,

@@ -2,6 +2,7 @@ import type { Prisma } from '@prisma/client';
 import { config } from '../config.js';
 import { MAX_PENDING_PROPOSALS } from './agent-proposals.js';
 import { prisma } from './prisma.js';
+import { logger } from './logger.js';
 import { getAgentTasksQueue } from './queue.js';
 
 // Repeatable schedulers + enqueue helpers on the shared agent queue (the
@@ -47,7 +48,7 @@ export async function enqueueProposalAutoRuns(): Promise<void> {
   for (const repository of repositories) {
     if (await startNextProposal(repository.id)) started += 1;
   }
-  console.log(`proposals-autorun: started ${started}/${repositories.length} proposal(s)`);
+  logger.info({ started, total: repositories.length }, 'proposals-autorun: started');
 }
 
 // Returns true when a pending proposal was queued for the repository.
@@ -133,9 +134,7 @@ export async function enqueueProposalTopUps(): Promise<void> {
     await enqueueGenerateProposalsNow(repository.id);
     enqueued += 1;
   }
-  console.log(
-    `proposals-topup: enqueued generation for ${enqueued}/${repositories.length} repositories`,
-  );
+  logger.info({ enqueued, total: repositories.length }, 'proposals-topup: enqueued');
 }
 
 // BullMQ priority: 0 = highest. User-driven work must not queue behind
@@ -171,7 +170,7 @@ export async function recoverQueuedTasks(): Promise<void> {
     await enqueueRunTask(task.id);
   }
   if (stuck.length > 0) {
-    console.log(`recovery: re-enqueued ${stuck.length} queued task(s)`);
+    logger.info({ count: stuck.length }, 'recovery: re-enqueued queued tasks');
   }
 }
 
@@ -186,7 +185,7 @@ export async function recoverInterruptedTasks(): Promise<void> {
     await enqueueRunTask(task.id);
   }
   if (stuck.length > 0) {
-    console.log(`recovery: re-queued ${stuck.length} interrupted running task(s)`);
+    logger.info({ count: stuck.length }, 'recovery: re-queued interrupted running tasks');
   }
 }
 

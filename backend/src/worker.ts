@@ -25,6 +25,7 @@ import { startHeartbeat } from './lib/worker-heartbeat.js';
 import { jobFailureFromError, logJobFailure } from './lib/job-failure-log.js';
 import { metrics, startQueueMetricsPoller } from './lib/metrics.js';
 import { getRedisClient } from './lib/redis.js';
+import { logger } from './lib/logger.js';
 import { initErrorReporting, reportError } from './lib/sentry.js';
 import { redisEndpointForLog } from './lib/utils.js';
 import { queueSnapshot, startWorkerHealthServer } from './lib/worker-health.js';
@@ -70,7 +71,7 @@ async function sweepOrphanedWorkdirs(): Promise<void> {
   for (const name of orphans) {
     await fs.rm(path.join(config.AGENT_WORKDIR, name), { recursive: true, force: true }).catch(() => {});
   }
-  if (orphans.length > 0) console.log(`swept ${orphans.length} orphaned workdir(s)`);
+  if (orphans.length > 0) logger.info({ count: orphans.length }, 'swept orphaned workdirs');
 }
 
 await sweepOrphanedWorkdirs();
@@ -188,8 +189,9 @@ worker.on('failed', (job, err) => {
 await worker.waitUntilReady();
 // Never log config.REDIS_URL itself: it can embed a password
 // (redis://:secret@host) which would end up in container logs.
-console.log(
-  `worker ready, consuming queue '${AGENT_QUEUE_NAME}' via ${redisEndpointForLog(config.REDIS_URL)}`,
+logger.info(
+  { queue: AGENT_QUEUE_NAME, redis: redisEndpointForLog(config.REDIS_URL) },
+  'worker ready, consuming queue',
 );
 
 // Process-level tripwire: rewritten on a timer, so a wedged worker (blocked
@@ -227,7 +229,7 @@ const healthServer = startWorkerHealthServer(getAgentTasksQueue(), config.WORKER
   isRunning: () => worker.isRunning(),
   renderMetrics: () => metrics.render(),
 });
-console.log(`worker health endpoint listening on :${config.WORKER_HEALTH_PORT}`);
+logger.info({ port: config.WORKER_HEALTH_PORT }, 'worker health endpoint listening');
 
 // Refresh lemniscate_queue_jobs gauges every 15s. Same source as /health
 // (queueSnapshot folds the 'wait' alias into 'waiting'), polled on an

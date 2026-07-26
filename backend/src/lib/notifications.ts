@@ -2,7 +2,8 @@ import { prisma } from './prisma.js';
 import { MONITORED_SECRETS } from '../config.js';
 import { decrypt } from './crypto.js';
 import { dispatchToChannels } from './notification-delivery.js';
-import { errorMessage, redactSecrets } from './utils.js';
+import { logger } from './logger.js';
+import { redactSecrets } from './utils.js';
 
 // Single home for user-facing notifications of async agent events
 // (AGENTS.md §6): every producer (PR opened in agent-run.ts, PR merged/
@@ -113,7 +114,7 @@ export async function notify(
       notification.id,
     );
   } catch (err) {
-    console.error(`failed to record ${kind} notification for user ${userId}: ${errorMessage(err)}`);
+    logger.error({ kind, userId, err }, 'failed to record notification');
   }
 }
 
@@ -231,6 +232,6 @@ export async function notifyJobFailure(entry: JobFailureNotification): Promise<v
       body: `${repository.fullName} — ${redactSecrets(entry.message, secrets)}`,
     });
   } catch (err) {
-    console.error(`failed to notify job failure (${entry.jobName}): ${errorMessage(err)}`);
+    logger.error({ jobName: entry.jobName, err }, 'failed to notify job failure');
   }
 }

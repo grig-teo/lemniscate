@@ -6,6 +6,7 @@ import { notify } from './notifications.js';
 import { type PrState } from './pull-requests.js';
 import { setTaskStatus } from './task-events.js';
 import { errorMessage } from './utils.js';
+import { logger } from './logger.js';
 
 // Shared PR-state application: the ONE function both the pr-state-sync poller
 // and the inbound webhook receiver call to flip a task from awaiting_review to
@@ -55,7 +56,7 @@ export async function applyTaskPrStateSafe(
   try {
     return await applyTaskPrState(task, state);
   } catch (err) {
-    console.warn(`${source}: update failed for task ${task.id}: ${errorMessage(err)}`);
+    logger.warn({ source, taskId: task.id, err }, 'update failed for task');
     return false;
   }
 }

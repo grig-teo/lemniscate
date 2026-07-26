@@ -2,6 +2,7 @@ import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import type { DeployStatus, Deployment, Prisma } from '@prisma/client';
 import { config } from '../../config.js';
+import { logger } from '../logger.js';
 import { cloneRepository, git, type GitAuth } from '../agent-git.js';
 import { decrypt } from '../crypto.js';
 import { GIT_HTTP_AUTH_USERNAME, tokenlessCloneUrl } from '../git-providers.js';
@@ -131,7 +132,7 @@ export async function deployService(deploymentId: string): Promise<void> {
     include: { service: { include: { repository: { include: { connection: true } } } } },
   });
   if (!deployment) {
-    console.error(`deploy-service: deployment ${deploymentId} not found`);
+    logger.error({ deploymentId }, 'deploy-service: deployment not found');
     return;
   }
   const secrets: string[] = [];

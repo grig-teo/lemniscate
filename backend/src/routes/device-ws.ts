@@ -1,3 +1,4 @@
+import { logger } from '../lib/logger.js';
 import type { FastifyRequest } from 'fastify';
 import type { Prisma } from '@prisma/client';
 import type { WebSocket } from 'ws';
@@ -56,7 +57,7 @@ async function chainInstallAfterBuild(
     });
     await dispatchCommand(install);
   } catch (err) {
-    console.error(`build→install chaining failed for command ${commandId}:`, err);
+    logger.error({ commandId, err }, 'build→install chaining failed');
   }
 }
 

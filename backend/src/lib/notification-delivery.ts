@@ -4,6 +4,7 @@ import { decrypt } from './crypto.js';
 import { prisma } from './prisma.js';
 import { getAgentTasksQueue } from './queue.js';
 import { assertPublicHttpUrl } from './url-safety.js';
+import { logger } from './logger.js';
 import { errorMessage, redactSecrets } from './utils.js';
 
 // Outbound delivery for user notifications (AGENTS.md §6 single home):
@@ -115,7 +116,7 @@ export async function dispatchToChannels(
       await enqueueChannelDelivery(setting, event, payload, notificationId);
     }
   } catch (err) {
-    console.error(`failed to dispatch ${event} notification for user ${userId}: ${errorMessage(err)}`);
+    logger.error({ event, userId, err }, 'failed to dispatch notification');
   }
 }
 

@@ -1,6 +1,7 @@
 import type { Prisma, TaskEventKind, TaskStatus } from '@prisma/client';
 import { Redis } from 'ioredis';
 import { config } from '../config.js';
+import { logger } from './logger.js';
 import { prisma } from './prisma.js';
 
 // Task events are persisted to Postgres (source of truth, replayable via the
@@ -64,7 +65,7 @@ export async function publishTaskEvent(
     await getPublisher().publish(`task-events:${taskId}`, JSON.stringify(serializeTaskEvent(event)));
   } catch (err) {
     // The DB row is the source of truth; a dropped live update is not fatal.
-    console.error(`failed to publish task event to Redis (task ${taskId}):`, err);
+    logger.error({ taskId, err }, 'failed to publish task event to Redis');
   }
   await maybeEnforceEventCap(taskId);
 }
@@ -77,7 +78,7 @@ async function maybeEnforceEventCap(taskId: string): Promise<void> {
   }
   capCounters.set(taskId, 0);
   await enforceEventCap(taskId).catch((err) => {
-    console.error(`failed to enforce event cap (task ${taskId}):`, err);
+    logger.error({ taskId, err }, 'failed to enforce event cap');
   });
 }
 
@@ -147,7 +148,7 @@ async function ensureTruncationMarker(taskId: string): Promise<void> {
       JSON.stringify(serializeTaskEvent(marker)),
     );
   } catch (err) {
-    console.error(`failed to publish truncation marker (task ${taskId}):`, err);
+    logger.error({ taskId, err }, 'failed to publish truncation marker');
   }
 }
 

@@ -1,27 +1,39 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const mocks = vi.hoisted(() => ({ notifyJobFailure: vi.fn().mockResolvedValue(undefined) }));
+const mocks = vi.hoisted(() => ({
+  notifyJobFailure: vi.fn().mockResolvedValue(undefined),
+  logger: { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() },
+}));
 
 vi.mock('../src/lib/notifications.js', () => ({
   notifyJobFailure: mocks.notifyJobFailure,
 }));
 
+vi.mock('../src/lib/logger.js', () => ({
+  logger: mocks.logger,
+  createLogger: vi.fn(() => mocks.logger),
+}));
+
 import { errorKind, jobFailureFromError, logJobFailure } from '../src/lib/job-failure-log.js';
 import { metrics } from '../src/lib/metrics.js';
 
-// Structured failure logging: job failures must be single grep-able JSON
-// lines carrying job name, taskId, and error kind — the minimum for
-// log-based alerting — instead of multi-line stack dumps. The Prometheus
-// counter is fed through the recorder lib/metrics.ts injects via
-// setJobFailureRecorder (wired at import time on the singleton). Every
-// entry is also fanned out to the user-notification hook; the returned
-// promise lets in-run callers (recordJobFailure) serialize the notification
-// ahead of a rethrow so the worker 'failed' hook cannot race the dedupe.
+// Structured failure logging: job failures must be emitted as structured
+// objects via the shared Pino logger (logger.error), carrying job name,
+// taskId, and error kind — the minimum for log-based alerting — instead of
+// multi-line stack dumps. The Prometheus counter is fed through the recorder
+// lib/metrics.ts injects via setJobFailureRecorder (wired at import time on
+// the singleton). Every entry is also fanned out to the user-notification
+// hook; the returned promise lets in-run callers (recordJobFailure)
+// serialize the notification ahead of a rethrow so the worker 'failed' hook
+// cannot race the dedupe.
 
 describe('logJobFailure', () => {
-  it('emits one single-line JSON entry with job name, taskId, and error kind', () => {
-    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+  beforeEach(() => {
+    mocks.logger.error.mockClear();
+    mocks.notifyJobFailure.mockReset().mockResolvedValue(undefined);
+  });
 
+  it('emits one structured entry with job name, taskId, and error kind', () => {
     logJobFailure({
       jobName: 'run-task',
       taskId: 'task-1',
@@ -30,12 +42,8 @@ describe('logJobFailure', () => {
       message: 'boom',
     });
 
-    expect(spy).toHaveBeenCalledTimes(1);
-    const line = spy.mock.calls[0][0] as string;
-    expect(typeof line).toBe('string');
-    expect(line).not.toContain('\n');
-    expect(JSON.parse(line)).toEqual({
-      level: 'error',
+    expect(mocks.logger.error).toHaveBeenCalledTimes(1);
+    expect(mocks.logger.error).toHaveBeenCalledWith({
       event: 'job_failed',
       jobName: 'run-task',
       taskId: 'task-1',
@@ -43,15 +51,11 @@ describe('logJobFailure', () => {
       errorKind: 'Error',
       message: 'boom',
     });
-    spy.mockRestore();
   });
 
   it('increments the labeled failure counter so alerts need no log parsing', async () => {
-    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
-
     logJobFailure({ jobName: 'merge-gate', errorKind: 'MergeConflictError', message: 'x' });
 
-    spy.mockRestore();
     const text = await metrics.render();
     expect(text).toContain(
       'lemniscate_job_failures_total{job_name="merge-gate",error_kind="MergeConflictError"} 1',
@@ -59,21 +63,17 @@ describe('logJobFailure', () => {
   });
 
   it('skips the counter with recordMetric: false (the throw was already counted)', async () => {
-    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
-
     logJobFailure(
       { jobName: 'review-pr', errorKind: 'TimeoutError', message: 'x' },
       { recordMetric: false },
     );
 
-    spy.mockRestore();
     const text = await metrics.render();
     expect(text).not.toContain('job_name="review-pr"');
   });
 
   it('fans the failure out to the user-notification hook', () => {
     mocks.notifyJobFailure.mockReset().mockResolvedValue(undefined);
-    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
 
     logJobFailure({
       jobName: 'generate-proposals',
@@ -82,7 +82,6 @@ describe('logJobFailure', () => {
       message: 'invalid api key',
     });
 
-    spy.mockRestore();
     expect(mocks.notifyJobFailure).toHaveBeenCalledWith({
       jobName: 'generate-proposals',
       repositoryId: 'r1',
@@ -93,7 +92,6 @@ describe('logJobFailure', () => {
 
   it('never lets a broken notification hook escape into the caller', async () => {
     mocks.notifyJobFailure.mockReset().mockRejectedValue(new Error('db down'));
-    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
 
     expect(() =>
       logJobFailure({ jobName: 'run-task', errorKind: 'Error', message: 'x' }),
@@ -101,7 +99,6 @@ describe('logJobFailure', () => {
     await expect(
       logJobFailure({ jobName: 'run-task', errorKind: 'Error', message: 'x' }),
     ).resolves.toBeUndefined();
-    spy.mockRestore();
   });
 
   it('returns a promise that settles only after the notification hook, so callers can serialize it', async () => {
@@ -115,7 +112,6 @@ describe('logJobFailure', () => {
           resolveHook = resolve;
         }),
     );
-    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
 
     let settled = false;
     const pending = logJobFailure({ jobName: 'run-task', errorKind: 'Error', message: 'x' }).then(
@@ -128,7 +124,6 @@ describe('logJobFailure', () => {
     resolveHook?.();
     await pending;
     expect(settled).toBe(true);
-    spy.mockRestore();
   });
 });
 

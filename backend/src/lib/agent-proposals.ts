@@ -2,6 +2,7 @@ import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import type { GitConnection, Repository, Skill } from '@prisma/client';
 import { config } from '../config.js';
+import { logger } from './logger.js';
 import { cleanupWorkdir, cloneRepository } from './agent-git.js';
 import {
   buildSkillsSection,
@@ -216,9 +217,7 @@ async function generateProposalList(
   if (config.AGENT_EXECUTOR !== 'hermes') return requestProposals(rt, repository, repoContext);
   const proposals = await requestProposalsViaHermes(repository, rt, workdir, secrets);
   if (proposals) return proposals;
-  console.warn(
-    `generate-proposals: ${repository.fullName}: no valid ${PROPOSALS_FILENAME} from hermes, falling back to direct LLM request`,
-  );
+  logger.warn({ repository: repository.fullName }, `generate-proposals: no valid ${PROPOSALS_FILENAME} from hermes, falling back to direct LLM request`);
   return requestProposals(rt, repository, repoContext);
 }
 
@@ -239,9 +238,7 @@ async function executeGenerateProposals(
   );
   const proposals = await generateProposalList(repository, rt, workdir, secrets, repoContext);
   const created = await createProposalTasks(repository, proposals);
-  console.log(
-    `generate-proposals: ${repository.fullName}: ${proposals.length} proposed, ${created} created`,
-  );
+  logger.info({ repository: repository.fullName, proposed: proposals.length, created }, 'generate-proposals: done');
 }
 
 export async function generateProposals(repositoryId: string): Promise<void> {
@@ -250,7 +247,7 @@ export async function generateProposals(repositoryId: string): Promise<void> {
     include: { connection: true },
   });
   if (!repository) {
-    console.error(`generate-proposals: repository ${repositoryId} not found`);
+    logger.error({ repositoryId }, 'generate-proposals: repository not found');
     return;
   }
   // Triggered by the round-button endpoint and the global 'proposals-topup'
@@ -258,9 +255,7 @@ export async function generateProposals(repositoryId: string): Promise<void> {
   // up — the LLM call would only produce proposals that get created: 0.
   const { pendingCount } = await loadPendingProposalState(repositoryId);
   if (pendingCount >= MAX_PENDING_PROPOSALS) {
-    console.log(
-      `generate-proposals: ${repository.fullName}: ${MAX_PENDING_PROPOSALS} proposals already pending, skipping`,
-    );
+    logger.info({ repository: repository.fullName, pending: MAX_PENDING_PROPOSALS }, 'generate-proposals: already pending, skipping');
     return;
   }
 

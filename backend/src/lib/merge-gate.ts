@@ -1,6 +1,7 @@
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { config } from '../config.js';
+import { logger } from './logger.js';
 import {
   checkoutTaskBranch,
   cleanupWorkdir,
@@ -379,7 +380,7 @@ async function dispatchGateAction(
 export async function mergeGateTask(taskId: string, attempt = 0, ciFixes = 0): Promise<void> {
   const task = await loadTaskWithRepo(taskId);
   if (!task) {
-    console.error(`merge-gate: task ${taskId} not found`);
+    logger.error({ taskId }, 'merge-gate: task not found');
     return;
   }
   // Only merge PRs still waiting on an auto-merge repository. Merged/closed
