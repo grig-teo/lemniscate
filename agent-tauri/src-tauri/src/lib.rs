@@ -1,4 +1,4 @@
-//! Lemniscate Agent — Tauri shell: pairing window, system tray with status,
+//! Lemniscate Connect — Tauri shell: pairing window, system tray with status,
 //! and the device tunnel lifecycle. Rust core lives in protocol/config/
 //! tunnel/commands modules.
 
@@ -83,13 +83,13 @@ pub(crate) fn clear_saved_config(app: &AppHandle) {
 
 fn build_tray(app: &AppHandle) -> tauri::Result<()> {
     let status_item = MenuItem::with_id(app, "status", "Status: starting", false, None::<&str>)?;
-    let quit = MenuItem::with_id(app, "quit", "Quit Lemniscate Agent", true, None::<&str>)?;
+    let quit = MenuItem::with_id(app, "quit", "Quit Lemniscate Connect", true, None::<&str>)?;
     let menu = Menu::with_items(app, &[&status_item, &quit])?;
     let tray = TrayIconBuilder::new()
         .icon(tray_icon())
         .icon_as_template(true) // macOS menu bar: tint via alpha, auto light/dark
         .menu(&menu)
-        .tooltip("Lemniscate Agent")
+        .tooltip("Lemniscate Connect")
         .on_menu_event(|app, event| {
             if event.id().as_ref() == "quit" {
                 app.exit(0);
@@ -275,5 +275,5 @@ pub fn run() {
             Ok(())
         })
         .run(tauri::generate_context!())
-        .expect("error while running Lemniscate Agent");
+        .expect("error while running Lemniscate Connect");
 }

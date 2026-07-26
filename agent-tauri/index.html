@@ -3,12 +3,23 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Lemniscate Agent</title>
+    <title>Lemniscate Connect</title>
     <link rel="stylesheet" href="/src/style.css" />
   </head>
   <body>
     <main class="panel">
-      <h1>Lemniscate Agent</h1>
+      <svg class="logo" viewBox="0 0 24 24" width="72" height="72" fill="none" aria-hidden="true">
+        <path
+          class="logo-base"
+          d="M12 12c-2-2.67-4-4-6-4a4 4 0 1 0 0 8c2 0 4-1.33 6-4Zm0 0c2 2.67 4 4 6 4a4 4 0 0 0 0-8c-2 0-4 1.33-6 4Z"
+        />
+        <path
+          class="logo-pulse"
+          pathLength="100"
+          d="M12 12c-2-2.67-4-4-6-4a4 4 0 1 0 0 8c2 0 4-1.33 6-4Zm0 0c2 2.67 4 4 6 4a4 4 0 0 0 0-8c-2 0-4 1.33-6 4Z"
+        />
+      </svg>
+      <h1>Lemniscate Connect</h1>
       <p id="status" class="status">Status: starting…</p>
 
       <form id="pair-form">
@@ -30,7 +41,6 @@
       <p id="paired-note" class="note" hidden>
         This device is paired. The tunnel runs in the background; you can close this window.
       </p>
-      <button id="unpair-button" type="button" hidden>Unpair &amp; disconnect</button>
     </main>
     <script type="module" src="/src/main.ts"></script>
   </body>

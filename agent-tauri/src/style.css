@@ -21,6 +21,46 @@ body {
 h1 {
   font-size: 18px;
   margin: 0 0 12px;
+  text-align: center;
+}
+
+.logo {
+  display: block;
+  margin: 4px auto 8px;
+}
+
+.logo-base,
+.logo-pulse {
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.logo-base {
+  stroke: #3a4048;
+}
+
+.logo-pulse {
+  stroke: #7c96ff;
+  stroke-dasharray: 22 78;
+  animation: logo-run 2.4s linear infinite;
+  filter: drop-shadow(0 0 4px rgba(124, 150, 255, 0.7));
+}
+
+@keyframes logo-run {
+  from {
+    stroke-dashoffset: 100;
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .logo-pulse {
+    animation: none;
+    stroke-dasharray: none;
+  }
 }
 
 .status {
@@ -72,9 +112,18 @@ button {
   cursor: pointer;
 }
 
+button.danger {
+  background: #b3403a;
+}
+
 button:disabled {
   opacity: 0.6;
   cursor: default;
+}
+
+input:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .note {
