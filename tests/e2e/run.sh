@@ -89,7 +89,7 @@ log "building the test-runner image"
 docker build -q -t "$RUNNER_IMAGE" -f tests/e2e/testrunner/Dockerfile tests/e2e > /dev/null
 
 log "building and starting the stack"
-"${COMPOSE[@]}" up -d --build
+"${COMPOSE[@]}" up -d --build || fail
 
 # Run a command inside a throwaway container on the compose network.
 in_network() {
