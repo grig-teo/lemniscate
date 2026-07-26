@@ -1,6 +1,8 @@
 import { prisma } from './prisma.js';
+import { MONITORED_SECRETS } from '../config.js';
+import { decrypt } from './crypto.js';
 import { dispatchToChannels } from './notification-delivery.js';
-import { errorMessage } from './utils.js';
+import { errorMessage, redactSecrets } from './utils.js';
 
 // Single home for user-facing notifications of async agent events
 // (AGENTS.md §6): every producer (PR opened in agent-run.ts, PR merged/
@@ -41,6 +43,45 @@ export {
   WEBHOOK_SIGNATURE_HEADER,
   WEBHOOK_TIMEOUT_MS,
 } from './notification-delivery.js';
+
+// ---------------------------------------------------------------------------
+// Failure-message scrubbing
+// ---------------------------------------------------------------------------
+
+// Connection fields needed to scrub a failure message before it reaches the
+// in-app bell or an outbound channel payload.
+interface FailureSecretSource {
+  userId: string;
+  accessTokenEnc: string | null;
+  refreshTokenEnc?: string | null;
+}
+
+function pushDecrypted(secrets: string[], enc: string): void {
+  try {
+    secrets.push(decrypt(enc));
+  } catch {
+    // Undecryptable row (key rotation, soft-disconnect): skip it rather than
+    // fail the notification.
+  }
+}
+
+// Secrets scrubbed from failure messages: config-level MONITORED_SECRETS
+// plus the owning connection's git token(s) and every LLM API key the user
+// has saved. Worker-level failures (worker.ts 'failed' hook) arrive with a
+// raw err.message that bypasses recordJobFailure's in-run scrub, so this is
+// the last line of defense before user-facing channels.
+async function failureSecrets(connection: FailureSecretSource): Promise<string[]> {
+  const secrets = [...MONITORED_SECRETS];
+  for (const enc of [connection.accessTokenEnc, connection.refreshTokenEnc]) {
+    if (enc) pushDecrypted(secrets, enc);
+  }
+  const configs = await prisma.llmConfig.findMany({
+    where: { userId: connection.userId },
+    select: { apiKeyEnc: true },
+  });
+  for (const cfg of configs) pushDecrypted(secrets, cfg.apiKeyEnc);
+  return secrets;
+}
 
 // ---------------------------------------------------------------------------
 // Emitters
@@ -92,10 +133,14 @@ export async function notifyOncePerTask(
   await notify(userId, kind, payload);
 }
 
-// Task-scoped failure entry point used by recordJobFailure (agent-git.ts):
-// resolves the owning user from the task, maps TokenBudgetExceededError to
-// its own kind, and dedupes against an unread notification for the same
-// task+kind so BullMQ retries of a review/merge job cannot spam the user.
+// Task-scoped failure entry point used via logJobFailure (the single failure
+// funnel: job-failure-log.ts — also what recordJobFailure in agent-git.ts
+// emits through): resolves the owning user from the task, maps
+// TokenBudgetExceededError to its own kind, and dedupes against an unread
+// notification for the same task+kind so BullMQ retries of a review/merge
+// job cannot spam the user. The message is re-scrubbed here even though
+// recordJobFailure sanitizes its own: worker-level failures reach this path
+// with a raw err.message.
 export async function notifyTaskFailure(
   taskId: string,
   errorKind: string,
@@ -105,16 +150,22 @@ export async function notifyTaskFailure(
     where: { id: taskId },
     select: {
       title: true,
-      repository: { select: { fullName: true, connection: { select: { userId: true } } } },
+      repository: {
+        select: {
+          fullName: true,
+          connection: { select: { userId: true, accessTokenEnc: true, refreshTokenEnc: true } },
+        },
+      },
     },
   });
   if (!task) return;
   const kind: NotificationKind =
     errorKind === 'TokenBudgetExceededError' ? 'budget_exceeded' : 'run_failed';
   const title = kind === 'budget_exceeded' ? 'Token budget exceeded' : 'Run failed';
+  const secrets = await failureSecrets(task.repository.connection);
   await notifyOncePerTask(task.repository.connection.userId, kind, {
     title: `${title}: ${task.title}`,
-    body: `${task.repository.fullName} — ${message}`,
+    body: `${task.repository.fullName} — ${redactSecrets(message, secrets)}`,
     taskId,
   });
 }
@@ -148,10 +199,11 @@ export interface JobFailureNotification {
 }
 
 // logJobFailure hook (job-failure-log.ts — the single failure funnel):
-// task-scoped failures reuse the run_failed path (deduped against the
-// in-run recordJobFailure notification); repository-scoped failures (the
-// scheduled 'generate-proposals' runs) notify the repo owner as job_failed,
-// deduped per unread job name so a broken LLM config cannot spam every cycle.
+// task-scoped failures reuse the run_failed path; repository-scoped failures
+// (the scheduled 'generate-proposals' runs) notify the repo owner as
+// job_failed, deduped per unread job name so a broken LLM config cannot spam
+// every cycle. Messages are scrubbed against the owner's tokens/keys —
+// worker-level failures arrive unsanitized.
 export async function notifyJobFailure(entry: JobFailureNotification): Promise<void> {
   try {
     if (entry.taskId) {
@@ -161,7 +213,10 @@ export async function notifyJobFailure(entry: JobFailureNotification): Promise<v
     if (!entry.repositoryId) return;
     const repository = await prisma.repository.findUnique({
       where: { id: entry.repositoryId },
-      select: { fullName: true, connection: { select: { userId: true } } },
+      select: {
+        fullName: true,
+        connection: { select: { userId: true, accessTokenEnc: true, refreshTokenEnc: true } },
+      },
     });
     if (!repository) return;
     const title = `Job failed: ${entry.jobName}`;
@@ -170,9 +225,10 @@ export async function notifyJobFailure(entry: JobFailureNotification): Promise<v
       select: { id: true },
     });
     if (existing) return;
+    const secrets = await failureSecrets(repository.connection);
     await notify(repository.connection.userId, 'job_failed', {
       title,
-      body: `${repository.fullName} — ${entry.message}`,
+      body: `${repository.fullName} — ${redactSecrets(entry.message, secrets)}`,
     });
   } catch (err) {
     console.error(`failed to notify job failure (${entry.jobName}): ${errorMessage(err)}`);

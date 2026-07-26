@@ -25,6 +25,7 @@ const mocks = vi.hoisted(() => ({
   notificationFindFirst: vi.fn(),
   taskFindUnique: vi.fn(),
   repositoryFindUnique: vi.fn(),
+  llmConfigFindMany: vi.fn(),
   queueAdd: vi.fn(),
   assertPublicHttpUrl: vi.fn(),
   fetch: vi.fn(),
@@ -32,7 +33,7 @@ const mocks = vi.hoisted(() => ({
   createTransport: vi.fn(),
 }));
 
-vi.mock('../src/config.js', () => ({ config: mocks.config }));
+vi.mock('../src/config.js', () => ({ config: mocks.config, MONITORED_SECRETS: [] }));
 vi.mock('../src/lib/prisma.js', () => ({
   prisma: {
     notificationSetting: {
@@ -50,6 +51,7 @@ vi.mock('../src/lib/prisma.js', () => ({
     },
     task: { findUnique: mocks.taskFindUnique },
     repository: { findUnique: mocks.repositoryFindUnique },
+    llmConfig: { findMany: mocks.llmConfigFindMany },
   },
 }));
 vi.mock('../src/lib/queue.js', () => ({
@@ -115,6 +117,7 @@ beforeEach(() => {
     ...data,
   }));
   mocks.notificationFindFirst.mockResolvedValue(null);
+  mocks.llmConfigFindMany.mockResolvedValue([]);
   mocks.settingFindMany.mockResolvedValue([]);
   mocks.settingFindUnique.mockResolvedValue(SETTING);
   mocks.deliveryCreate.mockImplementation(async ({ data }: { data: object }) => ({

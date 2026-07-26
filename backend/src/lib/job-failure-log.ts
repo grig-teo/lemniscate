@@ -53,11 +53,15 @@ export function jobFailureFromError(
 export function logJobFailure(
   entry: JobFailureEntry,
   options: LogJobFailureOptions = {},
-): void {
+): Promise<void> {
   if (options.recordMetric !== false) recorder?.(entry.jobName, entry.errorKind);
   console.error(JSON.stringify({ level: 'error', event: 'job_failed', ...entry }));
-  // User-facing notification (single hook point — task-scoped failures are
-  // deduped against the in-run recordJobFailure notification inside);
-  // fire-and-forget so logging never waits on the DB.
-  void notifyJobFailure(entry).catch(() => {});
+  // User-facing notification — the single hook point (AGENTS.md §6). The
+  // promise is returned so recordJobFailure can await it before its caller
+  // rethrows: the in-run notification then exists before the worker 'failed'
+  // hook funnels the same throw through here again, and the unread dedupe in
+  // notifyOncePerTask stays sequential instead of racing two concurrent
+  // findFirst-then-insert flows. Errors are swallowed either way — logging
+  // must never fail the job that produced the entry.
+  return notifyJobFailure(entry).catch(() => {});
 }

@@ -11,6 +11,8 @@ const mocks = vi.hoisted(() => ({
   settingFindMany: vi.fn(),
   deliveryCreate: vi.fn(),
   taskFindUnique: vi.fn(),
+  llmConfigFindMany: vi.fn(),
+  repositoryFindUnique: vi.fn(),
   queueAdd: vi.fn(),
   fetch: vi.fn(),
 }));
@@ -24,6 +26,8 @@ vi.mock('../src/lib/prisma.js', () => ({
     notificationSetting: { findMany: mocks.settingFindMany },
     notificationDelivery: { create: mocks.deliveryCreate },
     task: { findUnique: mocks.taskFindUnique },
+    llmConfig: { findMany: mocks.llmConfigFindMany },
+    repository: { findUnique: mocks.repositoryFindUnique },
   },
 }));
 vi.mock('../src/lib/queue.js', () => ({
@@ -35,9 +39,11 @@ import {
   generateWebhookSecret,
   NOTIFICATION_KINDS,
   notify,
+  notifyJobFailure,
   notifyTaskFailure,
   signWebhookBody,
 } from '../src/lib/notifications.js';
+import { encrypt } from '../src/lib/crypto.js';
 
 const TASK = {
   title: 'Fix the thing',
@@ -54,6 +60,8 @@ beforeEach(() => {
   mocks.notificationFindFirst.mockResolvedValue(null);
   mocks.settingFindMany.mockResolvedValue([]);
   mocks.taskFindUnique.mockResolvedValue(TASK);
+  mocks.llmConfigFindMany.mockResolvedValue([]);
+  mocks.repositoryFindUnique.mockResolvedValue(null);
 });
 
 describe('signWebhookBody', () => {
@@ -156,5 +164,89 @@ describe('notifyTaskFailure', () => {
     mocks.taskFindUnique.mockResolvedValue(null);
     await notifyTaskFailure('ghost', 'Error', 'boom');
     expect(mocks.notificationCreate).not.toHaveBeenCalled();
+  });
+});
+
+// Worker-level failures (worker.ts 'failed' hook) reach notifyJobFailure with
+// a raw err.message that never passed recordJobFailure's redactSecrets scrub.
+// The notification layer is the last line of defense: messages must be
+// scrubbed against the owning connection's tokens, the user's LLM keys, and
+// config-level MONITORED_SECRETS before they hit the in-app bell or a signed
+// webhook payload.
+describe('failure message scrubbing', () => {
+  function lastNotificationBody(): string {
+    return mocks.notificationCreate.mock.calls.at(-1)?.[0].data.body as string;
+  }
+
+  it('notifyTaskFailure redacts connection tokens and LLM keys from the message', async () => {
+    mocks.taskFindUnique.mockResolvedValue({
+      ...TASK,
+      repository: {
+        ...TASK.repository,
+        connection: {
+          userId: 'user-1',
+          accessTokenEnc: encrypt('ghp_live_token'),
+          refreshTokenEnc: encrypt('refresh_token_value'),
+        },
+      },
+    });
+    mocks.llmConfigFindMany.mockResolvedValue([{ apiKeyEnc: encrypt('sk-llm-key') }]);
+
+    await notifyTaskFailure(
+      't1',
+      'Error',
+      'push failed: ghp_live_token / sk-llm-key / refresh_token_value',
+    );
+
+    const body = lastNotificationBody();
+    expect(body).not.toContain('ghp_live_token');
+    expect(body).not.toContain('sk-llm-key');
+    expect(body).not.toContain('refresh_token_value');
+    expect(body).toContain('[redacted]');
+  });
+
+  it('notifyTaskFailure redacts config-level MONITORED_SECRETS from the message', async () => {
+    await notifyTaskFailure('t1', 'Error', 'queue connect redis://localhost:6379 failed');
+
+    expect(lastNotificationBody()).not.toContain('redis://localhost:6379');
+  });
+
+  it('skips undecryptable secret rows instead of failing the notification', async () => {
+    mocks.taskFindUnique.mockResolvedValue({
+      ...TASK,
+      repository: {
+        ...TASK.repository,
+        connection: { userId: 'user-1', accessTokenEnc: 'garbage', refreshTokenEnc: null },
+      },
+    });
+    mocks.llmConfigFindMany.mockResolvedValue([{ apiKeyEnc: 'also-garbage' }]);
+
+    await notifyTaskFailure('t1', 'Error', 'boom');
+
+    expect(mocks.notificationCreate).toHaveBeenCalledTimes(1);
+    expect(lastNotificationBody()).toContain('boom');
+  });
+
+  it('notifyJobFailure redacts secrets from repository-scoped job failures', async () => {
+    mocks.repositoryFindUnique.mockResolvedValue({
+      fullName: 'org/demo',
+      connection: {
+        userId: 'user-1',
+        accessTokenEnc: encrypt('ghp_live_token'),
+        refreshTokenEnc: null,
+      },
+    });
+
+    await notifyJobFailure({
+      jobName: 'generate-proposals',
+      repositoryId: 'r1',
+      errorKind: 'Error',
+      message: 'clone failed for ghp_live_token',
+    });
+
+    const body = lastNotificationBody();
+    expect(mocks.notificationCreate).toHaveBeenCalledTimes(1);
+    expect(body).not.toContain('ghp_live_token');
+    expect(body).toContain('org/demo');
   });
 });

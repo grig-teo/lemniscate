@@ -14,7 +14,9 @@ import { metrics } from '../src/lib/metrics.js';
 // log-based alerting — instead of multi-line stack dumps. The Prometheus
 // counter is fed through the recorder lib/metrics.ts injects via
 // setJobFailureRecorder (wired at import time on the singleton). Every
-// entry is also fanned out to the user-notification hook (fire-and-forget).
+// entry is also fanned out to the user-notification hook; the returned
+// promise lets in-run callers (recordJobFailure) serialize the notification
+// ahead of a rethrow so the worker 'failed' hook cannot race the dedupe.
 
 describe('logJobFailure', () => {
   it('emits one single-line JSON entry with job name, taskId, and error kind', () => {
@@ -96,7 +98,36 @@ describe('logJobFailure', () => {
     expect(() =>
       logJobFailure({ jobName: 'run-task', errorKind: 'Error', message: 'x' }),
     ).not.toThrow();
+    await expect(
+      logJobFailure({ jobName: 'run-task', errorKind: 'Error', message: 'x' }),
+    ).resolves.toBeUndefined();
+    spy.mockRestore();
+  });
+
+  it('returns a promise that settles only after the notification hook, so callers can serialize it', async () => {
+    // recordJobFailure awaits this before its caller rethrows: the in-run
+    // notification must exist before the worker 'failed' hook re-enters the
+    // funnel, or both flows race the unread dedupe.
+    let resolveHook: (() => void) | undefined;
+    mocks.notifyJobFailure.mockReset().mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveHook = resolve;
+        }),
+    );
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    let settled = false;
+    const pending = logJobFailure({ jobName: 'run-task', errorKind: 'Error', message: 'x' }).then(
+      () => {
+        settled = true;
+      },
+    );
     await new Promise((resolve) => setImmediate(resolve));
+    expect(settled).toBe(false);
+    resolveHook?.();
+    await pending;
+    expect(settled).toBe(true);
     spy.mockRestore();
   });
 });
