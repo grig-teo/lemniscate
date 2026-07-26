@@ -1,10 +1,18 @@
 import { describe, expect, it, vi } from 'vitest';
+
+const mocks = vi.hoisted(() => ({ notifyJobFailure: vi.fn().mockResolvedValue(undefined) }));
+
+vi.mock('../src/lib/notifications.js', () => ({
+  notifyJobFailure: mocks.notifyJobFailure,
+}));
+
 import { errorKind, jobFailureFromError, logJobFailure } from '../src/lib/job-failure-log.js';
 import { metricsRegistry } from '../src/lib/metrics.js';
 
 // Structured failure logging: job failures must be single grep-able JSON
 // lines carrying job name, taskId, and error kind — the minimum for
-// log-based alerting — instead of multi-line stack dumps.
+// log-based alerting — instead of multi-line stack dumps. Every entry is
+// also fanned out to the user-notification hook (fire-and-forget).
 
 describe('logJobFailure', () => {
   it('emits one single-line JSON entry with job name, taskId, and error kind', () => {
@@ -45,6 +53,37 @@ describe('logJobFailure', () => {
     expect(text).toContain(
       'lemniscate_job_failures_total{job_name="merge-gate",error_kind="MergeConflictError"} 1',
     );
+  });
+
+  it('fans the failure out to the user-notification hook', () => {
+    mocks.notifyJobFailure.mockReset().mockResolvedValue(undefined);
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    logJobFailure({
+      jobName: 'generate-proposals',
+      repositoryId: 'r1',
+      errorKind: 'Error',
+      message: 'invalid api key',
+    });
+
+    spy.mockRestore();
+    expect(mocks.notifyJobFailure).toHaveBeenCalledWith({
+      jobName: 'generate-proposals',
+      repositoryId: 'r1',
+      errorKind: 'Error',
+      message: 'invalid api key',
+    });
+  });
+
+  it('never lets a broken notification hook escape into the caller', async () => {
+    mocks.notifyJobFailure.mockReset().mockRejectedValue(new Error('db down'));
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    expect(() =>
+      logJobFailure({ jobName: 'run-task', errorKind: 'Error', message: 'x' }),
+    ).not.toThrow();
+    await new Promise((resolve) => setImmediate(resolve));
+    spy.mockRestore();
   });
 });
 

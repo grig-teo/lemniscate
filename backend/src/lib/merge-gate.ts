@@ -23,6 +23,7 @@ import {
   type TaskWithRepo,
 } from './agent-runtime.js';
 import { runHermesTask } from './hermes-runner.js';
+import { notify, notifyOncePerTask } from './notifications.js';
 import { enqueueMergeGate } from './proposal-scheduler.js';
 import { queueDeployment } from './deploy/deploy-service.js';
 import { prisma } from './prisma.js';
@@ -281,6 +282,12 @@ async function mergeWithConflictResolution(
   if (result.merged) {
     await logEvent(task.id, `merged pull request: ${result.prUrl}`);
     await setTaskStatus(task.id, 'done');
+    await notify(task.repository.connection.userId, 'pr_merged', {
+      title: `PR merged: ${task.title}`,
+      body: `${task.repository.fullName} — pull request auto-merged by the merge gate`,
+      taskId: task.id,
+      prUrl: result.prUrl,
+    });
     // The task's run workdir was kept for the review window — merged means
     // it is no longer needed.
     await cleanupWorkdir(path.join(config.AGENT_WORKDIR, task.id), task.id);
@@ -289,6 +296,12 @@ async function mergeWithConflictResolution(
   }
   if (!result.conflict || attempt >= MERGE_GATE_MAX_ATTEMPTS) {
     await logEvent(task.id, 'merge could not be completed — manual review needed');
+    await notifyOncePerTask(task.repository.connection.userId, 'merge_gate_failed', {
+      title: `Merge gate gave up: ${task.title}`,
+      body: `${task.repository.fullName} — merge could not be completed; manual review needed`,
+      taskId: task.id,
+      prUrl: task.prUrl ?? undefined,
+    });
     return;
   }
   await logEvent(
@@ -354,14 +367,19 @@ export async function mergeGateTask(taskId: string, attempt = 0, ciFixes = 0): P
       return;
     }
     if (action === 'manual') {
-      await logEvent(
-        task.id,
+      const reason =
         checks.state === 'pending'
           ? 'CI checks still running after ~30 minutes — awaiting manual merge'
           : ciFixes >= MAX_CI_FIX_ATTEMPTS
             ? `CI still failing after ${MAX_CI_FIX_ATTEMPTS} fix attempt(s) — awaiting manual fix`
-            : 'CI checks are failing — awaiting manual fix',
-      );
+            : 'CI checks are failing — awaiting manual fix';
+      await logEvent(task.id, reason);
+      await notifyOncePerTask(task.repository.connection.userId, 'merge_gate_failed', {
+        title: `Merge gate gave up: ${task.title}`,
+        body: `${task.repository.fullName} — ${reason}`,
+        taskId: task.id,
+        prUrl: task.prUrl ?? undefined,
+      });
       return;
     }
     if (!checks.supported) {

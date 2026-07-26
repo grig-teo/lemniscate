@@ -28,7 +28,7 @@ import {
   type TaskWithRepo,
 } from './agent-runtime.js';
 import { runHermesTask } from './hermes-runner.js';
-import { notify } from './notifications.js';
+import { notify, notifyTaskCompleted } from './notifications.js';
 import { prisma } from './prisma.js';
 import { enqueueReviewTask } from './proposal-scheduler.js';
 import { openPullRequest } from './pull-requests.js';
@@ -373,6 +373,9 @@ export async function runTask(taskId: string): Promise<void> {
   let rt: LlmRuntime | null = null;
   try {
     rt = await executeRunTask(task, workdir, secrets);
+    // Terminal 'done' runs (no auto-PR, empty repo, no changes) notify here;
+    // the auto-PR path ends awaiting_review and already fired pr_opened.
+    await notifyTaskCompleted(taskId).catch(() => {});
   } catch (err) {
     // Failure state is fully recorded on the task; the BullMQ job is allowed
     // to complete so it is not retried into a duplicate branch/PR.

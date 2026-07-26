@@ -20,6 +20,7 @@ import {
   registerProposalTopUpSchedule,
 } from './lib/proposal-scheduler.js';
 import { registerPrStateSyncSchedule, recoverStuckReviews, syncMergedPullRequests } from './lib/pr-state-sync.js';
+import { deliverNotification } from './lib/notification-delivery.js';
 import { startHeartbeat } from './lib/worker-heartbeat.js';
 import { jobFailureFromError, logJobFailure } from './lib/job-failure-log.js';
 import { measureJob, startQueueMetricsPoller } from './lib/metrics.js';
@@ -40,6 +41,7 @@ const mergeGateDataSchema = z.object({
 const deployServiceDataSchema = z.object({ deploymentId: z.string().min(1) });
 const generateProposalsDataSchema = z.object({ repositoryId: z.string().min(1) });
 const proposalsTopUpDataSchema = z.object({}).strict();
+const notificationDeliveryDataSchema = z.object({ deliveryId: z.string().min(1) });
 
 // BullMQ requires maxRetriesPerRequest: null on blocking connections.
 const connection = new Redis(config.REDIS_URL, {
@@ -85,6 +87,7 @@ const KNOWN_JOB_NAMES = new Set([
   'proposals-topup',
   'proposals-autorun',
   'pr-state-sync',
+  'notification-delivery',
 ]);
 
 function jobMetricName(name: string): string {
@@ -133,6 +136,11 @@ async function dispatchJob(job: Job): Promise<void> {
       await syncMergedPullRequests();
       return;
     }
+    case 'notification-delivery': {
+      const { deliveryId } = notificationDeliveryDataSchema.parse(job.data);
+      await deliverNotification(deliveryId, job.attemptsMade);
+      return;
+    }
     default:
       throw new Error(`unknown job name: ${job.name}`);
   }
@@ -152,11 +160,18 @@ function jobTaskId(data: unknown): string | undefined {
   return typeof taskId === 'string' ? taskId : undefined;
 }
 
+function jobRepositoryId(data: unknown): string | undefined {
+  if (typeof data !== 'object' || data === null) return undefined;
+  const { repositoryId } = data as { repositoryId?: unknown };
+  return typeof repositoryId === 'string' ? repositoryId : undefined;
+}
+
 worker.on('failed', (job, err) => {
   logJobFailure(
     jobFailureFromError(job?.name ?? 'unknown', err, {
       jobId: job?.id,
       taskId: jobTaskId(job?.data),
+      repositoryId: jobRepositoryId(job?.data),
     }),
   );
 });

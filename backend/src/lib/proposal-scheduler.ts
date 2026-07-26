@@ -1,31 +1,19 @@
 import type { Prisma } from '@prisma/client';
-import { Queue } from 'bullmq';
-import { Redis } from 'ioredis';
 import { config } from '../config.js';
 import { MAX_PENDING_PROPOSALS } from './agent-proposals.js';
 import { prisma } from './prisma.js';
+import { getAgentTasksQueue } from './queue.js';
 
-// BullMQ queue shared by the API (enqueueing tasks) and the worker
-// (repeatable 'proposals-topup' job). The queue name is pinned —
-// the worker consumes the same name.
+// Repeatable schedulers + enqueue helpers on the shared agent queue (the
+// queue itself lives in lib/queue.ts — single home, re-exported here so
+// existing importers keep working).
 
-export const AGENT_QUEUE_NAME = 'agent-tasks';
+export { AGENT_QUEUE_NAME, getAgentTasksQueue } from './queue.js';
 
 const PROPOSAL_TOPUP_INTERVAL_MS = 10 * 60 * 1000; // every 10 minutes
 const TOPUP_SCHEDULER_ID = 'proposals-topup';
 const AUTORUN_INTERVAL_MS = 20 * 60 * 1000; // every 20 minutes
 const AUTORUN_SCHEDULER_ID = 'proposals-autorun';
-
-let queue: Queue | null = null;
-
-export function getAgentTasksQueue(): Queue {
-  if (!queue) {
-    queue = new Queue(AGENT_QUEUE_NAME, {
-      connection: new Redis(config.REDIS_URL, { maxRetriesPerRequest: null }),
-    });
-  }
-  return queue;
-}
 
 // Registers the single global repeatable 'proposals-topup' job. Called at
 // worker startup so the schedule survives Redis flushes and redeploys.

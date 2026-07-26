@@ -9,6 +9,14 @@ import { useMutation, useQuery, useQueryClient, type UseQueryOptions } from '@ta
 import * as React from 'react';
 
 import { api } from '@/lib/api';
+import {
+  createNotificationChannel,
+  deleteNotificationChannel,
+  fetchNotificationChannels,
+  testNotificationChannel,
+  updateNotificationChannel,
+  type NotificationChannelPatch,
+} from '@/lib/notification-channels';
 // Mutations whose callers already render the error inline (dialogs, settings
 // forms) opt out of the global MutationCache error toast with this meta.
 import { SUPPRESS_ERROR_TOAST_META } from '@/lib/mutation-error-toast';
@@ -1025,5 +1033,59 @@ export function useServiceLogs(serviceId: string | null, enabled: boolean) {
     queryKey: ['service-logs', serviceId],
     enabled: enabled && serviceId !== null,
     queryFn: () => api.get<{ log: string }>(`/api/services/${serviceId}/logs`).then((res) => res.log),
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Notification channels (Settings → Notifications)
+// ---------------------------------------------------------------------------
+
+function useInvalidateNotificationChannels() {
+  const queryClient = useQueryClient();
+  return () => void queryClient.invalidateQueries({ queryKey: ['notification-channels'] });
+}
+
+export function useNotificationChannels() {
+  return useQuery({
+    queryKey: ['notification-channels'],
+    queryFn: fetchNotificationChannels,
+  });
+}
+
+export function useCreateNotificationChannel() {
+  const invalidate = useInvalidateNotificationChannels();
+  return useMutation({
+    mutationFn: createNotificationChannel,
+    onSuccess: invalidate,
+    meta: SUPPRESS_ERROR_TOAST_META, // NotificationsSection renders the error inline
+  });
+}
+
+export function useUpdateNotificationChannel() {
+  const invalidate = useInvalidateNotificationChannels();
+  return useMutation({
+    mutationFn: ({ id, patch }: { id: string; patch: NotificationChannelPatch }) =>
+      updateNotificationChannel(id, patch),
+    onSuccess: invalidate,
+    meta: SUPPRESS_ERROR_TOAST_META,
+  });
+}
+
+export function useDeleteNotificationChannel() {
+  const invalidate = useInvalidateNotificationChannels();
+  return useMutation({
+    mutationFn: deleteNotificationChannel,
+    onSuccess: invalidate,
+    meta: SUPPRESS_ERROR_TOAST_META,
+  });
+}
+
+/** Synchronous test delivery; onSettled so the row's lastDelivery refreshes. */
+export function useTestNotificationChannel() {
+  const invalidate = useInvalidateNotificationChannels();
+  return useMutation({
+    mutationFn: testNotificationChannel,
+    onSettled: invalidate,
+    meta: SUPPRESS_ERROR_TOAST_META, // NotificationsSection renders the result inline
   });
 }

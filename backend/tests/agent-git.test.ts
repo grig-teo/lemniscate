@@ -16,6 +16,9 @@ vi.mock('../src/lib/workdir-archive.js', () => ({
 
 vi.mock('../src/lib/notifications.js', () => ({
   notifyTaskFailure: mocks.notifyTaskFailure,
+  // logJobFailure (job-failure-log.ts) fans every failure out here; the
+  // fan-out itself is covered in notification-delivery.test.ts.
+  notifyJobFailure: vi.fn().mockResolvedValue(undefined),
 }));
 
 import { cleanupWorkdir, cloneRepository, explainGitFailure, git, planWorkdirSweep, recordJobFailure, sanitizeRelativePath } from '../src/lib/agent-git.js';

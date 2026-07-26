@@ -1,15 +1,17 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 // Unit tests for lib/notifications.ts: row creation, failure-kind mapping,
-// unread dedupe against BullMQ retry spam, and webhook delivery (HMAC
-// signature, best-effort failures). prisma and fetch are mocked; url-safety
-// is stubbed so no DNS is touched.
+// unread dedupe against BullMQ retry spam, and the webhook signing helper.
+// Outbound channel fan-out is covered in notification-delivery.test.ts;
+// here the channel query simply returns no settings. prisma is mocked.
 
 const mocks = vi.hoisted(() => ({
   notificationCreate: vi.fn(),
   notificationFindFirst: vi.fn(),
+  settingFindMany: vi.fn(),
+  deliveryCreate: vi.fn(),
   taskFindUnique: vi.fn(),
-  userFindUnique: vi.fn(),
+  queueAdd: vi.fn(),
   fetch: vi.fn(),
 }));
 
@@ -19,18 +21,22 @@ vi.mock('../src/lib/prisma.js', () => ({
       create: mocks.notificationCreate,
       findFirst: mocks.notificationFindFirst,
     },
+    notificationSetting: { findMany: mocks.settingFindMany },
+    notificationDelivery: { create: mocks.deliveryCreate },
     task: { findUnique: mocks.taskFindUnique },
-    user: { findUnique: mocks.userFindUnique },
   },
 }));
-vi.mock('../src/lib/url-safety.js', () => ({ assertPublicHttpUrl: vi.fn() }));
+vi.mock('../src/lib/queue.js', () => ({
+  getAgentTasksQueue: () => ({ add: mocks.queueAdd }),
+}));
 vi.stubGlobal('fetch', mocks.fetch);
 
 import {
+  generateWebhookSecret,
+  NOTIFICATION_KINDS,
   notify,
   notifyTaskFailure,
   signWebhookBody,
-  WEBHOOK_SIGNATURE_HEADER,
 } from '../src/lib/notifications.js';
 
 const TASK = {
@@ -46,9 +52,8 @@ beforeEach(() => {
     ...data,
   }));
   mocks.notificationFindFirst.mockResolvedValue(null);
+  mocks.settingFindMany.mockResolvedValue([]);
   mocks.taskFindUnique.mockResolvedValue(TASK);
-  mocks.userFindUnique.mockResolvedValue({ webhookUrl: null, webhookSecretEnc: null });
-  mocks.fetch.mockResolvedValue({ ok: true, status: 200 });
 });
 
 describe('signWebhookBody', () => {
@@ -57,6 +62,30 @@ describe('signWebhookBody', () => {
     expect(signature).toMatch(/^sha256=[0-9a-f]{64}$/);
     expect(signWebhookBody('secret', '{"a":1}')).toBe(signature);
     expect(signWebhookBody('other', '{"a":1}')).not.toBe(signature);
+  });
+});
+
+describe('generateWebhookSecret', () => {
+  it('mints 32 bytes of hex', () => {
+    expect(generateWebhookSecret()).toMatch(/^[0-9a-f]{64}$/);
+    expect(generateWebhookSecret()).not.toBe(generateWebhookSecret());
+  });
+});
+
+describe('NOTIFICATION_KINDS', () => {
+  it('covers every wired producer event', () => {
+    for (const kind of [
+      'pr_opened',
+      'pr_merged',
+      'pr_closed',
+      'run_failed',
+      'budget_exceeded',
+      'task_completed',
+      'merge_gate_failed',
+      'job_failed',
+    ]) {
+      expect(NOTIFICATION_KINDS).toContain(kind);
+    }
   });
 });
 
@@ -80,44 +109,13 @@ describe('notify', () => {
     });
   });
 
-  it('delivers an HMAC-signed webhook when the user configured one', async () => {
-    // encrypt() round-trips through the test ENCRYPTION_KEY (vitest env).
-    const { encrypt } = await import('../src/lib/crypto.js');
-    mocks.userFindUnique.mockResolvedValue({
-      webhookUrl: 'https://hooks.example.com/bridge',
-      webhookSecretEnc: encrypt('whsec'),
-    });
-
-    await notify('user-1', 'pr_merged', { title: 't', body: 'b', taskId: 't1' });
-
-    expect(mocks.fetch).toHaveBeenCalledTimes(1);
-    const [url, init] = mocks.fetch.mock.calls[0] as unknown as [
-      string,
-      { method: string; headers: Record<string, string>; body: string },
-    ];
-    expect(url).toBe('https://hooks.example.com/bridge');
-    expect(init.method).toBe('POST');
-    expect(init.headers[WEBHOOK_SIGNATURE_HEADER]).toBe(signWebhookBody('whsec', init.body));
-    expect(JSON.parse(init.body)).toMatchObject({ kind: 'pr_merged', taskId: 't1' });
-  });
-
-  it('skips the webhook when none is configured', async () => {
-    await notify('user-1', 'pr_closed', { title: 't', body: 'b' });
-    expect(mocks.fetch).not.toHaveBeenCalled();
-  });
-
-  it('swallows webhook delivery failures (never fails the producer)', async () => {
-    const { encrypt } = await import('../src/lib/crypto.js');
-    mocks.userFindUnique.mockResolvedValue({
-      webhookUrl: 'https://hooks.example.com/bridge',
-      webhookSecretEnc: encrypt('whsec'),
-    });
-    mocks.fetch.mockRejectedValue(new Error('socket hang up'));
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+  it('swallows dispatch failures (never fails the producer)', async () => {
+    mocks.settingFindMany.mockRejectedValue(new Error('db down'));
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
 
     await expect(notify('user-1', 'run_failed', { title: 't', body: 'b' })).resolves.toBeUndefined();
     expect(mocks.notificationCreate).toHaveBeenCalledTimes(1);
-    warn.mockRestore();
+    error.mockRestore();
   });
 });
 

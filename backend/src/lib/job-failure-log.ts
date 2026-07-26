@@ -7,6 +7,7 @@
 // from scraped metrics alone, without log parsing.
 
 import { recordJobFailureMetric } from './metrics.js';
+import { notifyJobFailure } from './notifications.js';
 
 export interface JobFailureEntry {
   jobName: string;
@@ -14,6 +15,7 @@ export interface JobFailureEntry {
   message: string;
   taskId?: string;
   jobId?: string;
+  repositoryId?: string;
 }
 
 export function errorKind(err: unknown): string {
@@ -23,7 +25,7 @@ export function errorKind(err: unknown): string {
 export function jobFailureFromError(
   jobName: string,
   err: unknown,
-  ids: { taskId?: string; jobId?: string } = {},
+  ids: { taskId?: string; jobId?: string; repositoryId?: string } = {},
 ): JobFailureEntry {
   const message = err instanceof Error ? err.message : String(err);
   return { jobName, errorKind: errorKind(err), message, ...ids };
@@ -32,4 +34,8 @@ export function jobFailureFromError(
 export function logJobFailure(entry: JobFailureEntry): void {
   recordJobFailureMetric(entry);
   console.error(JSON.stringify({ level: 'error', event: 'job_failed', ...entry }));
+  // User-facing notification (single hook point — task-scoped failures are
+  // deduped against the in-run recordJobFailure notification inside);
+  // fire-and-forget so logging never waits on the DB.
+  void notifyJobFailure(entry).catch(() => {});
 }

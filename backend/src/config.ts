@@ -121,6 +121,14 @@ const envSchema = z.object({
   APPS_CONTAINER_MEMORY: z.string().min(1).default('512m'),
   APPS_CONTAINER_CPUS: z.string().min(1).default('1'),
 
+  // --- Outbound email notifications (phase 2 channel; webhooks need none
+  // of this). Unset SMTP_HOST = email channels are recorded as 'skipped'.
+  SMTP_HOST: optionalString,
+  SMTP_PORT: z.coerce.number().int().positive().default(587),
+  SMTP_USER: optionalString,
+  SMTP_PASS: optionalString,
+  SMTP_FROM: z.string().min(1).default('Lemniscate <notifications@localhost>'),
+
   // --- API limits ---
   // Queued+running tasks a single user may have at once; the 6th concurrent
   // create is rejected with 429.
