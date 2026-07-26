@@ -484,6 +484,16 @@ export function useStartTask() {
   });
 }
 
+export type ImproveTaskBody = { title?: string; prompt: string };
+
+/** POST /api/tasks/:id/improve — LLM-improved task description (not persisted). */
+export function useImproveTask() {
+  return useMutation({
+    mutationFn: ({ id, body }: { id: string; body: ImproveTaskBody }) =>
+      api.post<{ prompt: string }>(`/api/tasks/${id}/improve`, body),
+  });
+}
+
 /** POST /api/repositories/:id/proposals — enqueue on-demand proposal generation (202). */
 export function useGenerateProposals() {
   const queryClient = useQueryClient();

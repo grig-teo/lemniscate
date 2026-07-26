@@ -3,6 +3,8 @@ import { enqueueRunTask } from '../lib/proposal-scheduler.js';
 import { prisma } from '../lib/prisma.js';
 import { attachmentsData } from '../lib/task-attachments.js';
 import { publishTaskEvent } from '../lib/task-events.js';
+import { findLlmConfig } from '../lib/agent-runtime.js';
+import { requestImprovedPrompt } from '../lib/task-improve.js';
 import { authenticatedUserId } from '../plugins/auth.js';
 import { parseOrReply } from './helpers.js';
 import {
@@ -16,7 +18,7 @@ import {
   resolveAttachmentUpdate,
   startBlocker,
 } from './task-lifecycle.js';
-import { idParamsSchema, patchBodySchema, startBodySchema } from './task-schemas.js';
+import { idParamsSchema, improveBodySchema, patchBodySchema, startBodySchema } from './task-schemas.js';
 
 // Task action handlers: start, patch, rerun, cancel, archive, unarchive.
 // Every handler is ownership-scoped via ownedTaskWhere.
@@ -93,6 +95,50 @@ export async function patchTask(request: FastifyRequest, reply: FastifyReply) {
     },
   });
   return { task: updated };
+}
+
+// Improve a pending task's description with the LLM (same structured shape
+// as generated proposals). Same eligibility as start/PATCH; the improved
+// text is returned to the editor without touching the stored task.
+export async function improveTask(request: FastifyRequest, reply: FastifyReply) {
+  const userId = authenticatedUserId(request);
+  const params = parseOrReply(idParamsSchema, request.params, reply, 'Invalid task id');
+  if (params === null) return;
+  const body = parseOrReply(improveBodySchema, request.body, reply, 'Invalid request body', {
+    includeIssues: true,
+  });
+  if (body === null) return;
+  const task = await prisma.task.findFirst({
+    where: ownedTaskWhere(userId, params.id),
+    select: {
+      id: true,
+      kind: true,
+      status: true,
+      llmConfigId: true,
+      repository: { select: { llmConfigId: true } },
+    },
+  });
+  if (!task) {
+    return reply.code(404).send({ error: 'Task not found' });
+  }
+  const blocker = startBlocker(task);
+  if (blocker) {
+    return reply.code(400).send({ error: blocker });
+  }
+  // Shared resolver (agent-runtime): task → repository → default → any
+  // enabled config — same chain Start would use, so Improve never 400s in a
+  // setup where running the task would succeed.
+  const llmConfig = await findLlmConfig(task, task.repository, userId);
+  if (!llmConfig) {
+    return reply.code(400).send({ error: 'No LLM config — set one in Settings first' });
+  }
+  try {
+    const prompt = await requestImprovedPrompt(llmConfig, body);
+    return { prompt };
+  } catch (err) {
+    request.log.warn({ err }, 'task prompt improvement failed');
+    return reply.code(502).send({ error: 'Prompt improvement failed — try again' });
+  }
 }
 
 // Rerun a failed task: reset its run state, re-queue, and enqueue run-task.

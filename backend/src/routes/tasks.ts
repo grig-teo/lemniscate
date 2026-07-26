@@ -4,6 +4,7 @@ import { createTask, getTask, listTasks } from './task-crud-handlers.js';
 import {
   archiveTask,
   cancelTask,
+  improveTask,
   patchTask,
   rerunTask,
   startTask,
@@ -32,6 +33,7 @@ const tasksRoutes: FastifyPluginAsync = async (app) => {
   app.get('/tasks/:id/run-targets', getTaskRunTargets);
   app.post('/tasks/:id/start', startTask);
   app.patch('/tasks/:id', patchTask);
+  app.post('/tasks/:id/improve', improveTask);
   app.post('/tasks/:id/rerun', rerunTask);
   app.post('/tasks/:id/cancel', cancelTask);
   app.post('/tasks/:id/archive', archiveTask);
@@ -40,7 +42,14 @@ const tasksRoutes: FastifyPluginAsync = async (app) => {
 };
 
 // Re-exports so existing consumers (tests) keep a single import site.
-export { patchBodySchema, startBodySchema, type PatchBody, type StartBody } from './task-schemas.js';
+export {
+  improveBodySchema,
+  patchBodySchema,
+  startBodySchema,
+  type ImproveBody,
+  type PatchBody,
+  type StartBody,
+} from './task-schemas.js';
 export {
   archivedTasksWhere,
   attachmentValidationError,

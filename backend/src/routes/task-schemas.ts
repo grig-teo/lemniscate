@@ -72,4 +72,14 @@ export const patchBodySchema = z
   .strict();
 export type PatchBody = z.infer<typeof patchBodySchema>;
 
+// POST /tasks/:id/improve — the Improve button sends the editor's current
+// title + prompt; the improved description is returned, never persisted.
+export const improveBodySchema = z
+  .object({
+    title: z.string().min(1).max(200).optional(),
+    prompt: promptSchema,
+  })
+  .strict();
+export type ImproveBody = z.infer<typeof improveBodySchema>;
+
 export const idParamsSchema = z.object({ id: z.string().min(1) });
