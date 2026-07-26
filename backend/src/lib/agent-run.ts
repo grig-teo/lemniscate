@@ -28,6 +28,7 @@ import {
   type TaskWithRepo,
 } from './agent-runtime.js';
 import { runHermesTask } from './hermes-runner.js';
+import { notify } from './notifications.js';
 import { prisma } from './prisma.js';
 import { enqueueReviewTask } from './proposal-scheduler.js';
 import { openPullRequest } from './pull-requests.js';
@@ -171,6 +172,12 @@ async function openTaskPullRequest(
   await prisma.task.update({ where: { id: task.id }, data: { prUrl } });
   await setTaskStatus(task.id, 'awaiting_review');
   await logEvent(task.id, `opened pull request: ${prUrl}`);
+  await notify(repository.connection.userId, 'pr_opened', {
+    title: `PR opened: ${task.title}`,
+    body: `${repository.fullName} — pull request is awaiting review`,
+    taskId: task.id,
+    prUrl,
+  });
   await persistTokenUsage(task.id, rt.usedTokens, tokenSplit(rt));
   if (repository.autoReviewPr) {
     await enqueueReviewTask(task.id);

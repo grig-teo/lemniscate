@@ -9,6 +9,7 @@ import {
   type PrState,
 } from './pull-requests.js';
 import { enqueueReviewTask, getAgentTasksQueue } from './proposal-scheduler.js';
+import { notify } from './notifications.js';
 import { prisma } from './prisma.js';
 import { setTaskStatus } from './task-events.js';
 import { errorMessage, sleep } from './utils.js';
@@ -51,15 +52,23 @@ export function taskStatusForPrState(state: PrState): 'done' | 'closed' | null {
   return null;
 }
 
-// Applies a polled PR state to the task: flips the status, logs, and drops
-// the kept run workdir (the PR is finished either way). Returns true when
-// the task left awaiting_review.
+// Applies a polled PR state to the task: flips the status, logs, notifies
+// the repo owner, and drops the kept run workdir (the PR is finished either
+// way). Returns true when the task left awaiting_review.
 async function applyPrState(task: TaskWithConnection, state: PrState): Promise<boolean> {
   const status = taskStatusForPrState(state);
   if (status === null) return false;
   await setTaskStatus(task.id, status);
   const what = status === 'done' ? 'merged' : 'closed without merge';
   await logEvent(task.id, `pull request ${what} on the git host — task marked ${status}`);
+  await notify(task.repository.connection.userId, status === 'done' ? 'pr_merged' : 'pr_closed', {
+    title: `PR ${status === 'done' ? 'merged' : 'closed'}: ${task.title}`,
+    body: `${task.repository.fullName} — pull request ${what} on the git host`,
+    taskId: task.id,
+    prUrl: task.prUrl ?? undefined,
+  });
+  // The run workdir was kept for the review window — the PR is finished
+  // either way, so the clone can go.
   await cleanupWorkdir(path.join(config.AGENT_WORKDIR, task.id), task.id);
   return true;
 }
