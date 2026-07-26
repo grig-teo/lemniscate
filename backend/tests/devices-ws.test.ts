@@ -1,8 +1,46 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { existsSync, readFileSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
 
 // Unit tests for the WS gateway's message handling, extracted as pure-ish
 // helpers (parseAgentMessage / handleAgentMessage) so no live socket is
 // needed — app.inject cannot drive WebSocket upgrades.
+//
+// The parseAgentMessage cases are driven by the shared protocol fixtures in
+// tests/contract/device-ws/ — the same JSON files decoded by the Node agent
+// (agent/lib.test.js) and the Tauri agent (protocol.rs). See the README in
+// that directory for the full contract.
+
+/** Walk up from cwd to locate the repo-rooted fixture directory. */
+function fixtureDir(): string {
+  let dir = process.cwd();
+  for (;;) {
+    const candidate = resolve(dir, 'tests', 'contract', 'device-ws');
+    if (existsSync(candidate)) return candidate;
+    const parent = dirname(dir);
+    if (parent === dir) throw new Error('tests/contract/device-ws/ not found');
+    dir = parent;
+  }
+}
+
+interface Fixture {
+  _comment: string;
+  direction: string;
+  frame?: unknown;
+  closeCode?: number;
+  reason?: string;
+}
+
+/** Read one fixture by basename (e.g. "hello.json"). */
+function loadFixture(name: string): Fixture {
+  return JSON.parse(readFileSync(resolve(fixtureDir(), name), 'utf8'));
+}
+
+/** Every fixture listed in index.json, parsed. */
+function loadAllFixtures(): Fixture[] {
+  const index = JSON.parse(readFileSync(resolve(fixtureDir(), 'index.json'), 'utf8'));
+  return (index.fixtures as string[]).map(loadFixture);
+}
 
 const mocks = vi.hoisted(() => ({
   deviceFindUnique: vi.fn(),
@@ -29,18 +67,21 @@ beforeEach(() => {
   vi.clearAllMocks();
 });
 
-describe('parseAgentMessage', () => {
-  it('parses hello, heartbeat and command_result', () => {
-    expect(parseAgentMessage('{"type":"hello","meta":{"os":"linux"}}')).toEqual({
-      type: 'hello',
-      meta: { os: 'linux' },
-    });
-    expect(parseAgentMessage('{"type":"heartbeat"}')).toEqual({ type: 'heartbeat' });
-    expect(parseAgentMessage('{"type":"command_result","id":"c1","status":"done"}')).toEqual({
-      type: 'command_result',
-      id: 'c1',
-      status: 'done',
-    });
+describe('parseAgentMessage — shared contract fixtures', () => {
+  // Every client-to-server fixture in tests/contract/device-ws/ must
+  // round-trip: parse → re-serialize → structural equality. This replaces
+  // the former inline-JSON cases that duplicated agent/lib.test.js.
+  const clientFrames = loadAllFixtures().filter((f) => f.direction === 'client-to-server');
+
+  it('round-trips every client-to-server fixture', () => {
+    expect(clientFrames.length).toBeGreaterThanOrEqual(6);
+    for (const fixture of clientFrames) {
+      const raw = JSON.stringify(fixture.frame);
+      const parsed = parseAgentMessage(raw);
+      expect(parsed, fixture._comment).not.toBeNull();
+      // Re-serialize to confirm structural equality (catches field drift).
+      expect(JSON.parse(JSON.stringify(parsed))).toEqual(fixture.frame);
+    }
   });
 
   it('rejects invalid JSON, unknown types and bad statuses', () => {
@@ -48,29 +89,6 @@ describe('parseAgentMessage', () => {
     expect(parseAgentMessage('{"type":"hack"}')).toBeNull();
     expect(parseAgentMessage('{"type":"command_result","id":"c1","status":"queued"}')).toBeNull();
     expect(parseAgentMessage('{"type":"command_result","status":"done"}')).toBeNull();
-  });
-
-  it('parses a full capabilities message', () => {
-    const raw = JSON.stringify({
-      type: 'capabilities',
-      capabilities: {
-        dockerAvailable: true,
-        androidDevices: [{ serial: '0a1b', model: 'Pixel_8', transport: 'usb' }],
-        iosDevices: [{ name: 'iPhone 15', udid: '00008030-X', available: true }],
-        simulators: [{ name: 'iPhone 16', runtime: 'iOS-18-0', state: 'Shutdown' }],
-        emulators: [{ name: 'Pixel_API_35' }],
-      },
-    });
-    expect(parseAgentMessage(raw)).toEqual({
-      type: 'capabilities',
-      capabilities: {
-        dockerAvailable: true,
-        androidDevices: [{ serial: '0a1b', model: 'Pixel_8', transport: 'usb' }],
-        iosDevices: [{ name: 'iPhone 15', udid: '00008030-X', available: true }],
-        simulators: [{ name: 'iPhone 16', runtime: 'iOS-18-0', state: 'Shutdown' }],
-        emulators: [{ name: 'Pixel_API_35' }],
-      },
-    });
   });
 
   it('capabilities defaults the lists and strips unknown fields', () => {
@@ -98,6 +116,13 @@ describe('parseAgentMessage', () => {
       capabilities: { androidDevices: [{ serial: 'x', transport: 'carrier-pigeon' }] },
     });
     expect(parseAgentMessage(badDevice)).toBeNull();
+  });
+
+  it('close-4001 fixture documents the token-rejection close code', () => {
+    const close = loadFixture('close-4001.json');
+    expect(close.direction).toBe('close');
+    expect(close.closeCode).toBe(4001);
+    expect(close.reason).toBe('invalid device token');
   });
 });
 

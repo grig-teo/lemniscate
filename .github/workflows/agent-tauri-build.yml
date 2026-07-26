@@ -6,11 +6,13 @@ on:
     paths:
       - 'agent-tauri/**'
       - 'agent/**'
+      - 'tests/contract/device-ws/**'
       - '.github/workflows/agent-tauri-build.yml'
   pull_request:
     paths:
       - 'agent-tauri/**'
       - 'agent/**'
+      - 'tests/contract/device-ws/**'
       - '.github/workflows/agent-tauri-build.yml'
   workflow_dispatch:
 

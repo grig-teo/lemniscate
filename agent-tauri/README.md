@@ -22,8 +22,11 @@ Targets: **Linux, macOS, Windows** (Tauri v2).
 | `run_desktop` (npm install → detached start script → 20s alive grace) | yes | **yes (full parity)** |
 | `run_ios` (xcodegen → sim/device destination → xcodebuild → simctl/devicectl, progress frames) | yes | **yes (full parity, macOS only)** |
 
-The wire protocol (`protocol.rs`) mirrors `agent/lib.js` message shapes and is
-unit-tested against the same cases as `agent/lib.test.js`.
+The wire protocol (`protocol.rs`) shares a single contract-fixture suite with
+the Node agent and the backend — `tests/contract/device-ws/`. The Rust tests
+embed those JSON files via `include_str!` and round-trip every frame, so a
+wire-format change in one consumer fails all three unless the shared fixture
+is updated in the same commit.
 
 ## Layout
 

@@ -1,0 +1,17 @@
+{
+  "_comment": "build_android command — gradle build inside the android-build-box Docker image, then upload the newest APK as an artifact. The server enriches the stored payload with gradle/docker defaults and uploadBaseUrl at dispatch time (device-commands.ts buildAndroidAgentPayload). A done result with artifactKey triggers install_apk chaining.",
+  "direction": "server-to-client",
+  "frame": {
+    "id": "cmd-003",
+    "type": "build_android",
+    "payload": {
+      "repoUrl": "https://github.com/example/android-app",
+      "branch": "main",
+      "gradleTask": "assembleDebug",
+      "gradleModule": "app",
+      "image": "mingc/android-build-box:1.29.0",
+      "deviceSerial": "emulator-5554",
+      "uploadBaseUrl": "https://lemniscate.example.com"
+    }
+  }
+}
