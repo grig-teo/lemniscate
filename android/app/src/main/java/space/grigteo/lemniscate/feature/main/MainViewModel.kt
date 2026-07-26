@@ -13,6 +13,8 @@ import kotlinx.coroutines.launch
 import space.grigteo.lemniscate.LemniscateApp
 import space.grigteo.lemniscate.core.ConnectionGroup
 import space.grigteo.lemniscate.core.api.CreateTaskBody
+import space.grigteo.lemniscate.core.api.LemniscateApi
+import space.grigteo.lemniscate.core.api.RepoSelectionStore
 import space.grigteo.lemniscate.core.api.RepositoryDto
 import space.grigteo.lemniscate.core.api.TaskDto
 import space.grigteo.lemniscate.core.api.friendlyMessage
@@ -36,7 +38,10 @@ data class MainUiState(
 }
 
 /** State and actions for the main voice-prompt screen. */
-class MainViewModel(private val app: LemniscateApp) : ViewModel() {
+class MainViewModel(
+    private val api: LemniscateApi,
+    private val repoSelection: RepoSelectionStore,
+) : ViewModel() {
 
     private val _ui = MutableStateFlow(MainUiState())
     val ui: StateFlow<MainUiState> = _ui.asStateFlow()
@@ -48,7 +53,7 @@ class MainViewModel(private val app: LemniscateApp) : ViewModel() {
     suspend fun loadRepositories() {
         _ui.update { it.copy(loading = true) }
         try {
-            val repos = app.api.repositories().repositories
+            val repos = api.repositories().repositories
             val restored = restoreSelection(repos)
             _ui.update {
                 it.copy(
@@ -63,13 +68,13 @@ class MainViewModel(private val app: LemniscateApp) : ViewModel() {
     }
 
     private suspend fun restoreSelection(repos: List<RepositoryDto>): RepositoryDto? {
-        val savedId = app.sessionStore.selectedRepoId.first() ?: return null
+        val savedId = repoSelection.selectedRepoId.first() ?: return null
         return repos.find { it.id == savedId }
     }
 
     fun selectRepo(repo: RepositoryDto) {
         _ui.update { it.copy(selectedRepo = repo) }
-        viewModelScope.launch { app.sessionStore.saveSelectedRepoId(repo.id) }
+        viewModelScope.launch { repoSelection.saveSelectedRepoId(repo.id) }
     }
 
     fun setRecording(recording: Boolean) {
@@ -104,7 +109,7 @@ class MainViewModel(private val app: LemniscateApp) : ViewModel() {
         _ui.update { it.copy(sending = true) }
         viewModelScope.launch {
             try {
-                app.api.createTask(CreateTaskBody(repo.id, prompt))
+                api.createTask(CreateTaskBody(repo.id, prompt))
                 _ui.update { it.copy(sending = false, committedTranscript = "", partialTranscript = "") }
             } catch (e: Exception) {
                 _ui.update { it.copy(sending = false, snackbar = e.friendlyMessage()) }
@@ -116,7 +121,7 @@ class MainViewModel(private val app: LemniscateApp) : ViewModel() {
     fun loadRunningTasks(repoId: String) {
         viewModelScope.launch {
             try {
-                val running = app.api.tasks(repoId).tasks.filter { it.isRunning }
+                val running = api.tasks(repoId).tasks.filter { it.isRunning }
                 _ui.update { it.copy(runningTasks = it.runningTasks + (repoId to running)) }
             } catch (e: Exception) {
                 _ui.update { it.copy(snackbar = e.friendlyMessage()) }
@@ -134,7 +139,7 @@ class MainViewModel(private val app: LemniscateApp) : ViewModel() {
 
     companion object {
         fun factory(app: LemniscateApp) = viewModelFactory {
-            initializer { MainViewModel(app) }
+            initializer { MainViewModel(app.api, app.sessionStore) }
         }
     }
 }

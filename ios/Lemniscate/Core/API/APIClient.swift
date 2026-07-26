@@ -1,5 +1,33 @@
 import Foundation
 
+/// Network seam so view models can be unit-tested with a stubbed client.
+/// Requirements carry no default arguments; the extension below restores
+/// the convenient defaults for call sites typed as `any APIClienting`.
+protocol APIClienting: Sendable {
+    func request<T: Decodable>(
+        _ method: String,
+        _ path: String,
+        query: [URLQueryItem],
+        body: (any Encodable)?
+    ) async throws -> T
+    func send(_ method: String, _ path: String, body: (any Encodable)?) async throws
+}
+
+extension APIClienting {
+    func request<T: Decodable>(
+        _ method: String,
+        _ path: String,
+        query: [URLQueryItem] = [],
+        body: (any Encodable)? = nil
+    ) async throws -> T {
+        try await request(method, path, query: query, body: body)
+    }
+
+    func send(_ method: String, _ path: String, body: (any Encodable)? = nil) async throws {
+        try await send(method, path, body: body)
+    }
+}
+
 enum ApiError: LocalizedError {
     case unauthorized
     case server(status: Int, message: String)
@@ -26,7 +54,7 @@ private struct ErrorBody: Decodable {
 
 /// Cookie-authenticated JSON client. Uses URLSession.shared so cookies flow
 /// through HTTPCookieStorage.shared (same store SessionStore writes to).
-struct APIClient: Sendable {
+struct APIClient: APIClienting, Sendable {
     static let shared = APIClient()
 
     private init() {}

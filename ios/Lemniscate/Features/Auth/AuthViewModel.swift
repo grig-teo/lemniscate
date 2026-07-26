@@ -16,11 +16,17 @@ final class AuthViewModel: ObservableObject {
 
     @Published var sheet: AuthSheet?
 
+    private let api: any APIClienting
+
+    init(api: any APIClienting = APIClient.shared) {
+        self.api = api
+    }
+
     /// GitVerse PAT login: the response sets the session cookie via
     /// Set-Cookie, which HTTPCookieStorage captures automatically.
     func connectGitVerse(token: String, baseUrl: String?, session: SessionStore) async throws {
         let body = ConnectBody(provider: "gitverse", token: token, baseUrl: baseUrl)
-        try await APIClient.shared.send("POST", "api/connections", body: body)
+        try await api.send("POST", "api/connections", body: body)
         await session.completeCookieLogin()
     }
 }

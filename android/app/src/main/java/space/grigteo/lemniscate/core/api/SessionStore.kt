@@ -9,14 +9,20 @@ import kotlinx.coroutines.flow.map
 
 private val Context.sessionDataStore by preferencesDataStore(name = "session")
 
+/** Persistence seam for the last selected repository, so view models stay unit-testable. */
+interface RepoSelectionStore {
+    val selectedRepoId: Flow<String?>
+    suspend fun saveSelectedRepoId(id: String?)
+}
+
 /** Persists the session cookie and the last selected repository across restarts. */
-class SessionStore(private val context: Context) {
+class SessionStore(private val context: Context) : RepoSelectionStore {
 
     private val tokenKey = stringPreferencesKey("session_token")
     private val selectedRepoKey = stringPreferencesKey("selected_repo_id")
 
     val token: Flow<String?> = context.sessionDataStore.data.map { it[tokenKey] }
-    val selectedRepoId: Flow<String?> = context.sessionDataStore.data.map { it[selectedRepoKey] }
+    override val selectedRepoId: Flow<String?> = context.sessionDataStore.data.map { it[selectedRepoKey] }
 
     suspend fun saveToken(token: String?) {
         context.sessionDataStore.edit { prefs ->
@@ -24,7 +30,7 @@ class SessionStore(private val context: Context) {
         }
     }
 
-    suspend fun saveSelectedRepoId(id: String?) {
+    override suspend fun saveSelectedRepoId(id: String?) {
         context.sessionDataStore.edit { prefs ->
             if (id == null) prefs.remove(selectedRepoKey) else prefs[selectedRepoKey] = id
         }

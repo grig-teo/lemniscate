@@ -1,0 +1,34 @@
+{
+  "repositories": [
+    {
+      "id": "repo_1",
+      "connectionId": "conn_github",
+      "externalId": "123456",
+      "name": "app",
+      "fullName": "octocat/app",
+      "cloneUrl": "https://github.com/octocat/app.git",
+      "defaultBranch": "main",
+      "autoPropose": true,
+      "autoCreatePr": true,
+      "autoReviewPr": false,
+      "autoMergePr": false,
+      "llmConfigId": "cfg_1",
+      "connection": { "provider": "github", "username": "octocat" }
+    },
+    {
+      "id": "repo_2",
+      "connectionId": "conn_gitverse",
+      "externalId": "987",
+      "name": "backend",
+      "fullName": "octocat/backend",
+      "cloneUrl": "https://gitverse.ru/octocat/backend.git",
+      "defaultBranch": "master",
+      "autoPropose": false,
+      "autoCreatePr": false,
+      "autoReviewPr": false,
+      "autoMergePr": false,
+      "llmConfigId": null,
+      "connection": { "provider": "gitverse", "username": "octocat" }
+    }
+  ]
+}
