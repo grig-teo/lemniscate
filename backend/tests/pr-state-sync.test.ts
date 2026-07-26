@@ -115,7 +115,7 @@ describe('syncMergedPullRequests', () => {
     warn.mockRestore();
   });
 
-  it('queries only unarchived awaiting_review tasks that have a PR and branch', async () => {
+  it('queries awaiting_review tasks that have a PR and branch, archived included', async () => {
     mocks.taskFindMany.mockResolvedValue([]);
     await syncMergedPullRequests();
     expect(mocks.taskFindMany).toHaveBeenCalledWith({
@@ -123,7 +123,6 @@ describe('syncMergedPullRequests', () => {
         status: 'awaiting_review',
         prUrl: { not: null },
         branchName: { not: null },
-        archivedAt: null,
         repository: { connection: { disconnectedAt: null } },
       },
       include: { repository: { include: { connection: true } } },

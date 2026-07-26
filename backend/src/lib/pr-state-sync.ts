@@ -63,13 +63,14 @@ async function syncTaskPrState(task: TaskWithConnection): Promise<boolean> {
 
 // Job: pr-state-sync — moves awaiting_review tasks to done when their PR was
 // merged on the git host, or to closed when it was closed without merging.
+// Archived tasks are included: the PR state is a fact about the task and the
+// archived list should show it truthfully.
 export async function syncMergedPullRequests(): Promise<void> {
   const tasks = await prisma.task.findMany({
     where: {
       status: 'awaiting_review',
       prUrl: { not: null },
       branchName: { not: null },
-      archivedAt: null,
       repository: { connection: { disconnectedAt: null } },
     },
     include: { repository: { include: { connection: true } } },
