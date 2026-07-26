@@ -172,6 +172,26 @@ export const AGENT_DOWNLOAD_LINUX_DEBS: AgentDownload[] = [
 /** Zip of the Node CLI agent folder (agent/), for Termux/servers. */
 export const AGENT_CLI_ZIP_FILE = 'lemniscate-agent-cli.zip';
 
+const ALL_AGENT_DOWNLOADS: AgentDownload[] = [
+  // .deb first so it wins for linux (distro-native); AppImage stays in "show all".
+  ...AGENT_DOWNLOAD_LINUX_DEBS,
+  ...AGENT_DOWNLOADS,
+];
+
+/**
+ * The single download matching the visitor's platform+arch — the pairing
+ * dialog shows only this one. Exact arch match wins; unknown arch falls back
+ * to the platform's first entry; unknown platform → null (hide the section).
+ */
+export function matchingAgentDownload(
+  platform: ClientPlatform,
+  arch: ClientArch,
+): AgentDownload | null {
+  if (platform === 'unknown') return null;
+  const forPlatform = ALL_AGENT_DOWNLOADS.filter((d) => d.platform === platform);
+  return forPlatform.find((d) => d.arch === arch) ?? forPlatform[0] ?? null;
+}
+
 /** Stable public download URL for a release asset (no auth needed). */
 export function agentDownloadUrl(fileName: string): string {
   return `${AGENT_RELEASE_BASE}/${fileName}`;

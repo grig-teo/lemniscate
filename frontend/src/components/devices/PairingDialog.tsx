@@ -10,6 +10,7 @@ import {
   agentPairCommand,
   detectClientArch,
   detectClientPlatform,
+  matchingAgentDownload,
   pairingExpirySeconds,
   type ClientArch,
 } from '@/lib/devices';
@@ -98,12 +99,15 @@ function AgentDownloads() {
   }, []);
 
   const clientArch: ClientArch = nav ? detectClientArch(nav.userAgent, uaDataArch) : 'unknown';
+  const matched = matchingAgentDownload(clientOs, clientArch);
+  const [showAll, setShowAll] = React.useState(false);
   const downloads = [...AGENT_DOWNLOADS, ...AGENT_DOWNLOAD_LINUX_DEBS];
+  if (!matched) return null;
   return (
     <div className="flex min-w-0 flex-col gap-2 text-sm">
       <p className="font-medium">Download the desktop app</p>
       <div className="flex flex-wrap gap-2">
-        {downloads.map((download) => (
+        {(showAll ? downloads : [matched]).map((download) => (
           <a
             key={download.fileName}
             href={agentDownloadUrl(download.fileName)}
@@ -120,6 +124,13 @@ function AgentDownloads() {
           </a>
         ))}
       </div>
+      <button
+        type="button"
+        onClick={() => setShowAll((v) => !v)}
+        className="self-start text-xs text-muted-foreground underline-offset-2 hover:underline"
+      >
+        {showAll ? 'Show less' : 'Other platforms'}
+      </button>
       <p className="text-xs text-muted-foreground">
         Windows: SmartScreen → More info → Run anyway. Linux: App Center warns &ldquo;third
         party&rdquo; — Install still works, or use the AppImage (chmod +x, no install needed).

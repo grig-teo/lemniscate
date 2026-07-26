@@ -5,6 +5,7 @@ import {
   AGENT_DOWNLOADS,
   AGENT_DOWNLOAD_LINUX_DEBS,
   agentDownloadUrl,
+  matchingAgentDownload,
   agentPairCommand,
   commandTypeLabel,
   detectClientArch,
@@ -227,5 +228,27 @@ describe('AGENT_DOWNLOADS / agentDownloadUrl', () => {
     expect(agentDownloadUrl(AGENT_CLI_ZIP_FILE)).toBe(
       'https://github.com/grig-teo/lemniscate/releases/download/agent-latest/lemniscate-agent-cli.zip',
     );
+  });
+});
+
+describe('matchingAgentDownload', () => {
+  it('returns the exact platform+arch match', () => {
+    expect(matchingAgentDownload('macos', 'arm64')?.fileName).toBe('lemniscate-agent-macos-arm64.dmg');
+    expect(matchingAgentDownload('windows', 'amd64')?.fileName).toBe('lemniscate-agent-windows-amd64.msi');
+    expect(matchingAgentDownload('linux', 'arm64')?.fileName).toBe('lemniscate-agent-linux-arm64.deb');
+  });
+
+  it('prefers the .deb over the AppImage for linux', () => {
+    expect(matchingAgentDownload('linux', 'amd64')?.fileName).toBe('lemniscate-agent-linux-amd64.deb');
+  });
+
+  it('falls back to the platform default when arch is unknown', () => {
+    expect(matchingAgentDownload('macos', 'unknown')?.platform).toBe('macos');
+    expect(matchingAgentDownload('windows', 'unknown')?.platform).toBe('windows');
+  });
+
+  it('returns null for unknown platforms', () => {
+    expect(matchingAgentDownload('unknown', 'unknown')).toBeNull();
+    expect(matchingAgentDownload('unknown', 'arm64')).toBeNull();
   });
 });
