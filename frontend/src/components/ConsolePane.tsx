@@ -1,7 +1,9 @@
+import * as React from 'react';
 import { Terminal } from 'lucide-react';
 
 import { isStartableTask } from '@/lib/repo-tasks';
 import { isRunningStatus } from '@/lib/running-tasks';
+import { useTaskRunTargets } from '@/lib/hooks';
 import { useWorkspaceSelection } from '@/lib/selection';
 
 import { ConsoleHeader } from '@/components/console/ConsoleHeader';
@@ -10,6 +12,7 @@ import { ArchivedPane } from '@/components/console/ArchivedPane';
 import { ProposalDetail } from '@/components/console/ProposalDetail';
 import { ComposerCard, TaskComposerFab } from '@/components/console/TaskComposer';
 import { useTaskConsole } from '@/components/console/useTaskConsole';
+import { RunTaskDialog } from '@/components/devices/RunTaskDialog';
 
 function EmptyConsole() {
   return (
@@ -48,12 +51,53 @@ function EmptyConsole() {
  * while the selected task is in flight (queued or running). When the repo tree's
  * "show more" opens a repo's archived view (selection.archivedRepoId),
  * ArchivedPane replaces the console/composer until closed or a task is
- * selected.
+ * selected. When a task's live status flips to done, RunTaskDialog
+ * auto-opens once (if a run target has an online device); it is also
+ * reachable via the header's run-on-device button.
  */
 export function ConsolePane() {
   const { selectedTask, liveStatus, archivedRepoId } = useWorkspaceSelection();
   const taskId = selectedTask?.id ?? null;
   const consoleState = useTaskConsole(taskId);
+
+  // Run-on-device dialog: auto-opens once per task when its live status flips
+  // to done (and a target has an online device); also opened manually from the
+  // console header button for done / awaiting_review tasks.
+  const [runDialogOpen, setRunDialogOpen] = React.useState(false);
+  const [autoOpenPending, setAutoOpenPending] = React.useState(false);
+  const prevLiveStatusRef = React.useRef<string | null>(liveStatus);
+  const autoOpenedForRef = React.useRef<string | null>(null);
+  const runTargets = useTaskRunTargets(taskId, autoOpenPending);
+
+  React.useEffect(() => {
+    const prev = prevLiveStatusRef.current;
+    prevLiveStatusRef.current = liveStatus;
+    if (
+      liveStatus === 'done' &&
+      prev !== 'done' &&
+      taskId !== null &&
+      autoOpenedForRef.current !== taskId
+    ) {
+      setAutoOpenPending(true);
+    }
+  }, [liveStatus, taskId]);
+
+  React.useEffect(() => {
+    if (!autoOpenPending || taskId === null) return;
+    if (runTargets.isError) {
+      setAutoOpenPending(false);
+      return;
+    }
+    if (!runTargets.data) return;
+    setAutoOpenPending(false);
+    const hasOnlineDevice = runTargets.data.some((target) =>
+      target.devices.some((device) => device.online),
+    );
+    if (hasOnlineDevice) {
+      autoOpenedForRef.current = taskId;
+      setRunDialogOpen(true);
+    }
+  }, [autoOpenPending, taskId, runTargets.data, runTargets.isError]);
 
   if (archivedRepoId) return <ArchivedPane repositoryId={archivedRepoId} />;
   if (!selectedTask) return <EmptyConsole />;
@@ -62,7 +106,11 @@ export function ConsolePane() {
   const showTaskDetail = isStartableTask(selectedTask) && status === 'pending';
   return (
     <section className="relative flex h-full min-w-0 flex-1 flex-col">
-      <ConsoleHeader task={selectedTask} status={status} />
+      <ConsoleHeader
+        task={selectedTask}
+        status={status}
+        onRunOnDevice={() => setRunDialogOpen(true)}
+      />
       {showTaskDetail ? (
         <ProposalDetail key={selectedTask.id} taskId={selectedTask.id} />
       ) : (
@@ -76,6 +124,7 @@ export function ConsolePane() {
           {!isRunningStatus(status) && <TaskComposerFab />}
         </>
       )}
+      <RunTaskDialog open={runDialogOpen} onOpenChange={setRunDialogOpen} task={selectedTask} />
     </section>
   );
 }

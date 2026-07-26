@@ -1,4 +1,4 @@
-import { ExternalLink, GitBranch, Loader2, Play, Square, X } from 'lucide-react';
+import { ExternalLink, GitBranch, Loader2, Play, Smartphone, Square, X } from 'lucide-react';
 
 import { useCancelTask, useStartTask } from '@/lib/hooks';
 import { useWorkspaceSelection, type SelectedTask } from '@/lib/selection';
@@ -7,9 +7,19 @@ import { StatusBadge } from '@/components/StatusBadge';
 import { Button } from '@/components/ui/button';
 
 const CANCELLABLE = new Set(['queued', 'running']);
+const RUNNABLE_ON_DEVICE = new Set(['done', 'awaiting_review']);
 
 /** Console header: task title, live status badge, branch and PR link. */
-export function ConsoleHeader({ task, status }: { task: SelectedTask; status: string }) {
+export function ConsoleHeader({
+  task,
+  status,
+  onRunOnDevice,
+}: {
+  task: SelectedTask;
+  status: string;
+  /** Opens the run-on-device dialog; rendered only for finished tasks. */
+  onRunOnDevice?: () => void;
+}) {
   const { selectTask } = useWorkspaceSelection();
   const cancelTask = useCancelTask();
   const startTask = useStartTask();
@@ -51,6 +61,18 @@ export function ConsoleHeader({ task, status }: { task: SelectedTask; status: st
           ) : (
             <Play className="h-3.5 w-3.5" aria-hidden />
           )}
+        </Button>
+      )}
+      {RUNNABLE_ON_DEVICE.has(status) && onRunOnDevice && (
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-6 w-6 shrink-0"
+          aria-label={`Run ${task.title} on a device`}
+          title="Run result on your device"
+          onClick={onRunOnDevice}
+        >
+          <Smartphone className="h-3.5 w-3.5" aria-hidden />
         </Button>
       )}
       {CANCELLABLE.has(status) && (

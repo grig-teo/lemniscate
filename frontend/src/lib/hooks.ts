@@ -822,3 +822,76 @@ export function useRunDesktop() {
     },
   });
 }
+
+export type RunIosPayload = {
+  repoUrl: string;
+  branch: string;
+  scheme?: string;
+  destination?: string;
+};
+
+/** Any payload shape accepted by POST /api/devices/:id/commands. */
+export type DeviceCommandPayload = Partial<RunWebPayload> &
+  Partial<InstallApkPayload> &
+  Partial<BuildAndroidPayload> &
+  Partial<RunIosPayload>;
+
+/** GET /api/tasks/:id/run-targets device item. */
+export type TaskRunTargetDevice = {
+  id: string;
+  name: string;
+  platform: string;
+  online: boolean;
+};
+
+/** GET /api/tasks/:id/run-targets item — one affected target plus its paired devices. */
+export type TaskRunTarget = {
+  target: 'android' | 'ios' | 'web' | 'desktop';
+  commandType: 'build_android' | 'run_ios' | 'run_web' | 'run_desktop';
+  devices: TaskRunTargetDevice[];
+};
+
+/**
+ * GET /api/tasks/:id/run-targets — run targets affected by a finished task.
+ * Targets with zero devices are included (the UI greys them out).
+ */
+export function useTaskRunTargets(taskId: string | null | undefined, enabled = true) {
+  return useQuery({
+    queryKey: ['task-run-targets', taskId ?? null],
+    queryFn: () =>
+      api
+        .get<{ targets: TaskRunTarget[] }>(`/api/tasks/${taskId}/run-targets`)
+        .then((res) => res.targets),
+    enabled: Boolean(taskId) && enabled,
+    refetchInterval: 30_000,
+  });
+}
+
+/** POST /api/devices/:id/commands — queue any agent command, optionally linked to a task. */
+export function useCreateDeviceCommand() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      deviceId,
+      type,
+      payload,
+      taskId,
+    }: {
+      deviceId: string;
+      type: DeviceCommand['type'];
+      payload: DeviceCommandPayload;
+      taskId?: string;
+    }) =>
+      api
+        .post<{ command: DeviceCommand }>(`/api/devices/${deviceId}/commands`, {
+          type,
+          payload,
+          ...(taskId ? { taskId } : {}),
+        })
+        .then((res) => res.command),
+    onSuccess: (_command, { deviceId }) => {
+      void queryClient.invalidateQueries({ queryKey: ['device-commands', deviceId] });
+      void queryClient.invalidateQueries({ queryKey: ['devices'] });
+    },
+  });
+}
