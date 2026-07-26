@@ -44,6 +44,15 @@ const envSchema = z.object({
   // Escape hatch for local dev: allow private/loopback URLs for LLM baseUrl
   // and git connections (SSRF guard in lib/url-safety.ts). Unset = blocked.
   ALLOW_PRIVATE_URLS: z.enum(['true', 'false']).optional(),
+  // In Docker the backend is only reachable through the frontend nginx,
+  // which sets X-Forwarded-For/X-Real-IP. Trusting the proxy makes
+  // request.ip (and therefore every rate-limit bucket) reflect the real
+  // client instead of nginx's container IP. Set to 'false' only if the
+  // backend is ever exposed directly, where clients could spoof the header.
+  TRUST_PROXY: z
+    .enum(['true', 'false'])
+    .default('true')
+    .transform((value) => value === 'true'),
 
   // --- GitHub OAuth ---
   GITHUB_CLIENT_ID: optionalString,
