@@ -90,9 +90,11 @@ jobs:
           filters: |
             android:
               - 'android/**'
+              - 'tests/contract/**'
               - '.github/workflows/ci.yml'
             ios:
               - 'ios/**'
+              - 'tests/contract/**'
               - '.github/workflows/ci.yml'
             e2e:
               - 'backend/**'
