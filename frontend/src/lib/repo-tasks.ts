@@ -38,6 +38,12 @@ export function isArchivable(status: string): boolean {
   return status !== 'running' && status !== 'queued';
 }
 
+/** Tasks the user can rerun — failed (including user-cancelled) and closed
+ *  (PR closed without merge), mirroring the backend rerunBlocker. */
+export function isRerunnable(status: string): boolean {
+  return status === 'failed' || status === 'closed';
+}
+
 function isProcessTask(task: Task): boolean {
   return !isPendingProposal(task) && !isPendingPrompt(task);
 }

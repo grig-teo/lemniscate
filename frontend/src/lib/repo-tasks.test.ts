@@ -4,6 +4,7 @@ import type { Task } from '@/lib/hooks';
 import {
   groupRepoTasks,
   isArchivable,
+  isRerunnable,
   isStartableTask,
   proposalPollInterval,
   showsStatusBadge,
@@ -124,7 +125,22 @@ describe('isArchivable', () => {
     expect(isArchivable(status)).toBe(false);
   });
 
-  it.each(['pending', 'awaiting_review', 'done', 'failed'])('allows %s tasks', (status) => {
+  it.each(['pending', 'awaiting_review', 'done', 'failed', 'closed'])('allows %s tasks', (status) => {
     expect(isArchivable(status)).toBe(true);
   });
+});
+
+// Rerun availability mirrors the backend rerunBlocker: failed (including
+// user-cancelled) and closed (PR closed without merge) tasks can be rerun.
+describe('isRerunnable', () => {
+  it.each(['failed', 'closed'])('allows %s tasks', (status) => {
+    expect(isRerunnable(status)).toBe(true);
+  });
+
+  it.each(['pending', 'queued', 'running', 'awaiting_review', 'done'])(
+    'rejects %s tasks',
+    (status) => {
+      expect(isRerunnable(status)).toBe(false);
+    },
+  );
 });
