@@ -1,0 +1,13 @@
+{
+  "_comment": "run_desktop command — clone, npm install, and launch the desktop entry script (tauri/electron/dev/start). The script runs detached with a 20 s alive-grace period. Desktop agents only.",
+  "direction": "server-to-client",
+  "frame": {
+    "id": "cmd-004",
+    "type": "run_desktop",
+    "payload": {
+      "repoUrl": "https://github.com/example/desktop-app",
+      "branch": "main",
+      "startScript": "tauri"
+    }
+  }
+}

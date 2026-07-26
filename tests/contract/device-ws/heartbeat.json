@@ -1,0 +1,7 @@
+{
+  "_comment": "Keep-alive ping — sent every 25 s so the server can show the device online. No payload; the server throttles Device.lastSeenAt DB writes to once per 20 s.",
+  "direction": "client-to-server",
+  "frame": {
+    "type": "heartbeat"
+  }
+}

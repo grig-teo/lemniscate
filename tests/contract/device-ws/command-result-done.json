@@ -1,0 +1,13 @@
+{
+  "_comment": "Successful completion — the command finished. `result` carries command-specific output (a URL for run_web, an artifactKey for build_android, etc.). A done build_android triggers the install_apk chaining on the server side.",
+  "direction": "client-to-server",
+  "frame": {
+    "type": "command_result",
+    "id": "cmd-abc123",
+    "status": "done",
+    "result": {
+      "url": "http://127.0.0.1:3000",
+      "projectDir": "~/.lemniscate-agent/repos/demo-app-a1b2c3d4"
+    }
+  }
+}

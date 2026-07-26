@@ -1,0 +1,14 @@
+{
+  "_comment": "Pairing hello — sent by the agent immediately after the WS handshake succeeds. The optional `meta` object is merged into Device.meta (read-modify-write), carrying os/arch/hostname/agentVersion/dockerAvailable.",
+  "direction": "client-to-server",
+  "frame": {
+    "type": "hello",
+    "meta": {
+      "os": "linux",
+      "arch": "x64",
+      "hostname": "build-host",
+      "agentVersion": "0.4.3",
+      "dockerAvailable": true
+    }
+  }
+}

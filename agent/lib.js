@@ -510,7 +510,7 @@ export function commandResultMessage(id, status, result) {
  * Parse a raw server frame. Returns
  * {kind:'welcome', deviceId} | {kind:'command', id, commandType, payload} | null.
  */
-const COMMAND_TYPES = ['run_web', 'install_apk', 'build_android', 'run_desktop', 'run_ios'];
+const COMMAND_TYPES = ['run_web', 'install_apk', 'build_android', 'run_desktop', 'run_ios', 'run_tests'];
 
 export function parseServerMessage(raw) {
   let message;

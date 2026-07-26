@@ -1,0 +1,13 @@
+{
+  "_comment": "run_tests command — clone the repo and run its test suite (npm test / gradle test / cargo test / etc.). Reports pass or fail with the test output. The testCommand is optional (the agent auto-detects based on repo files when omitted).",
+  "direction": "server-to-client",
+  "frame": {
+    "id": "cmd-006",
+    "type": "run_tests",
+    "payload": {
+      "repoUrl": "https://github.com/example/webapp",
+      "branch": "main",
+      "testCommand": "npm test"
+    }
+  }
+}

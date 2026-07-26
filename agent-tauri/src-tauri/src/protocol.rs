@@ -1,5 +1,6 @@
 //! Wire protocol types and pure helpers for the Lemniscate device tunnel.
-//! Ports agent/lib.js message shapes — keep both in sync.
+//! Shares a contract-fixture suite with agent/lib.js and the backend — see
+//! tests/contract/device-ws/ (embedded in the test module below via include_str!).
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -12,8 +13,8 @@ pub const AGENT_VERSION: &str = "0.2.2";
 /// Server close code meaning "device token rejected — pair again".
 pub const CLOSE_CODE_RE_PAIR: u16 = 4001;
 
-pub const COMMAND_TYPES: [&str; 5] =
-    ["run_web", "install_apk", "build_android", "run_desktop", "run_ios"];
+pub const COMMAND_TYPES: [&str; 6] =
+    ["run_web", "install_apk", "build_android", "run_desktop", "run_ios", "run_tests"];
 
 /// Device metadata sent in the claim body and the WS hello.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -170,7 +171,6 @@ pub fn tail_log(text: &str, max_bytes: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
 
     // --- build_ws_url (mirrors buildWsUrl tests in agent/lib.test.js) ---------
 
@@ -243,142 +243,124 @@ mod tests {
         assert!(name.starts_with("git-github-com-grig-lemniscate-"), "got {name}");
     }
 
-    // --- message shapes ----------------------------------------------------------
+    // --- shared contract fixtures (tests/contract/device-ws/) ------------------
+    // The same JSON files are decoded by the backend (devices-ws.test.ts) and
+    // the Node agent (agent/lib.test.js).  Embedded at compile time so a
+    // missing or renamed fixture fails the build.
+
+    const HELLO_FIXTURE: &str = include_str!("../../../tests/contract/device-ws/hello.json");
+    const HEARTBEAT_FIXTURE: &str = include_str!("../../../tests/contract/device-ws/heartbeat.json");
+    const CAPABILITIES_FIXTURE: &str = include_str!("../../../tests/contract/device-ws/capabilities.json");
+    const CMD_RESULT_RUNNING_FIXTURE: &str =
+        include_str!("../../../tests/contract/device-ws/command-result-running.json");
+    const CMD_RESULT_DONE_FIXTURE: &str =
+        include_str!("../../../tests/contract/device-ws/command-result-done.json");
+    const CMD_RESULT_FAILED_FIXTURE: &str =
+        include_str!("../../../tests/contract/device-ws/command-result-failed.json");
+    const WELCOME_FIXTURE: &str = include_str!("../../../tests/contract/device-ws/welcome.json");
+    const CMD_RUN_WEB_FIXTURE: &str =
+        include_str!("../../../tests/contract/device-ws/command-run-web.json");
+    const CMD_INSTALL_APK_FIXTURE: &str =
+        include_str!("../../../tests/contract/device-ws/command-install-apk.json");
+    const CMD_BUILD_ANDROID_FIXTURE: &str =
+        include_str!("../../../tests/contract/device-ws/command-build-android.json");
+    const CMD_RUN_DESKTOP_FIXTURE: &str =
+        include_str!("../../../tests/contract/device-ws/command-run-desktop.json");
+    const CMD_RUN_IOS_FIXTURE: &str =
+        include_str!("../../../tests/contract/device-ws/command-run-ios.json");
+    const CMD_RUN_TESTS_FIXTURE: &str =
+        include_str!("../../../tests/contract/device-ws/command-run-tests.json");
+    const CLOSE_4001_FIXTURE: &str = include_str!("../../../tests/contract/device-ws/close-4001.json");
+
+    /// Extract the `frame` object from a fixture wrapper.
+    fn fixture_frame(raw: &str) -> Value {
+        let wrapper: Value = serde_json::from_str(raw).expect("fixture must be valid JSON");
+        wrapper.get("frame").expect("fixture must have a frame key").clone()
+    }
+
+    // -- client-to-server: serialize a ClientMessage and compare to the fixture --
 
     #[test]
-    fn heartbeat_and_hello_shapes() {
-        assert_eq!(serde_json::to_value(ClientMessage::Heartbeat).unwrap(), json!({"type": "heartbeat"}));
-        let meta = Meta {
-            os: "darwin".into(),
-            arch: "arm64".into(),
-            hostname: "mac".into(),
-            agent_version: AGENT_VERSION.into(),
-            docker_available: false,
-        };
-        let hello = serde_json::to_value(ClientMessage::Hello { meta }).unwrap();
-        assert_eq!(hello["type"], "hello");
-        assert_eq!(hello["meta"]["os"], "darwin");
-        assert_eq!(hello["meta"]["agentVersion"], AGENT_VERSION);
-        assert_eq!(hello["meta"]["dockerAvailable"], false);
+    fn hello_fixture_matches_serialization() {
+        let frame = fixture_frame(HELLO_FIXTURE);
+        let meta: Meta = serde_json::from_value(frame["meta"].clone()).unwrap();
+        let serialized = serde_json::to_value(ClientMessage::Hello { meta }).unwrap();
+        assert_eq!(serialized, frame);
     }
 
     #[test]
-    fn capabilities_frame_serializes_with_camel_case_keys() {
-        let capabilities = Capabilities {
-            docker_available: true,
-            android_devices: vec![crate::capabilities::AndroidDevice {
-                serial: "0a1b".into(),
-                model: Some("Pixel_8".into()),
-                transport: "usb".into(),
-            }],
-            ..Capabilities::default()
-        };
-        let frame = serde_json::to_value(ClientMessage::Capabilities { capabilities }).unwrap();
-        assert_eq!(
-            frame,
-            json!({"type": "capabilities", "capabilities": {
-                "dockerAvailable": true,
-                "androidDevices": [{"serial": "0a1b", "model": "Pixel_8", "transport": "usb"}],
-                "iosDevices": [],
-                "simulators": [],
-                "emulators": [],
-            }})
-        );
+    fn heartbeat_fixture_matches_serialization() {
+        let frame = fixture_frame(HEARTBEAT_FIXTURE);
+        assert_eq!(serde_json::to_value(ClientMessage::Heartbeat).unwrap(), frame);
     }
 
     #[test]
-    fn command_result_includes_result_only_when_defined() {        let running = serde_json::to_value(command_result_message("c1", "running", None)).unwrap();
-        assert_eq!(running, json!({"type": "command_result", "id": "c1", "status": "running"}));
-        let done = serde_json::to_value(command_result_message(
-            "c1",
-            "done",
-            Some(json!({"url": "http://127.0.0.1:3000"})),
-        ))
-        .unwrap();
-        assert_eq!(
-            done,
-            json!({"type": "command_result", "id": "c1", "status": "done",
-                   "result": {"url": "http://127.0.0.1:3000"}})
-        );
-    }
-
-    // --- parse_server_message -----------------------------------------------------
-
-    #[test]
-    fn parses_welcome() {
-        assert_eq!(
-            parse_server_message(r#"{"type":"welcome","deviceId":"d1"}"#),
-            Some(ServerMessage::Welcome { device_id: "d1".into() })
-        );
+    fn capabilities_fixture_matches_serialization() {
+        let frame = fixture_frame(CAPABILITIES_FIXTURE);
+        let caps: Capabilities = serde_json::from_value(frame["capabilities"].clone()).unwrap();
+        let serialized =
+            serde_json::to_value(ClientMessage::Capabilities { capabilities: caps }).unwrap();
+        assert_eq!(serialized, frame);
     }
 
     #[test]
-    fn parses_run_web_command() {
-        let raw = json!({
-            "id": "cmd1",
-            "type": "run_web",
-            "payload": {"repoUrl": "https://github.com/a/b", "branch": "main", "port": 3000}
-        })
-        .to_string();
-        let Some(ServerMessage::Command { id, command_type, payload }) = parse_server_message(&raw)
-        else {
-            panic!("expected a command");
-        };
-        assert_eq!(id, "cmd1");
-        assert_eq!(command_type, "run_web");
-        assert_eq!(payload["port"], 3000);
+    fn command_result_fixtures_match_serialization() {
+        let cases = [
+            ("running", CMD_RESULT_RUNNING_FIXTURE),
+            ("done", CMD_RESULT_DONE_FIXTURE),
+            ("failed", CMD_RESULT_FAILED_FIXTURE),
+        ];
+        for (label, raw) in cases {
+            let frame = fixture_frame(raw);
+            let result = frame.get("result").cloned();
+            let msg = command_result_message(
+                frame["id"].as_str().unwrap(),
+                frame["status"].as_str().unwrap(),
+                result,
+            );
+            assert_eq!(serde_json::to_value(msg).unwrap(), frame, "fixture: {label}");
+        }
+    }
+
+    // -- server-to-client: parse through parse_server_message and verify fields --
+
+    #[test]
+    fn welcome_fixture_parses() {
+        let frame = fixture_frame(WELCOME_FIXTURE);
+        // deviceId is hardcoded — catches a field rename that a
+        // pure round-trip through the fixture would miss.
+        match parse_server_message(&frame.to_string()) {
+            Some(ServerMessage::Welcome { device_id }) => {
+                assert_eq!(device_id, "dev-abc123");
+            }
+            other => panic!("expected Welcome, got {other:?}"),
+        }
     }
 
     #[test]
-    fn parses_install_apk_command() {
-        let raw = json!({
-            "id": "cmd2",
-            "type": "install_apk",
-            "payload": {"apkUrl": "https://x.space/a.apk", "appName": "Demo"}
-        })
-        .to_string();
-        let Some(ServerMessage::Command { command_type, payload, .. }) = parse_server_message(&raw)
-        else {
-            panic!("expected a command");
-        };
-        assert_eq!(command_type, "install_apk");
-        assert_eq!(payload["apkUrl"], "https://x.space/a.apk");
-    }
-
-    #[test]
-    fn parses_build_android_command() {
-        let raw = r#"{"type":"build_android","id":"c1","payload":{"repoUrl":"https://x","branch":"main"}}"#;
-        assert_eq!(
-            parse_server_message(raw),
-            Some(ServerMessage::Command {
-                id: "c1".into(),
-                command_type: "build_android".into(),
-                payload: json!({"repoUrl": "https://x", "branch": "main"}),
-            })
-        );
-    }
-
-    #[test]
-    fn parses_run_desktop_command() {
-        let raw = r#"{"type":"run_desktop","id":"c1","payload":{"repoUrl":"https://x","branch":"main","startScript":"electron"}}"#;
-        let Some(ServerMessage::Command { command_type, payload, .. }) = parse_server_message(raw)
-        else {
-            panic!("expected a command");
-        };
-        assert_eq!(command_type, "run_desktop");
-        assert_eq!(payload["startScript"], "electron");
-    }
-
-    #[test]
-    fn parses_run_ios_command() {
-        let raw = r#"{"type":"run_ios","id":"c1","payload":{"repoUrl":"https://x","branch":"main","scheme":"App"}}"#;
-        let Some(ServerMessage::Command { id, command_type, payload }) = parse_server_message(raw)
-        else {
-            panic!("expected a command");
-        };
-        assert_eq!(id, "c1");
-        assert_eq!(command_type, "run_ios");
-        assert_eq!(payload["scheme"], "App");
+    fn all_command_fixtures_parse() {
+        // One key payload field per command type — the field name is
+        // hardcoded so a rename in the fixture (e.g. port -> portNumber)
+        // causes payload.get(key) to return None and fail the assertion.
+        let commands: [(&str, &str, &str); 6] = [
+            ("run_web", CMD_RUN_WEB_FIXTURE, "port"),
+            ("install_apk", CMD_INSTALL_APK_FIXTURE, "apkUrl"),
+            ("build_android", CMD_BUILD_ANDROID_FIXTURE, "gradleTask"),
+            ("run_desktop", CMD_RUN_DESKTOP_FIXTURE, "startScript"),
+            ("run_ios", CMD_RUN_IOS_FIXTURE, "scheme"),
+            ("run_tests", CMD_RUN_TESTS_FIXTURE, "testCommand"),
+        ];
+        for (expected_type, raw, payload_key) in commands {
+            let frame = fixture_frame(raw);
+            match parse_server_message(&frame.to_string()) {
+                Some(ServerMessage::Command { command_type, payload, .. }) => {
+                    assert_eq!(command_type, expected_type, "{expected_type}: type");
+                    assert!(payload.get(payload_key).is_some(),
+                           "{expected_type}: payload must have key '{payload_key}'");
+                }
+                other => panic!("expected Command for {expected_type}, got {other:?}"),
+            }
+        }
     }
 
     #[test]
@@ -387,6 +369,17 @@ mod tests {
         assert_eq!(parse_server_message(r#"{"type":"mystery"}"#), None);
         assert_eq!(parse_server_message("{}"), None);
         assert_eq!(parse_server_message(r#"{"type":"run_web"}"#), None);
+    }
+
+    // -- close code fixture -------------------------------------------------------
+
+    #[test]
+    fn close_4001_fixture_documents_token_rejection() {
+        let wrapper: Value = serde_json::from_str(CLOSE_4001_FIXTURE).unwrap();
+        assert_eq!(wrapper["direction"], "close");
+        assert_eq!(wrapper["closeCode"], 4001);
+        assert_eq!(wrapper["reason"], "invalid device token");
+        assert_eq!(CLOSE_CODE_RE_PAIR, 4001);
     }
 
     // --- tail_log --------------------------------------------------------------------

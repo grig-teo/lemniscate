@@ -1,0 +1,13 @@
+{
+  "_comment": "install_apk command — download and sideload an APK. adb install -r is preferred when a device/emulator is attached (selectable via deviceSerial); otherwise the APK is saved and a Termux install intent is fired. Often chained automatically after a done build_android.",
+  "direction": "server-to-client",
+  "frame": {
+    "id": "cmd-002",
+    "type": "install_apk",
+    "payload": {
+      "apkUrl": "https://lemniscate.example.com/api/devices/artifacts/dev-builder/u1-app.apk",
+      "appName": "DemoApp",
+      "deviceSerial": "emulator-5554"
+    }
+  }
+}

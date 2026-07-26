@@ -43,6 +43,14 @@ jobs:
         working-directory: backend
         run: npm test
 
+      # Guards the shared device-WS protocol contract: verifies that
+      # tests/contract/device-ws/index.json matches the directory and every
+      # fixture has the required structure. Consumer test suites
+      # (backend, agent, agent-tauri) iterate this index, so an unlisted or
+      # malformed fixture is invisible to CI without this check.
+      - name: Device-WS contract fixture lint
+        run: node tests/contract/device-ws/lint.js
+
   frontend:
     name: Frontend — build & test
     runs-on: ubuntu-latest

@@ -3,7 +3,36 @@ import assert from 'node:assert/strict';
 import os from 'node:os';
 import fs from 'node:fs';
 import path from 'node:path';
+import { existsSync, readFileSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import * as lib from './lib.js';
+
+// --- shared contract fixtures (tests/contract/device-ws/) -------------------
+// The same JSON files are decoded by the backend (devices-ws.test.ts) and the
+// Tauri agent (protocol.rs). Walk up from this file to the repo root.
+
+function fixtureDir() {
+  let dir = dirname(fileURLToPath(import.meta.url));
+  for (;;) {
+    const candidate = resolve(dir, 'tests', 'contract', 'device-ws');
+    if (existsSync(candidate)) return candidate;
+    const parent = dirname(dir);
+    if (parent === dir) throw new Error('tests/contract/device-ws/ not found');
+    dir = parent;
+  }
+}
+
+function loadFixture(name) {
+  return JSON.parse(readFileSync(resolve(fixtureDir(), name), 'utf8'));
+}
+
+function loadAllFixtures() {
+  const index = JSON.parse(readFileSync(resolve(fixtureDir(), 'index.json'), 'utf8'));
+  return index.fixtures.map(loadFixture);
+}
+
+const SERVER_FRAMES = loadAllFixtures().filter((f) => f.direction === 'server-to-client');
 
 // --- buildWsUrl ---------------------------------------------------------------
 
@@ -112,46 +141,67 @@ test('detectRunStrategy returns null when nothing runnable exists', () => {
   assert.equal(lib.detectRunStrategy(['README.md', 'src']), null);
 });
 
-// --- message builders -----------------------------------------------------------------
+// --- shared contract fixtures: client-to-server frames ----------------------
+// Builder output must match the shared fixture exactly (encode round-trip).
 
-test('helloMessage and heartbeatMessage shapes', () => {
-  assert.deepEqual(lib.heartbeatMessage(), { type: 'heartbeat' });
-  assert.deepEqual(lib.helloMessage({ os: 'darwin' }), { type: 'hello', meta: { os: 'darwin' } });
+test('helloMessage matches the shared hello fixture', () => {
+  const fixture = loadFixture('hello.json');
+  const message = lib.helloMessage(fixture.frame.meta);
+  assert.equal(message.type, 'hello');
+  // Verify a known meta field survives — catches camelCase drift
+  assert.equal(message.meta.agentVersion, '0.4.3');
 });
 
-test('commandResultMessage includes result only when defined', () => {
-  assert.deepEqual(lib.commandResultMessage('c1', 'running'), {
-    type: 'command_result',
-    id: 'c1',
-    status: 'running',
-  });
-  assert.deepEqual(lib.commandResultMessage('c1', 'done', { url: 'http://127.0.0.1:3000' }), {
-    type: 'command_result',
-    id: 'c1',
-    status: 'done',
-    result: { url: 'http://127.0.0.1:3000' },
-  });
+test('heartbeatMessage matches the shared heartbeat fixture', () => {
+  assert.deepEqual(lib.heartbeatMessage(), loadFixture('heartbeat.json').frame);
 });
 
-// --- parseServerMessage -----------------------------------------------------------------
+test('commandResultMessage matches every shared command_result fixture', () => {
+  for (const name of ['command-result-running.json', 'command-result-done.json', 'command-result-failed.json']) {
+    const fixture = loadFixture(name);
+    const { id, status, result } = fixture.frame;
+    assert.deepEqual(lib.commandResultMessage(id, status, result), fixture.frame, name);
+  }
+});
 
-test('parseServerMessage parses welcome', () => {
-  assert.deepEqual(lib.parseServerMessage('{"type":"welcome","deviceId":"d1"}'), {
+test('capabilitiesMessage matches the shared capabilities fixture', () => {
+  const fixture = loadFixture('capabilities.json');
+  assert.deepEqual(lib.capabilitiesMessage(fixture.frame.capabilities), fixture.frame);
+});
+
+// --- shared contract fixtures: server-to-client frames ----------------------
+// Every server frame must parse through parseServerMessage (decode round-trip).
+
+test('parseServerMessage decodes the welcome fixture', () => {
+  const fixture = loadFixture('welcome.json');
+  // deviceId is hardcoded — catches a field rename (deviceId → device_id)
+  // that a round-trip through the fixture would miss.
+  assert.deepEqual(lib.parseServerMessage(JSON.stringify(fixture.frame)), {
     kind: 'welcome',
-    deviceId: 'd1',
+    deviceId: 'dev-abc123',
   });
 });
 
-test('parseServerMessage parses run_web commands', () => {
-  const raw = JSON.stringify({
-    id: 'cmd1',
-    type: 'run_web',
-    payload: { repoUrl: 'https://github.com/a/b', branch: 'main', port: 3000 },
-  });
-  const message = lib.parseServerMessage(raw);
-  assert.equal(message.kind, 'command');
-  assert.equal(message.id, 'cmd1');
-  assert.equal(message.payload.port, 3000);
+test('parseServerMessage decodes every command fixture', () => {
+  // One key payload field per command type — hardcoded expected values
+  // catch payload field-name drift that a pure round-trip would miss.
+  const expectedPayload = {
+    run_web: ['port', 3000],
+    install_apk: ['apkUrl', 'https://lemniscate.example.com/api/devices/artifacts/dev-builder/u1-app.apk'],
+    build_android: ['gradleTask', 'assembleDebug'],
+    run_desktop: ['startScript', 'tauri'],
+    run_ios: ['scheme', 'Lemniscate'],
+    run_tests: ['testCommand', 'npm test'],
+  };
+  const commands = SERVER_FRAMES.filter((f) => f.frame.type !== 'welcome');
+  assert.ok(commands.length >= 6, `expected >= 6 command fixtures, got ${commands.length}`);
+  for (const fixture of commands) {
+    const message = lib.parseServerMessage(JSON.stringify(fixture.frame));
+    assert.equal(message.kind, 'command', fixture._comment);
+    assert.equal(message.commandType, fixture.frame.type, fixture._comment);
+    const [key, val] = expectedPayload[fixture.frame.type];
+    assert.equal(message.payload[key], val, `${fixture.frame.type}: payload.${key}`);
+  }
 });
 
 test('parseServerMessage returns null for garbage and unknown types', () => {
@@ -230,18 +280,6 @@ test('installIntentCommand builds the am start VIEW intent for the APK', () => {
   });
 });
 
-test('parseServerMessage parses install_apk commands', () => {
-  const raw = JSON.stringify({
-    id: 'cmd2',
-    type: 'install_apk',
-    payload: { apkUrl: 'https://x.space/a.apk', appName: 'Demo' },
-  });
-  const message = lib.parseServerMessage(raw);
-  assert.equal(message.kind, 'command');
-  assert.equal(message.commandType, 'install_apk');
-  assert.equal(message.payload.apkUrl, 'https://x.space/a.apk');
-});
-
 test('APK downloads are capped at 100MB', () => {
   assert.equal(lib.APK_MAX_BYTES, 100 * 1024 * 1024);
 });
@@ -300,16 +338,6 @@ test('artifactUploadUrl appends the encoded filename query', () => {
   );
 });
 
-test('parseServerMessage parses build_android commands', () => {
-  const raw = '{"type":"build_android","id":"c1","payload":{"repoUrl":"https://x","branch":"main"}}';
-  assert.deepEqual(lib.parseServerMessage(raw), {
-    kind: 'command',
-    id: 'c1',
-    commandType: 'build_android',
-    payload: { repoUrl: 'https://x', branch: 'main' },
-  });
-});
-
 test('downloadHeaders attaches the device token for same-origin downloads', () => {
   assert.deepEqual(
     lib.downloadHeaders('https://lemniscate.grig-teo.space', 'https://lemniscate.grig-teo.space/api/devices/artifacts/d/u-a.apk', 'tok'),
@@ -327,16 +355,6 @@ test('downloadHeaders returns empty headers without a token or on unparseable UR
 });
 
 // --- run_desktop helpers --------------------------------------------------------
-
-test('parseServerMessage parses run_desktop commands', () => {
-  const raw = '{"type":"run_desktop","id":"c1","payload":{"repoUrl":"https://x","branch":"main","startScript":"electron"}}';
-  assert.deepEqual(lib.parseServerMessage(raw), {
-    kind: 'command',
-    id: 'c1',
-    commandType: 'run_desktop',
-    payload: { repoUrl: 'https://x', branch: 'main', startScript: 'electron' },
-  });
-});
 
 test('pickDesktopScript prefers candidates in priority order', () => {
   const scripts = { start: 'x', dev: 'x', electron: 'x', tauri: 'x' };
@@ -533,16 +551,6 @@ const SIMCTL_JSON = JSON.stringify({
   },
 });
 
-test('parseServerMessage parses run_ios commands', () => {
-  const raw = '{"type":"run_ios","id":"c1","payload":{"repoUrl":"https://x","branch":"main","scheme":"App"}}';
-  assert.deepEqual(lib.parseServerMessage(raw), {
-    kind: 'command',
-    id: 'c1',
-    commandType: 'run_ios',
-    payload: { repoUrl: 'https://x', branch: 'main', scheme: 'App' },
-  });
-});
-
 test('parseBootedSimulatorUdid returns the first booted device, null otherwise', () => {
   assert.equal(lib.parseBootedSimulatorUdid(SIMCTL_JSON), 'SIM-BOOTED');
   assert.equal(lib.parseBootedSimulatorUdid('{"devices":{}}'), null);
@@ -641,4 +649,13 @@ test('dockerCandidates puts PATH docker first, then per-OS fallbacks', () => {
   assert.ok(lib.dockerCandidates('linux').includes('/snap/bin/docker'));
   assert.ok(lib.dockerCandidates('win32').some((c) => c.includes('Docker\\Docker\\resources')));
   assert.deepEqual(lib.dockerCandidates('freebsd'), ['docker']);
+});
+
+// --- close code fixture -----------------------------------------------------------
+
+test('close-4001 fixture documents the token-rejection close code', () => {
+  const fixture = loadFixture('close-4001.json');
+  assert.equal(fixture.direction, 'close');
+  assert.equal(fixture.closeCode, 4001);
+  assert.equal(fixture.reason, 'invalid device token');
 });

@@ -80,6 +80,21 @@ const commandBodySchema = z.discriminatedUnion('type', [
       destination: z.string().min(1).max(200).regex(/^[a-zA-Z0-9-]+$/).optional(),
     }),
   }),
+  // testCommand lands inside a shell invocation on the agent — keep it to a
+  // conservative allow-list so no shell injection is possible.
+  z.object({
+    type: z.literal('run_tests'),
+    payload: z.object({
+      repoUrl: z.string().url(),
+      branch: z.string().min(1).max(200),
+      testCommand: z
+        .string()
+        .min(1)
+        .max(200)
+        .regex(/^[a-zA-Z0-9 .\/_:-]+$/)
+        .optional(),
+    }),
+  }),
 ]);
 
 // Optional link back to the task whose result the command runs.
