@@ -4,6 +4,7 @@ const mocks = vi.hoisted(() => ({
   publishTaskEvent: vi.fn(),
   archiveWorkdirToMinio: vi.fn(),
   notifyTaskFailure: vi.fn(),
+  notifyJobFailure: vi.fn(),
 }));
 
 vi.mock('../src/lib/task-events.js', () => ({
@@ -16,6 +17,9 @@ vi.mock('../src/lib/workdir-archive.js', () => ({
 
 vi.mock('../src/lib/notifications.js', () => ({
   notifyTaskFailure: mocks.notifyTaskFailure,
+  // logJobFailure (job-failure-log.ts) fans every failure out here; the
+  // fan-out itself is covered in notification-delivery.test.ts.
+  notifyJobFailure: mocks.notifyJobFailure,
 }));
 
 import { cleanupWorkdir, cloneRepository, explainGitFailure, git, planWorkdirSweep, recordJobFailure, sanitizeRelativePath } from '../src/lib/agent-git.js';
@@ -28,6 +32,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   mocks.publishTaskEvent.mockResolvedValue(undefined);
   mocks.notifyTaskFailure.mockResolvedValue(undefined);
+  mocks.notifyJobFailure.mockResolvedValue(undefined);
 });
 
 describe('sanitizeRelativePath', () => {
@@ -223,13 +228,23 @@ describe('cleanupWorkdir', () => {
 });
 
 describe('recordJobFailure', () => {
-  it('emits a task-failure notification with the error kind', async () => {
+  it('funnels the failure through logJobFailure only (single notification path)', async () => {
     const err = new Error('boom');
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     try {
       const message = await recordJobFailure('run-task', 'task-1', err, []);
       expect(message).toBe('boom');
-      expect(mocks.notifyTaskFailure).toHaveBeenCalledWith('task-1', 'Error', 'boom');
+      // logJobFailure fans out to notifyJobFailure; recordJobFailure must NOT
+      // also call notifyTaskFailure directly — the two concurrent flows race
+      // the unread dedupe and produce duplicate notifications/deliveries.
+      expect(mocks.notifyJobFailure).toHaveBeenCalledTimes(1);
+      expect(mocks.notifyJobFailure).toHaveBeenCalledWith({
+        jobName: 'run-task',
+        taskId: 'task-1',
+        errorKind: 'Error',
+        message: 'boom',
+      });
+      expect(mocks.notifyTaskFailure).not.toHaveBeenCalled();
       expect(mocks.publishTaskEvent).toHaveBeenCalledWith('task-1', 'log', {
         line: 'error: boom',
       });
@@ -238,8 +253,36 @@ describe('recordJobFailure', () => {
     }
   });
 
+  it('awaits the notification funnel so a rethrown job cannot race the dedupe', async () => {
+    // review-pr/merge-gate rethrow after recordJobFailure; the worker 'failed'
+    // hook then funnels the same throw through logJobFailure again. The in-run
+    // notification must have landed BEFORE recordJobFailure returns, or both
+    // flows pass the findFirst-then-insert dedupe concurrently.
+    let resolveHook: (() => void) | undefined;
+    mocks.notifyJobFailure.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveHook = resolve;
+        }),
+    );
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      let settled = false;
+      const pending = recordJobFailure('review-pr', 'task-1', new Error('boom'), []).then((m) => {
+        settled = true;
+        return m;
+      });
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(settled).toBe(false);
+      resolveHook?.();
+      await expect(pending).resolves.toBe('boom');
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+
   it('still returns the message when the notification itself fails', async () => {
-    mocks.notifyTaskFailure.mockRejectedValueOnce(new Error('db down'));
+    mocks.notifyJobFailure.mockRejectedValueOnce(new Error('db down'));
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     try {
       await expect(recordJobFailure('run-task', 'task-1', new Error('boom'), [])).resolves.toBe('boom');

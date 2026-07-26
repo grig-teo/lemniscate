@@ -23,6 +23,7 @@ import {
   type TaskWithRepo,
 } from './agent-runtime.js';
 import { runHermesTask } from './hermes-runner.js';
+import { notify, notifyOncePerTask } from './notifications.js';
 import { enqueueMergeGate } from './proposal-scheduler.js';
 import { queueDeployment } from './deploy/deploy-service.js';
 import { prisma } from './prisma.js';
@@ -264,6 +265,12 @@ async function mergeWithConflictResolution(ctx: GateContext): Promise<void> {
   if (result.merged) {
     await logEvent(task.id, `merged pull request: ${result.prUrl}`);
     await setTaskStatus(task.id, 'done');
+    await notify(task.repository.connection.userId, 'pr_merged', {
+      title: `PR merged: ${task.title}`,
+      body: `${task.repository.fullName} — pull request auto-merged by the merge gate`,
+      taskId: task.id,
+      prUrl: result.prUrl,
+    });
     // The task's run workdir was kept for the review window — merged means
     // it is no longer needed.
     await cleanupWorkdir(path.join(config.AGENT_WORKDIR, task.id), task.id);
@@ -272,6 +279,12 @@ async function mergeWithConflictResolution(ctx: GateContext): Promise<void> {
   }
   if (!result.conflict || attempt >= MERGE_GATE_MAX_ATTEMPTS) {
     await logEvent(task.id, 'merge could not be completed — manual review needed');
+    await notifyOncePerTask(task.repository.connection.userId, 'merge_gate_failed', {
+      title: `Merge gate gave up: ${task.title}`,
+      body: `${task.repository.fullName} — merge could not be completed; manual review needed`,
+      taskId: task.id,
+      prUrl: task.prUrl ?? undefined,
+    });
     return;
   }
   await logEvent(
@@ -334,21 +347,30 @@ async function runCiFixAndRequeue(ctx: GateContext): Promise<void> {
 }
 
 // Dispatches the decided action. Returns false when the gate is done for
-// this job (wait/manual) and no runtime needs preparing.
+// this job (wait/manual) and no runtime needs preparing. The manual stop
+// also notifies the user once per task — the gate can re-evaluate it on
+// every recovery re-enqueue, and the unread dedupe keeps that from spamming.
 async function dispatchGateAction(
   action: MergeGateAction,
   checks: PrChecksStatus,
-  taskId: string,
+  task: TaskWithRepo,
   attempt: number,
   ciFixes: number,
 ): Promise<boolean> {
   if (action === 'wait') {
-    await logEvent(taskId, `CI checks are running — re-checking in ${MERGE_GATE_DELAY_MS / 1000}s`);
-    await enqueueMergeGate(taskId, attempt + 1, ciFixes, MERGE_GATE_DELAY_MS);
+    await logEvent(task.id, `CI checks are running — re-checking in ${MERGE_GATE_DELAY_MS / 1000}s`);
+    await enqueueMergeGate(task.id, attempt + 1, ciFixes, MERGE_GATE_DELAY_MS);
     return false;
   }
   if (action === 'manual') {
-    await logEvent(taskId, manualGateMessage(checks, ciFixes));
+    const reason = manualGateMessage(checks, ciFixes);
+    await logEvent(task.id, reason);
+    await notifyOncePerTask(task.repository.connection.userId, 'merge_gate_failed', {
+      title: `Merge gate gave up: ${task.title}`,
+      body: `${task.repository.fullName} — ${reason}`,
+      taskId: task.id,
+      prUrl: task.prUrl ?? undefined,
+    });
     return false;
   }
   return true;
@@ -376,7 +398,7 @@ export async function mergeGateTask(taskId: string, attempt = 0, ciFixes = 0): P
       baseBranch: task.repository.defaultBranch,
     });
     const action = mergeGateAction(checks, attempt, ciFixes, config.AGENT_EXECUTOR);
-    if (!(await dispatchGateAction(action, checks, taskId, attempt, ciFixes))) return;
+    if (!(await dispatchGateAction(action, checks, task, attempt, ciFixes))) return;
     if (!checks.supported) {
       await logEvent(task.id, 'provider check statuses unavailable; merging on the review verdict alone');
     }

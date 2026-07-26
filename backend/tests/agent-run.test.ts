@@ -31,6 +31,7 @@ const mocks = vi.hoisted(() => ({
   setTaskStatus: vi.fn(),
   runHermesTask: vi.fn(),
   notify: vi.fn(),
+  notifyTaskCompleted: vi.fn(),
 }));
 
 vi.mock('../src/config.js', () => ({ config: mocks.config }));
@@ -66,7 +67,10 @@ vi.mock('../src/lib/pull-requests.js', () => ({ openPullRequest: mocks.openPullR
 vi.mock('../src/lib/repo-context.js', () => ({ buildRepoContext: mocks.buildRepoContext }));
 vi.mock('../src/lib/task-events.js', () => ({ setTaskStatus: mocks.setTaskStatus }));
 vi.mock('../src/lib/hermes-runner.js', () => ({ runHermesTask: mocks.runHermesTask }));
-vi.mock('../src/lib/notifications.js', () => ({ notify: mocks.notify }));
+vi.mock('../src/lib/notifications.js', () => ({
+  notify: mocks.notify,
+  notifyTaskCompleted: mocks.notifyTaskCompleted,
+}));
 
 import { runTask } from '../src/lib/agent-run.js';
 
@@ -194,6 +198,31 @@ describe('runTask with AGENT_EXECUTOR=hermes', () => {
     expect(mocks.commitAndPush).not.toHaveBeenCalled();
     expect(mocks.openPullRequest).not.toHaveBeenCalled();
     expect(mocks.setTaskStatus).toHaveBeenCalledWith('task-1', 'done');
+  });
+
+  it('emits the task-completed hook after a successful run', async () => {
+    await runTask('task-1');
+    expect(mocks.notifyTaskCompleted).toHaveBeenCalledWith('task-1');
+  });
+
+  it('logs but does not fail the run when the completion hook rejects', async () => {
+    mocks.notifyTaskCompleted.mockRejectedValueOnce(new Error('db down'));
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      await runTask('task-1');
+      expect(mocks.setTaskStatus).toHaveBeenCalledWith('task-1', 'awaiting_review');
+      expect(error).toHaveBeenCalledWith(expect.stringContaining('task-1'));
+      expect(error).toHaveBeenCalledWith(expect.stringContaining('db down'));
+    } finally {
+      error.mockRestore();
+    }
+  });
+
+  it('does not emit the task-completed hook when the run fails', async () => {
+    mocks.runHermesTask.mockRejectedValueOnce(new Error('boom'));
+    await runTask('task-1');
+    expect(mocks.recordJobFailure).toHaveBeenCalled();
+    expect(mocks.notifyTaskCompleted).not.toHaveBeenCalled();
   });
 });
 

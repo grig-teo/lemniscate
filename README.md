@@ -148,8 +148,9 @@ by hand:
 10. Confirm the TopNav bell shows an unread "PR opened" notification within
     30s of the PR being created, and that clicking it opens the PR; merge the
     PR on the git host and confirm a "PR merged" notification appears within
-    one pr-state-sync interval (5 min). Optionally set a webhook URL via
-    `PUT /api/notifications/settings` and verify the HMAC-signed POST
+    one pr-state-sync interval (5 min). Optionally add a webhook channel in
+    Settings → Notifications (or `POST /api/notifications/channels`), hit
+    **Test**, and verify the HMAC-signed POST
     (`x-lemniscate-signature: sha256=…`) reaches the bridge.
 
 > Note: the live OAuth login, LLM calls, and branch/PR creation paths could
