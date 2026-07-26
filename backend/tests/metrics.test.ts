@@ -1,138 +1,195 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import Fastify, { type FastifyInstance } from 'fastify';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
-  measureJob,
-  metricsRegistry,
-  pollQueueMetrics,
-  recordJobFailureMetric,
-  recordLlmCall,
-  renderMetrics,
+  createMetrics,
+  pollQueueCounts,
+  registerHttpMetricsHook,
+  registerMetricsRoute,
   startQueueMetricsPoller,
-  updateQueueGauges,
+  type Metrics,
+  type QueueCountsSource,
 } from '../src/lib/metrics.js';
 
-// Prometheus metrics: one registry (lib/metrics.ts) feeding both the worker
-// :3100/metrics and the token-guarded API /metrics. Labels stay bounded —
-// job name, error kind, model — never taskId/userId.
+// Prometheus exposition contract: the /metrics endpoint is token-guarded
+// (404 when unconfigured so it is never publicly routable), HTTP labels use
+// route templates (never raw URLs, which would explode cardinality), job
+// wrappers time runs and count failures by job name, and queue gauges come
+// from BullMQ job counts.
 
-beforeEach(() => {
-  metricsRegistry.resetMetrics();
-});
+const TOKEN = 'metrics-test-token';
 
-describe('updateQueueGauges', () => {
-  it('sets one gauge per known queue state, defaulting missing states to 0', async () => {
-    updateQueueGauges('agent-tasks', { waiting: 3, active: 1 });
+function buildApp(metrics: Metrics, token?: string): FastifyInstance {
+  const app = Fastify({ logger: false });
+  registerHttpMetricsHook(app, metrics);
+  app.get('/things/:id', async () => ({ ok: true }));
+  registerMetricsRoute(app, metrics, token);
+  return app;
+}
 
-    const text = await renderMetrics();
-    expect(text).toContain('lemniscate_queue_jobs{queue="agent-tasks",state="waiting"} 3');
-    expect(text).toContain('lemniscate_queue_jobs{queue="agent-tasks",state="active"} 1');
-    expect(text).toContain('lemniscate_queue_jobs{queue="agent-tasks",state="failed"} 0');
+function authed(app: FastifyInstance, token = TOKEN) {
+  return app.inject({
+    method: 'GET',
+    url: '/metrics',
+    headers: { authorization: `Bearer ${token}` },
+  });
+}
+
+describe('GET /metrics guard', () => {
+  it('returns 404 when no metrics token is configured', async () => {
+    const app = buildApp(createMetrics());
+    const response = await app.inject({ method: 'GET', url: '/metrics' });
+    expect(response.statusCode).toBe(404);
+  });
+
+  it('returns 401 without a bearer token and with a wrong one', async () => {
+    const app = buildApp(createMetrics(), TOKEN);
+    const missing = await app.inject({ method: 'GET', url: '/metrics' });
+    expect(missing.statusCode).toBe(401);
+    const wrong = await authed(app, 'not-the-token');
+    expect(wrong.statusCode).toBe(401);
+  });
+
+  it('serves the registry as prometheus text with the right token', async () => {
+    const app = buildApp(createMetrics(), TOKEN);
+    const response = await authed(app);
+    expect(response.statusCode).toBe(200);
+    expect(response.headers['content-type']).toContain('text/plain');
+    expect(response.body).toContain('lemniscate_http_requests_total');
   });
 });
 
-describe('measureJob', () => {
-  it('returns the job result and records a completed outcome with duration', async () => {
-    const result = await measureJob('run-task', async () => 'done');
+describe('HTTP request instrumentation', () => {
+  it('counts requests by method, route template and status — never raw URLs', async () => {
+    const metrics = createMetrics();
+    const app = buildApp(metrics, TOKEN);
+    await app.inject({ method: 'GET', url: '/things/abc123?secret=1' });
+    const { body } = await authed(app);
+    expect(body).toContain(
+      'lemniscate_http_requests_total{method="GET",route="/things/:id",status_code="200"} 1',
+    );
+    expect(body).not.toContain('/things/abc123');
+    expect(body).not.toContain('secret=1');
+  });
 
+  it('observes request durations in the histogram', async () => {
+    const metrics = createMetrics();
+    const app = buildApp(metrics, TOKEN);
+    await app.inject({ method: 'GET', url: '/things/abc' });
+    const { body } = await authed(app);
+    expect(body).toContain(
+      'lemniscate_http_request_duration_seconds_count{method="GET",route="/things/:id",status_code="200"} 1',
+    );
+  });
+
+  it('labels unmatched routes as "unmatched" instead of the raw URL', async () => {
+    const metrics = createMetrics();
+    const app = buildApp(metrics, TOKEN);
+    await app.inject({ method: 'GET', url: '/no/such/route/12345' });
+    const { body } = await authed(app);
+    expect(body).toContain('route="unmatched"');
+    expect(body).not.toContain('/no/such/route/12345');
+  });
+});
+
+describe('observeJob', () => {
+  it('records the run duration for a successful job', async () => {
+    const metrics = createMetrics();
+    const result = await metrics.observeJob('run-task', async () => 'done');
     expect(result).toBe('done');
-    const text = await renderMetrics();
-    expect(text).toContain('lemniscate_jobs_total{job_name="run-task",outcome="completed"} 1');
-    expect(text).toContain('lemniscate_job_duration_seconds_count{job_name="run-task"} 1');
+    const body = await metrics.render();
+    expect(body).toContain(
+      'lemniscate_job_duration_seconds_count{job_name="run-task"} 1',
+    );
   });
 
-  it('rethrows the error and records a failed outcome', async () => {
-    const boom = new Error('boom');
-
+  it('increments the failure counter with job name and error kind, then rethrows', async () => {
+    const metrics = createMetrics();
     await expect(
-      measureJob('review-pr', async () => {
-        throw boom;
+      metrics.observeJob('merge-gate', async () => {
+        throw new TypeError('boom');
       }),
-    ).rejects.toBe(boom);
-    const text = await renderMetrics();
-    expect(text).toContain('lemniscate_jobs_total{job_name="review-pr",outcome="failed"} 1');
-    expect(text).toContain('lemniscate_job_duration_seconds_count{job_name="review-pr"} 1');
-  });
-});
-
-describe('recordJobFailureMetric', () => {
-  it('increments the failure counter labeled by job name and error kind', async () => {
-    recordJobFailureMetric({ jobName: 'run-task', errorKind: 'LlmError' });
-    recordJobFailureMetric({ jobName: 'run-task', errorKind: 'LlmError' });
-    recordJobFailureMetric({ jobName: 'run-task', errorKind: 'Error' });
-
-    const text = await renderMetrics();
-    expect(text).toContain(
-      'lemniscate_job_failures_total{job_name="run-task",error_kind="LlmError"} 2',
+    ).rejects.toThrow('boom');
+    const body = await metrics.render();
+    expect(body).toContain(
+      'lemniscate_job_failures_total{job_name="merge-gate",error_kind="TypeError"} 1',
     );
-    expect(text).toContain(
-      'lemniscate_job_failures_total{job_name="run-task",error_kind="Error"} 1',
+    expect(body).toContain(
+      'lemniscate_job_duration_seconds_count{job_name="merge-gate"} 1',
     );
   });
 });
 
-describe('recordLlmCall', () => {
-  it('counts the request, observes latency, and adds prompt/completion tokens', async () => {
-    recordLlmCall({
-      model: 'gpt-x',
-      status: 'ok',
-      latencyMs: 1500,
-      usage: { promptTokens: 10, completionTokens: 5 },
-    });
-
-    const text = await renderMetrics();
-    expect(text).toContain('lemniscate_llm_requests_total{model="gpt-x",status="ok"} 1');
-    expect(text).toContain('lemniscate_llm_request_duration_seconds_count{model="gpt-x"} 1');
-    expect(text).toContain('lemniscate_llm_request_duration_seconds_sum{model="gpt-x"} 1.5');
-    expect(text).toContain('lemniscate_llm_tokens_total{model="gpt-x",kind="prompt"} 10');
-    expect(text).toContain('lemniscate_llm_tokens_total{model="gpt-x",kind="completion"} 5');
-  });
-
-  it('skips token counters when the provider returned no usage', async () => {
-    recordLlmCall({ model: 'local', status: 'ok', latencyMs: 10 });
-
-    const text = await renderMetrics();
-    expect(text).toContain('lemniscate_llm_requests_total{model="local",status="ok"} 1');
-    expect(text).not.toContain('lemniscate_llm_tokens_total{');
+describe('recordJobFailure', () => {
+  it('increments the failure counter for failures logged outside observeJob', async () => {
+    // In-run failures are caught and recorded on the task (the BullMQ job
+    // completes), so observeJob never sees them; logJobFailure funnels them
+    // here instead.
+    const metrics = createMetrics();
+    metrics.recordJobFailure('run-task', 'MergeConflictError');
+    const body = await metrics.render();
+    expect(body).toContain(
+      'lemniscate_job_failures_total{job_name="run-task",error_kind="MergeConflictError"} 1',
+    );
   });
 });
 
-describe('pollQueueMetrics', () => {
-  it('copies a queue snapshot into the gauges', async () => {
-    await pollQueueMetrics(async () => ({ queue: 'agent-tasks', counts: { waiting: 7 } }));
-
-    const text = await renderMetrics();
-    expect(text).toContain('lemniscate_queue_jobs{queue="agent-tasks",state="waiting"} 7');
-  });
-
-  it('keeps the previous values when the snapshot read fails', async () => {
-    updateQueueGauges('agent-tasks', { waiting: 4 });
-
-    await pollQueueMetrics(async () => {
-      throw new Error('redis down');
-    });
-    const text = await renderMetrics();
-    expect(text).toContain('lemniscate_queue_jobs{queue="agent-tasks",state="waiting"} 4');
+describe('recordLlmRequest', () => {
+  it('counts requests and durations by outcome', async () => {
+    const metrics = createMetrics();
+    metrics.recordLlmRequest('success', 1.5);
+    metrics.recordLlmRequest('success', 0.5);
+    metrics.recordLlmRequest('timeout', 30);
+    const body = await metrics.render();
+    expect(body).toContain('lemniscate_llm_requests_total{outcome="success"} 2');
+    expect(body).toContain('lemniscate_llm_requests_total{outcome="timeout"} 1');
+    expect(body).toContain(
+      'lemniscate_llm_request_duration_seconds_count{outcome="success"} 2',
+    );
   });
 });
 
-describe('startQueueMetricsPoller', () => {
-  it('polls immediately and on the interval until stopped', async () => {
+describe('queue gauges', () => {
+  const source: QueueCountsSource = {
+    name: 'agent-tasks',
+    getCounts: async () => ({ waiting: 3, active: 1, delayed: 0, failed: 2, completed: 9 }),
+  };
+
+  it('sets one gauge per queue state from BullMQ job counts', async () => {
+    const metrics = createMetrics();
+    await pollQueueCounts(metrics, [source]);
+    const body = await metrics.render();
+    expect(body).toContain('lemniscate_queue_jobs{queue="agent-tasks",state="waiting"} 3');
+    expect(body).toContain('lemniscate_queue_jobs{queue="agent-tasks",state="failed"} 2');
+    expect(body).toContain('lemniscate_queue_jobs{queue="agent-tasks",state="completed"} 9');
+  });
+
+  it('poller refreshes on an interval and stops cleanly', async () => {
     vi.useFakeTimers();
     try {
-      let reads = 0;
-      const stop = startQueueMetricsPoller(async () => {
-        reads += 1;
-        return { queue: 'q', counts: { waiting: reads } };
-      }, 1000);
-
-      await vi.advanceTimersByTimeAsync(0);
-      expect(reads).toBe(1);
-      await vi.advanceTimersByTimeAsync(3000);
-      expect(reads).toBe(4);
+      const metrics = createMetrics();
+      const getCounts = vi.fn().mockResolvedValue({ waiting: 1 });
+      const stop = startQueueMetricsPoller(metrics, [{ name: 'q', getCounts }], 1000);
+      await vi.advanceTimersByTimeAsync(2500);
+      expect(getCounts.mock.calls.length).toBeGreaterThanOrEqual(2);
       stop();
-      await vi.advanceTimersByTimeAsync(3000);
-      expect(reads).toBe(4);
+      const callsAtStop = getCounts.mock.calls.length;
+      await vi.advanceTimersByTimeAsync(2000);
+      expect(getCounts.mock.calls.length).toBe(callsAtStop);
     } finally {
       vi.useRealTimers();
     }
   });
+
+  it('survives a source that rejects', async () => {
+    const metrics = createMetrics();
+    await expect(
+      pollQueueCounts(metrics, [
+        { name: 'q', getCounts: async () => Promise.reject(new Error('redis down')) },
+      ]),
+    ).resolves.toBeUndefined();
+  });
+});
+
+afterEach(() => {
+  vi.useRealTimers();
 });

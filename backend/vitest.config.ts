@@ -16,6 +16,8 @@ export default defineConfig({
       ENCRYPTION_KEY: '0'.repeat(64),
       GITHUB_CLIENT_ID: 'Ov23liAbCdEf123456',
       GITHUB_CLIENT_SECRET: 'test-github-client-secret',
+      // Lets app-level tests exercise the guarded /metrics endpoint.
+      METRICS_TOKEN: 'test-metrics-token',
     },
   },
 });
