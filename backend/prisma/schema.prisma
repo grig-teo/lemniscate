@@ -54,6 +54,12 @@ model User {
   mcpServers     McpServer[]
   devices        Device[]
   devicePairings DevicePairing[]
+  notifications  Notification[]
+  // Optional outbound webhook for async agent events (Slack/Discord/Telegram
+  // bridges): POSTed on every notification, HMAC-signed with webhookSecretEnc
+  // (AES-256-GCM at rest via lib/crypto.ts). Null = in-app notifications only.
+  webhookUrl       String?
+  webhookSecretEnc String?
 }
 
 model GitConnection {
@@ -319,6 +325,26 @@ model DeviceCommand {
 
   @@index([deviceId])
   @@index([taskId])
+}
+
+// User-facing notification for async agent events (PR opened/merged/closed,
+// run failed, token budget exceeded). Emitted by lib/notifications.ts from
+// the existing event producers; read via GET /api/notifications and the
+// TopNav bell. `kind` is TEXT ('pr_opened'|'pr_merged'|'pr_closed'|
+// 'run_failed'|'budget_exceeded'), validated in lib/notifications.ts.
+model Notification {
+  id        String    @id @default(cuid())
+  userId    String
+  kind      String
+  title     String
+  body      String
+  taskId    String?
+  prUrl     String?
+  readAt    DateTime?
+  createdAt DateTime  @default(now())
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, readAt])
 }
 
 enum ServiceStatus {
