@@ -106,6 +106,10 @@ export interface ProviderPrApi {
   state(input: PullRequestRefInput): Promise<PrState>;
   /** All PRs of a repo (batched state sync); capped at PR_LIST_MAX_PAGES pages. */
   list(repoFullName: string): Promise<ListedPullRequest[]>;
+  /** Closes the open PR for the head branch (no merge). */
+  close(input: PullRequestRefInput): Promise<void>;
+  /** Deletes the head branch from the remote repository. */
+  deleteBranch(repoFullName: string, branch: string): Promise<void>;
   /** Commit/PR check statuses; absent when the provider has no checks API. */
   checks?(input: PullRequestRefInput): Promise<PrChecksStatus>;
 }
@@ -165,9 +169,10 @@ function parseJsonOrNull(text: string): unknown {
 
 // Small JSON helper: throws ProviderError (with status) on non-2xx so callers
 // can branch on 'already exists' statuses. Never includes the token in errors.
+// Supports PATCH/DELETE for the close/deleteBranch operations.
 export async function apiRequest(
   provider: string,
-  method: 'GET' | 'POST' | 'PUT',
+  method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE',
   url: string,
   headers: Record<string, string>,
   token: string,

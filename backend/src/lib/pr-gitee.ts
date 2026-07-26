@@ -103,6 +103,26 @@ async function giteePullRequestDiff(token: string, input: PullRequestRefInput): 
   return assembleUnifiedDiff(giteeFilesSchema.parse(body));
 }
 
+// Closes the open PR (no merge) via PATCH /pulls/{n} with state=closed
+// (GitHub-shaped API v5).
+async function giteeClosePullRequest(token: string, input: PullRequestRefInput): Promise<void> {
+  const { number } = await giteeLookupPullNumber(token, input);
+  const url = `${giteePullsUrl(input.repoFullName)}/${number}`;
+  await apiRequest('gitee', 'PATCH', url, giteeHeaders(token), token, { state: 'closed' });
+}
+
+// Deletes the head branch via DELETE /branches/{branch} (Gitee API v5 shape).
+async function giteeDeleteBranch(
+  token: string,
+  repoFullName: string,
+  branch: string,
+): Promise<void> {
+  const repoPath = encodeRepoPath(repoFullName);
+  const ref = encodeURIComponent(branch);
+  const url = `${GITEE_API}/repos/${repoPath}/branches/${ref}`;
+  await apiRequest('gitee', 'DELETE', url, giteeHeaders(token), token);
+}
+
 async function giteeOpenPullRequest(
   token: string,
   input: OpenPullRequestInput,
@@ -182,5 +202,7 @@ export function giteePrApi(token: string): ProviderPrApi {
     diff: (input) => giteePullRequestDiff(token, input),
     state: (input) => giteePullRequestState(token, input),
     list: (repoFullName) => giteeListPullRequests(token, repoFullName),
+    close: (input) => giteeClosePullRequest(token, input),
+    deleteBranch: (repoFullName, branch) => giteeDeleteBranch(token, repoFullName, branch),
   };
 }

@@ -4,6 +4,7 @@ import { createTask, getTask, listTasks } from './task-crud-handlers.js';
 import {
   archiveTask,
   cancelTask,
+  closePrTask,
   improveTask,
   patchTask,
   rerunTask,
@@ -55,6 +56,7 @@ export {
   attachmentValidationError,
   buildRerunUpdate,
   buildStartUpdate,
+  closePrBlocker,
   initialTaskStatus,
   isArchivable,
   resolveAttachmentUpdate,
