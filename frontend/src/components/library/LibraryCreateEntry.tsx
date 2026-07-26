@@ -3,6 +3,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { Loader2, Plus, Upload } from 'lucide-react';
 
 import { api, describeApiError } from '@/lib/api';
+import { SUPPRESS_ERROR_TOAST_META } from '@/lib/mutation-error-toast';
 import type { LibraryItem } from '@/lib/library';
 import { buildMcpConfig, parseSkillMarkdown, slugify } from '@/lib/library-upload';
 import { Button } from '@/components/ui/button';
@@ -26,6 +27,7 @@ function useCreateSkill(onCreated: (item: LibraryItem) => void) {
       void queryClient.invalidateQueries({ queryKey: ['skills'] });
       onCreated(data.skill);
     },
+    meta: SUPPRESS_ERROR_TOAST_META, // the form renders the error inline
   });
 }
 

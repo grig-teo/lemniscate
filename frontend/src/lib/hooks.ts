@@ -9,6 +9,9 @@ import { useMutation, useQuery, useQueryClient, type UseQueryOptions } from '@ta
 import * as React from 'react';
 
 import { api } from '@/lib/api';
+// Mutations whose callers already render the error inline (dialogs, settings
+// forms) opt out of the global MutationCache error toast with this meta.
+import { SUPPRESS_ERROR_TOAST_META } from '@/lib/mutation-error-toast';
 
 /** Base URL for non-fetch clients (EventSource) — canonical source is lib/api.ts. */
 export { API_BASE_URL } from '@/lib/api';
@@ -57,6 +60,9 @@ export type LlmConfig = {
   maxRetries: number;
   requestsPerMinute: number;
   maxTokensPerRun: number;
+  /** Optional USD prices per million tokens; both set = cost estimates on. */
+  inputPricePerMillion: number | null;
+  outputPricePerMillion: number | null;
   customHeaders: Record<string, string> | null;
   isDefault: boolean;
   enabled: boolean;
@@ -79,6 +85,8 @@ export type LlmConfigPayload = {
   maxRetries?: number;
   requestsPerMinute?: number;
   maxTokensPerRun?: number;
+  inputPricePerMillion?: number;
+  outputPricePerMillion?: number;
   customHeaders?: Record<string, string>;
   isDefault?: boolean;
   enabled?: boolean;
@@ -185,6 +193,15 @@ export type Task = {
   attachments?: TaskImage[] | null;
   /** Soft-archive timestamp; null = active. Archived tasks only appear in ?archived=true lists. */
   archivedAt: string | null;
+  /** Cumulative LLM tokens across run/review/merge jobs of this task. */
+  llmTokensUsed: number;
+  /** Prompt/completion split; null for tasks that predate the split columns. */
+  llmPromptTokens?: number | null;
+  llmCompletionTokens?: number | null;
+  /** Effective run budget (task config → repo config → user default); null = uncapped. */
+  maxTokensPerRun?: number | null;
+  /** Estimated USD at the effective config's prices; absent when unpriced or split unknown. */
+  estimatedCostUsd?: number;
   createdAt: string;
   updatedAt: string;
 };
@@ -220,6 +237,41 @@ export type TaskEventItem = {
   kind: TaskEventKind;
   payload: unknown;
   createdAt: string;
+};
+
+// ---------------------------------------------------------------------------
+// GET /api/usage (LLM token usage + estimated cost)
+// ---------------------------------------------------------------------------
+
+export type UsagePeriod = '7d' | '30d';
+
+/** Token totals for one bucket; estimatedCostUsd is absent when unpriced. */
+export type UsageBucket = {
+  totalTokens: number;
+  promptTokens: number;
+  completionTokens: number;
+  estimatedCostUsd?: number;
+};
+
+export type UsageRepositoryBucket = UsageBucket & {
+  repositoryId: string;
+  name: string;
+  fullName: string;
+};
+
+export type UsageDayBucket = UsageBucket & {
+  /** UTC calendar day, YYYY-MM-DD. */
+  day: string;
+};
+
+export type UsageReport = {
+  period: UsagePeriod;
+  since: string;
+  /** Backend-attribution note (cumulative per task, attributed to createdAt). */
+  semantics: string;
+  totals: UsageBucket;
+  byRepository: UsageRepositoryBucket[];
+  byDay: UsageDayBucket[];
 };
 
 // ---------------------------------------------------------------------------
@@ -288,11 +340,24 @@ export function useTasks(
 }
 
 /** One task by id, including the full prompt; disabled until an id is set. */
-export function useTask(id: string | null | undefined) {
+export function useTask(
+  id: string | null | undefined,
+  options?: { refetchInterval?: UseQueryOptions<Task>['refetchInterval'] },
+) {
   return useQuery({
     queryKey: ['task', id ?? null],
     queryFn: () => api.get<{ task: Task }>(`/api/tasks/${id}`).then((res) => res.task),
     enabled: Boolean(id),
+    refetchInterval: options?.refetchInterval,
+  });
+}
+
+/** LLM token usage + estimated cost for the settings Usage panel. */
+export function useUsage(period: UsagePeriod) {
+  return useQuery({
+    queryKey: ['usage', period],
+    queryFn: () => api.get<UsageReport>(`/api/usage?period=${period}`),
+    staleTime: 30_000,
   });
 }
 
@@ -362,6 +427,7 @@ export function useCreateConnection() {
         .post<{ connection: Connection }>('/api/connections', payload)
         .then((res) => res.connection),
     onSuccess: invalidate,
+    meta: SUPPRESS_ERROR_TOAST_META, // GitVerseConnectDialog renders isError inline
   });
 }
 
@@ -370,6 +436,7 @@ export function useDeleteConnection() {
   return useMutation({
     mutationFn: (id: string) => api.del(`/api/connections/${id}`),
     onSuccess: invalidate,
+    meta: SUPPRESS_ERROR_TOAST_META, // ConnectionsSection renders isError inline
   });
 }
 
@@ -427,6 +494,7 @@ export function useUpdateAllRepositoryFlags() {
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['repositories'] });
     },
+    meta: SUPPRESS_ERROR_TOAST_META, // RepoFlagsSection renders isError inline
   });
 }
 
@@ -457,6 +525,7 @@ export function useUpdateRepository() {
     onSettled: () => {
       void queryClient.invalidateQueries({ queryKey: ['repositories'] });
     },
+    meta: SUPPRESS_ERROR_TOAST_META, // SkillsDialog renders isError inline
   });
 }
 
@@ -470,6 +539,7 @@ export function useCreateTask() {
       void queryClient.invalidateQueries({ queryKey: ['tasks'] });
       void queryClient.invalidateQueries({ queryKey: ['tasks', repositoryId] });
     },
+    meta: SUPPRESS_ERROR_TOAST_META, // TaskComposer renders isError inline
   });
 }
 
@@ -495,6 +565,7 @@ export function useImproveTask() {
   return useMutation({
     mutationFn: ({ id, body }: { id: string; body: ImproveTaskBody }) =>
       api.post<{ prompt: string }>(`/api/tasks/${id}/improve`, body),
+    meta: SUPPRESS_ERROR_TOAST_META, // ProposalDetail renders the error inline
   });
 }
 
@@ -569,6 +640,7 @@ export function useCreateLlmConfig() {
   return useMutation({
     mutationFn: (payload: LlmConfigPayload) => api.post<LlmConfig>('/api/llm-configs', payload),
     onSuccess: invalidate,
+    meta: SUPPRESS_ERROR_TOAST_META, // LlmConfigForm renders the save error inline
   });
 }
 
@@ -578,6 +650,7 @@ export function useUpdateLlmConfig() {
     mutationFn: ({ id, payload }: { id: string; payload: LlmConfigPayload }) =>
       api.patch<LlmConfig>(`/api/llm-configs/${id}`, payload),
     onSuccess: invalidate,
+    meta: SUPPRESS_ERROR_TOAST_META, // LlmConfigForm renders the save error inline
   });
 }
 
@@ -586,6 +659,7 @@ export function useDeleteLlmConfig() {
   return useMutation({
     mutationFn: (id: string) => api.del(`/api/llm-configs/${id}`),
     onSuccess: invalidate,
+    meta: SUPPRESS_ERROR_TOAST_META, // LlmConfigsSection renders isError inline
   });
 }
 
@@ -600,6 +674,7 @@ export function useTestLlmConfig() {
       'id' in args
         ? api.post<LlmTestResult>(`/api/llm-configs/${args.id}/test`)
         : api.post<LlmTestResult>('/api/llm-configs/test', args.payload),
+    meta: SUPPRESS_ERROR_TOAST_META, // useLlmConfigForm renders the test result inline
   });
 }
 
@@ -622,6 +697,7 @@ export function useUpdateSkill() {
       void queryClient.invalidateQueries({ queryKey: ['skills'] });
       void queryClient.invalidateQueries({ queryKey: ['skill', slug] });
     },
+    meta: SUPPRESS_ERROR_TOAST_META, // SkillPreviewDialog renders isError inline
   });
 }
 
@@ -725,6 +801,7 @@ export function useDevices(options?: { refetchInterval?: number | false }) {
 export function useCreatePairing() {
   return useMutation({
     mutationFn: () => api.post<DevicePairing>('/api/devices/pairings'),
+    meta: SUPPRESS_ERROR_TOAST_META, // PairingDialog renders isError inline
   });
 }
 
@@ -839,6 +916,7 @@ export function useCreateDeviceCommand() {
       void queryClient.invalidateQueries({ queryKey: ['device-commands', deviceId] });
       void queryClient.invalidateQueries({ queryKey: ['devices'] });
     },
+    meta: SUPPRESS_ERROR_TOAST_META, // RunTaskDialog renders isError inline
   });
 }
 
@@ -870,6 +948,7 @@ export function useCreateService() {
     mutationFn: (input: { repositoryId: string; name?: string; port?: number; autoDeploy?: boolean }) =>
       api.post<{ service: AppService }>('/api/services', input).then((res) => res.service),
     onSuccess: invalidate,
+    meta: SUPPRESS_ERROR_TOAST_META, // CreateServiceDialog renders the error inline
   });
 }
 
@@ -879,6 +958,7 @@ export function useUpdateService(serviceId: string) {
     mutationFn: (patch: { name?: string; port?: number; autoDeploy?: boolean }) =>
       api.patch<{ service: AppService }>(`/api/services/${serviceId}`, patch),
     onSuccess: invalidate,
+    meta: SUPPRESS_ERROR_TOAST_META, // ServiceDetail renders the error inline
   });
 }
 
@@ -887,6 +967,7 @@ export function useDeleteService() {
   return useMutation({
     mutationFn: (serviceId: string) => api.del(`/api/services/${serviceId}`),
     onSuccess: invalidate,
+    meta: SUPPRESS_ERROR_TOAST_META, // ServiceDetail renders the error inline
   });
 }
 
@@ -896,6 +977,7 @@ export function useDeployService() {
     mutationFn: (serviceId: string) =>
       api.post<{ deployment: ServiceDeployment }>(`/api/services/${serviceId}/deploy`),
     onSuccess: invalidate,
+    meta: SUPPRESS_ERROR_TOAST_META, // ServiceDetail renders the error inline
   });
 }
 
@@ -904,6 +986,7 @@ export function useStopService() {
   return useMutation({
     mutationFn: (serviceId: string) => api.post(`/api/services/${serviceId}/stop`),
     onSuccess: invalidate,
+    meta: SUPPRESS_ERROR_TOAST_META, // ServiceDetail renders the error inline
   });
 }
 
@@ -932,6 +1015,7 @@ export function useSaveServiceEnv(serviceId: string) {
     mutationFn: (patch: ServiceEnvPatch) =>
       api.put<{ keys: string[] }>(`/api/services/${serviceId}/env`, { ...patch }),
     onSuccess: invalidate,
+    meta: SUPPRESS_ERROR_TOAST_META, // ServiceDetail renders the error inline
   });
 }
 

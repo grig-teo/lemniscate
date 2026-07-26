@@ -5,7 +5,7 @@ import { promisify } from 'node:util';
 import type { Task } from '@prisma/client';
 import type { LlmChange } from './agent-prompts.js';
 import { generateCommitMessage } from './agent-prompts.js';
-import type { LlmRuntime } from './agent-runtime.js';
+import type { LlmRuntime, TokenSplit } from './agent-runtime.js';
 import { prisma } from './prisma.js';
 import { errorKind, logJobFailure } from './job-failure-log.js';
 import { notifyTaskFailure } from './notifications.js';
@@ -186,10 +186,24 @@ export const logEvent = (taskId: string, line: string): Promise<void> =>
   publishTaskEvent(taskId, 'log', { line });
 
 // Persists cumulative LLM usage so maxTokensPerRun spans every job of a task
-// (run-task plus review/fix iterations), not just one job's runtime.
-export async function persistTokenUsage(taskId: string, usedTokens: number): Promise<void> {
+// (run-task plus review/fix iterations), not just one job's runtime. The
+// prompt/completion split rides along when the runtime is known; jobs that
+// never built a runtime leave the stored split untouched.
+export async function persistTokenUsage(
+  taskId: string,
+  usedTokens: number,
+  split?: TokenSplit,
+): Promise<void> {
   await prisma.task
-    .update({ where: { id: taskId }, data: { llmTokensUsed: usedTokens } })
+    .update({
+      where: { id: taskId },
+      data: {
+        llmTokensUsed: usedTokens,
+        ...(split
+          ? { llmPromptTokens: split.promptTokens, llmCompletionTokens: split.completionTokens }
+          : {}),
+      },
+    })
     .catch(() => {});
 }
 

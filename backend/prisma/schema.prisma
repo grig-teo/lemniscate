@@ -107,6 +107,10 @@ model LlmConfig {
   maxRetries        Int           @default(3)
   requestsPerMinute Int
   maxTokensPerRun   Int?
+  // Optional user-entered USD prices per million tokens; both must be set
+  // for the API/UI to show estimated costs (absent, never guessed).
+  inputPricePerMillion  Float?
+  outputPricePerMillion Float?
   customHeaders     Json          @default("{}")
   isDefault         Boolean       @default(false)
   enabled           Boolean       @default(true)
@@ -200,6 +204,11 @@ model Task {
   // Cumulative LLM token usage across run/review/fix jobs; seeds the
   // maxTokensPerRun budget so it spans the whole task, not a single job.
   llmTokensUsed Int        @default(0)
+  // Cumulative prompt/completion split backing cost estimates; NULL for
+  // tasks that ran before these columns existed (estimates cover new runs
+  // only — no fabricated backfill).
+  llmPromptTokens     Int?
+  llmCompletionTokens Int?
   // Repo-relative paths changed on the task branch (string[] as JSON),
   // recorded by the worker after the push; null for old tasks or when the
   // diff failed (run-targets falls back to the repository platform).

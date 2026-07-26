@@ -3,6 +3,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { Hammer, Loader2, Paperclip, Save } from 'lucide-react';
 
 import { api } from '@/lib/api';
+import { SUPPRESS_ERROR_TOAST_META } from '@/lib/mutation-error-toast';
 import {
   buildTaskEditBody,
   taskAgentsMdInitial,
@@ -211,6 +212,7 @@ function usePatchTask() {
       void queryClient.invalidateQueries({ queryKey: ['tasks'] });
       void queryClient.invalidateQueries({ queryKey: ['task'] });
     },
+    meta: SUPPRESS_ERROR_TOAST_META, // this pane renders the error inline
   });
 }
 

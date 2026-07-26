@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Sparkles } from 'lucide-react';
 
 import { useGenerateProposals, useProposalGenerationStatus, useTasks } from '@/lib/hooks';
+import { describeApiError } from '@/lib/api';
 import { isPendingProposal, proposalPollInterval, PROPOSAL_TARGET_COUNT } from '@/lib/repo-tasks';
 import { cn } from '@/lib/utils';
 
@@ -51,28 +52,39 @@ export function GenerateProposalsButton({ repositoryId }: { repositoryId: string
 
   const onClick = () => {
     tracking.start();
+    // The global MutationCache onError toasts failures; the call-level
+    // onError only stops the local spinner.
     generate.mutate(repositoryId, { onError: tracking.stop });
   };
 
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      disabled={generating}
-      aria-label={`Generate proposals (${pendingCount} of ${PROPOSAL_TARGET_COUNT})`}
-      title="Generate proposals"
-      className={cn(
-        'relative flex h-7 w-7 shrink-0 items-center justify-center rounded-full border',
-        'border-border text-muted-foreground transition-colors hover:bg-accent',
-        'disabled:cursor-not-allowed disabled:opacity-70',
-        pendingCount < PROPOSAL_TARGET_COUNT && 'border-primary/60 text-primary',
-        generating && 'animate-pulse',
+    <span className="flex items-center gap-1.5">
+      {/* Toasts are transient; keep an inline copy of the failure next to
+          the button so the user can still read it after the toast fades. */}
+      {generate.isError && (
+        <span role="alert" className="max-w-40 truncate text-[10px] text-destructive">
+          {describeApiError(generate.error)}
+        </span>
       )}
-    >
-      <Sparkles className={cn('h-3.5 w-3.5', generating && 'animate-spin')} />
-      <span className="absolute -right-1.5 -top-1.5 rounded-full bg-muted px-1 text-[9px] leading-3 text-muted-foreground">
-        {pendingCount}/{PROPOSAL_TARGET_COUNT}
-      </span>
-    </button>
+      <button
+        type="button"
+        onClick={onClick}
+        disabled={generating}
+        aria-label={`Generate proposals (${pendingCount} of ${PROPOSAL_TARGET_COUNT})`}
+        title="Generate proposals"
+        className={cn(
+          'relative flex h-7 w-7 shrink-0 items-center justify-center rounded-full border',
+          'border-border text-muted-foreground transition-colors hover:bg-accent',
+          'disabled:cursor-not-allowed disabled:opacity-70',
+          pendingCount < PROPOSAL_TARGET_COUNT && 'border-primary/60 text-primary',
+          generating && 'animate-pulse',
+        )}
+      >
+        <Sparkles className={cn('h-3.5 w-3.5', generating && 'animate-spin')} />
+        <span className="absolute -right-1.5 -top-1.5 rounded-full bg-muted px-1 text-[9px] leading-3 text-muted-foreground">
+          {pendingCount}/{PROPOSAL_TARGET_COUNT}
+        </span>
+      </button>
+    </span>
   );
 }

@@ -53,6 +53,10 @@ vi.mock('../src/lib/agent-prompts.js', () => ({
 vi.mock('../src/lib/agent-runtime.js', () => ({
   loadTaskWithRepo: mocks.loadTaskWithRepo,
   prepareAgentRuntime: mocks.prepareAgentRuntime,
+  tokenSplit: (rt: { usedPromptTokens?: number; usedCompletionTokens?: number }) => ({
+    promptTokens: rt.usedPromptTokens ?? 0,
+    completionTokens: rt.usedCompletionTokens ?? 0,
+  }),
 }));
 vi.mock('../src/lib/prisma.js', () => ({
   prisma: { task: { update: mocks.taskUpdate, findUnique: mocks.taskFindUnique } },

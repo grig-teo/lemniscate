@@ -18,6 +18,7 @@ import {
   llmCall,
   loadTaskWithRepo,
   prepareAgentRuntime,
+  tokenSplit,
   type LlmRuntime,
   type TaskWithRepo,
 } from './agent-runtime.js';
@@ -285,7 +286,7 @@ async function executeReviewTask(
   await logReview(task.id, review, rt.usedTokens);
   if (review.verdict === 'changes_requested' && attempt < MAX_REVIEW_FIX_ATTEMPTS) {
     await runReviewFixIteration(task, rt, review, headBranch, workdir, cloneUrl, secrets, gitAuth);
-    await persistTokenUsage(task.id, rt.usedTokens);
+    await persistTokenUsage(task.id, rt.usedTokens, tokenSplit(rt));
     await enqueueReviewTask(task.id, attempt + 1);
     await logEvent(task.id, 'queued re-review of the updated pull request');
     return rt;
@@ -327,7 +328,7 @@ async function executeHermesReview(
   await logReview(task.id, review, rt.usedTokens);
   if (review.verdict === 'changes_requested' && attempt < MAX_REVIEW_FIX_ATTEMPTS) {
     await runHermesFixIteration(task, rt, review, headBranch, workdir, secrets, auth);
-    await persistTokenUsage(task.id, rt.usedTokens);
+    await persistTokenUsage(task.id, rt.usedTokens, tokenSplit(rt));
     await enqueueReviewTask(task.id, attempt + 1);
     await logEvent(task.id, 'queued re-review of the updated pull request');
     return rt;
@@ -363,7 +364,11 @@ export async function reviewTask(taskId: string, attempt = 0): Promise<void> {
     await recordJobFailure('review-pr', taskId, err, secrets);
     throw err;
   } finally {
-    await persistTokenUsage(taskId, rt?.usedTokens ?? task.llmTokensUsed);
+    await persistTokenUsage(
+      taskId,
+      rt?.usedTokens ?? task.llmTokensUsed,
+      rt ? tokenSplit(rt) : undefined,
+    );
     await cleanupWorkdir(workdir);
   }
 }

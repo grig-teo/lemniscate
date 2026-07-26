@@ -16,6 +16,7 @@ import { ArchivedTaskRow } from '@/components/repo-tree/ArchivedTaskRow';
 import { GenerateProposalsButton } from '@/components/repo-tree/GenerateProposalsButton';
 import { PriorityBadge } from '@/components/PriorityBadge';
 import { StatusBadge } from '@/components/StatusBadge';
+import { TokensBadge } from '@/components/TokensBadge';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 
@@ -162,6 +163,13 @@ function TaskRow({ task }: { task: Task }) {
           </Badge>
         )}
         {showsStatusBadge(task) && <StatusBadge status={task.status} className="px-1.5 py-0 text-[10px]" />}
+        <TokensBadge
+          used={task.llmTokensUsed}
+          max={task.maxTokensPerRun}
+          running={task.status === 'running'}
+          costUsd={task.estimatedCostUsd ?? null}
+          className="px-1.5 py-0 text-[10px]"
+        />
         {isStartableTask(task) && <StartTaskButton task={task} />}
         {isRerunnable(task.status) && <RerunTaskButton task={task} />}
         {isArchivable(task.status) && <ArchiveTaskButton task={task} />}

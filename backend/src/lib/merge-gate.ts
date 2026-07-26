@@ -18,6 +18,7 @@ import {
   llmCall,
   loadTaskWithRepo,
   prepareAgentRuntime,
+  tokenSplit,
   type LlmRuntime,
   type TaskWithRepo,
 } from './agent-runtime.js';
@@ -299,7 +300,7 @@ async function mergeWithConflictResolution(
   } else {
     await resolveMergeConflictsOnce(task, rt, headBranch, workdir, cloneUrl, secrets, auth);
   }
-  await persistTokenUsage(task.id, rt.usedTokens);
+  await persistTokenUsage(task.id, rt.usedTokens, tokenSplit(rt));
   await logEvent(task.id, 'pushed conflict resolution; waiting for CI before the next merge attempt');
   await enqueueMergeGate(task.id, attempt + 1, ciFixes, MERGE_GATE_DELAY_MS);
 }
@@ -374,7 +375,7 @@ export async function mergeGateTask(taskId: string, attempt = 0, ciFixes = 0): P
         `CI checks are failing — fixing with the hermes agent (attempt ${ciFixes + 1}/${MAX_CI_FIX_ATTEMPTS})`,
       );
       await runCiFixViaHermes(task, rt, headBranch, workdir, prepared.cloneUrl, secrets, prepared.gitAuth);
-      await persistTokenUsage(task.id, rt.usedTokens);
+      await persistTokenUsage(task.id, rt.usedTokens, tokenSplit(rt));
       await enqueueMergeGate(taskId, attempt + 1, ciFixes + 1, MERGE_GATE_DELAY_MS);
       return;
     }
@@ -395,7 +396,11 @@ export async function mergeGateTask(taskId: string, attempt = 0, ciFixes = 0): P
     await recordJobFailure('merge-gate', taskId, err, secrets);
     throw err;
   } finally {
-    await persistTokenUsage(taskId, rt?.usedTokens ?? task.llmTokensUsed);
+    await persistTokenUsage(
+      taskId,
+      rt?.usedTokens ?? task.llmTokensUsed,
+      rt ? tokenSplit(rt) : undefined,
+    );
     await cleanupWorkdir(workdir);
   }
 }

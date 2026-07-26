@@ -23,6 +23,7 @@ import {
 import {
   loadTaskWithRepo,
   prepareAgentRuntime,
+  tokenSplit,
   type LlmRuntime,
   type TaskWithRepo,
 } from './agent-runtime.js';
@@ -177,7 +178,7 @@ async function openTaskPullRequest(
     taskId: task.id,
     prUrl,
   });
-  await persistTokenUsage(task.id, rt.usedTokens);
+  await persistTokenUsage(task.id, rt.usedTokens, tokenSplit(rt));
   if (repository.autoReviewPr) {
     await enqueueReviewTask(task.id);
     await logEvent(task.id, 'queued LLM review of the pull request');
@@ -378,7 +379,11 @@ export async function runTask(taskId: string): Promise<void> {
     const message = await recordJobFailure('run-task', taskId, err, secrets);
     await setTaskStatus(taskId, 'failed', { error: message }).catch(() => {});
   } finally {
-    await persistTokenUsage(taskId, rt?.usedTokens ?? task.llmTokensUsed);
+    await persistTokenUsage(
+      taskId,
+      rt?.usedTokens ?? task.llmTokensUsed,
+      rt ? tokenSplit(rt) : undefined,
+    );
     // The workdir outlives the run only while the PR awaits review/merge —
     // it is removed once the task is done (merged), failed, or cancelled.
     if (await isAwaitingReview(taskId)) {
