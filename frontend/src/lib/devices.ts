@@ -29,6 +29,16 @@ export function devicePlatformLabel(platform: string): string {
   return PLATFORM_LABELS[platform] ?? platform.charAt(0).toUpperCase() + platform.slice(1);
 }
 
+const TRANSPORT_LABELS: Record<string, string> = {
+  usb: 'USB',
+  wifi: 'Wi-Fi',
+};
+
+/** Display label for an adb device transport; unknown ones pass through. */
+export function transportLabel(transport: string): string {
+  return TRANSPORT_LABELS[transport] ?? transport;
+}
+
 
 const COMMAND_TYPE_LABELS: Record<string, string> = {
   run_web: 'Run web app',

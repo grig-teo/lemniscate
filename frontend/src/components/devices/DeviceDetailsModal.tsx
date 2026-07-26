@@ -1,13 +1,15 @@
 import * as React from 'react';
 
-import { commandTypeLabel, devicePlatformLabel, formatLastSeen } from '@/lib/devices';
+import { commandTypeLabel, devicePlatformLabel, formatLastSeen, transportLabel } from '@/lib/devices';
 import {
   useDeleteDevice,
   useDeviceCommands,
   useRenameDevice,
   type Device,
   type DeviceCommand,
+  type DeviceEnvironment,
 } from '@/lib/hooks';
+import { Badge } from '@/components/ui/badge';
 import { StatusBadge } from '@/components/StatusBadge';
 import { Button } from '@/components/ui/button';
 import {
@@ -64,6 +66,69 @@ function DeviceMeta({ device }: { device: Device }) {
       <MetaRow label="Hostname" value={meta?.hostname ?? '—'} />
       <MetaRow label="Agent version" value={meta?.agentVersion ?? '—'} />
       <MetaRow label="Docker" value={meta?.dockerAvailable ? 'yes' : 'no'} />
+    </div>
+  );
+}
+
+/** One run-target row: name on the left, badge(s) on the right. */
+function TargetRow({ name, badges }: { name: string; badges: string[] }) {
+  return (
+    <div className="flex items-center justify-between gap-3 text-sm">
+      <span className="truncate">{name}</span>
+      <span className="flex shrink-0 items-center gap-1">
+        {badges.map((badge) => (
+          <Badge key={badge} variant="secondary">
+            {badge}
+          </Badge>
+        ))}
+      </span>
+    </div>
+  );
+}
+
+function EnvironmentRows({ environment }: { environment: DeviceEnvironment }) {
+  return (
+    <>
+      <MetaRow label="Docker" value={environment.dockerAvailable ? 'Running' : 'Not available'} />
+      {(environment.androidDevices ?? []).map((android) => (
+        <TargetRow
+          key={android.serial}
+          name={android.model ?? android.serial}
+          badges={[transportLabel(android.transport)]}
+        />
+      ))}
+      {(environment.iosDevices ?? []).map((ios) => (
+        <TargetRow key={ios.udid} name={ios.name} badges={[ios.available ? 'available' : 'unavailable']} />
+      ))}
+      {(environment.simulators ?? []).map((simulator, index) => (
+        <TargetRow
+          key={`${simulator.name}-${index}`}
+          name={simulator.name}
+          badges={[simulator.runtime ?? 'simulator']}
+        />
+      ))}
+      {(environment.emulators ?? []).map((emulator) => (
+        <TargetRow key={emulator.name} name={emulator.name} badges={['emulator']} />
+      ))}
+    </>
+  );
+}
+
+/** Live run targets reported by the agent (meta.environment capabilities). */
+function AvailableTargets({ device }: { device: Device }) {
+  const environment = device.meta?.environment;
+  return (
+    <div className="flex min-w-0 flex-col gap-2">
+      <p className="text-sm font-medium">Available targets</p>
+      <div className="flex flex-col gap-1 rounded-md border p-3">
+        {environment ? (
+          <EnvironmentRows environment={environment} />
+        ) : (
+          <p className="text-sm text-muted-foreground">
+            Environment not reported yet (old agent version)
+          </p>
+        )}
+      </div>
     </div>
   );
 }
@@ -195,6 +260,7 @@ export function DeviceDetailsModal({
           <div className="flex min-w-0 flex-col gap-4">
             <DeviceName device={device} />
             <DeviceMeta device={device} />
+            <AvailableTargets device={device} />
             <DeleteDeviceButton device={device} onDeleted={() => onOpenChange(false)} />
             <div className="flex min-w-0 flex-col gap-2">
               <p className="text-sm font-medium">Command history</p>

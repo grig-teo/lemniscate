@@ -616,12 +616,21 @@ export function useUpdateSkill() {
 
 export type DevicePlatform = 'android' | 'ios' | 'desktop' | 'web';
 
+export type DeviceEnvironment = {
+  dockerAvailable?: boolean;
+  androidDevices?: { serial: string; model?: string; transport: 'usb' | 'wifi' }[];
+  iosDevices?: { name: string; udid: string; available: boolean }[];
+  simulators?: { name: string; runtime?: string; state?: string }[];
+  emulators?: { name: string }[];
+};
+
 export type DeviceMeta = {
   os?: string;
   arch?: string;
   hostname?: string;
   agentVersion?: string;
   dockerAvailable?: boolean;
+  environment?: DeviceEnvironment;
 };
 
 /** GET /api/devices item — a paired device running the agent CLI. */

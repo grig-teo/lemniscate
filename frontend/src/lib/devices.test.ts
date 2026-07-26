@@ -12,6 +12,7 @@ import {
   devicePlatformLabel,
   formatLastSeen,
   pairingExpirySeconds,
+  transportLabel,
 } from '@/lib/devices';
 describe('formatLastSeen', () => {
   const now = new Date('2026-07-25T12:00:00.000Z');
@@ -55,6 +56,17 @@ describe('devicePlatformLabel', () => {
 
   it('capitalizes unknown platforms', () => {
     expect(devicePlatformLabel('tv')).toBe('Tv');
+  });
+});
+
+describe('transportLabel', () => {
+  it('labels the adb transports', () => {
+    expect(transportLabel('usb')).toBe('USB');
+    expect(transportLabel('wifi')).toBe('Wi-Fi');
+  });
+
+  it('passes unknown transports through', () => {
+    expect(transportLabel('carrier-pigeon')).toBe('carrier-pigeon');
   });
 });
 
