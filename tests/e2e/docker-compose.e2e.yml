@@ -1,0 +1,52 @@
+# E2E override for the smoke suite (tests/e2e/run.sh drives it). Layered on
+# docker-compose.yml with:
+#   docker compose -f docker-compose.yml -f tests/e2e/docker-compose.e2e.yml
+#
+# What it changes relative to the production stack:
+#   - adds the `gitstub` service: a throwaway git provider (git smart HTTP +
+#     GitVerse-shaped API over self-signed TLS) plus a stub OpenAI-compatible
+#     LLM endpoint, so the full agent loop runs with zero external network
+#     and zero real secrets;
+#   - relaxes the SSRF guard (ALLOW_PRIVATE_URLS) and TLS verification ONLY
+#     inside the e2e network so the stack can reach the stubs;
+#   - selects the 'internal' agent executor so the suite does not depend on
+#     the Hermes CLI (also skipped in the image build for speed).
+#
+# Host ports come from the base file's *_BIND variables; run.sh sets them to
+# 127.0.0.1:0 (kernel-assigned ephemeral ports) so parallel/local runs never
+# collide.
+
+services:
+  backend:
+    build:
+      context: ./backend
+      args:
+        SKIP_HERMES_INSTALL: "1"
+    environment:
+      ALLOW_PRIVATE_URLS: "true"
+      NODE_TLS_REJECT_UNAUTHORIZED: "0"
+      GIT_SSL_NO_VERIFY: "true"
+      AGENT_EXECUTOR: internal
+
+  worker:
+    build:
+      context: ./backend
+      args:
+        SKIP_HERMES_INSTALL: "1"
+    environment:
+      ALLOW_PRIVATE_URLS: "true"
+      NODE_TLS_REJECT_UNAUTHORIZED: "0"
+      GIT_SSL_NO_VERIFY: "true"
+      AGENT_EXECUTOR: internal
+
+  gitstub:
+    build: ./tests/e2e/gitstub
+    networks:
+      default:
+        aliases:
+          # gitverseApiBase() derives https://api.<host> from the
+          # connection's baseUrl (https://gitstub) — both names terminate on
+          # this one container.
+          - api.gitstub
+    ports:
+      - "127.0.0.1::443"
