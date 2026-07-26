@@ -7,6 +7,8 @@ import {
   artifactDownloadPath,
   artifactKeyFor,
   artifactOwnerDeviceId,
+  artifactQuotaAllowed,
+  artifactQuotaKey,
   safeArtifactFilename,
 } from '../src/lib/device-artifacts.js';
 
@@ -59,5 +61,22 @@ describe('artifactOwnerDeviceId', () => {
 describe('artifactDownloadPath', () => {
   it('builds the backend-relative download path', () => {
     expect(artifactDownloadPath('dev-1/abc-app.apk')).toBe('/api/devices/artifacts/dev-1/abc-app.apk');
+  });
+});
+
+describe('artifactQuotaKey', () => {
+  it('scopes the redis counter key by device id', () => {
+    expect(artifactQuotaKey('dev-1')).toBe('artifact-quota:dev-1');
+  });
+});
+
+describe('artifactQuotaAllowed', () => {
+  it('allows counts up to and including the daily max', () => {
+    expect(artifactQuotaAllowed(1, 20)).toBe(true);
+    expect(artifactQuotaAllowed(20, 20)).toBe(true);
+  });
+
+  it('rejects the upload beyond the daily max', () => {
+    expect(artifactQuotaAllowed(21, 20)).toBe(false);
   });
 });
