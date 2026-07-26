@@ -1,6 +1,11 @@
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import type { Prisma } from '@prisma/client';
-import { artifactOwnerDeviceId, deviceArtifactStream, storeDeviceArtifact } from '../lib/device-artifacts.js';
+import {
+  artifactOwnerDeviceId,
+  checkArtifactQuota,
+  deviceArtifactStream,
+  storeDeviceArtifact,
+} from '../lib/device-artifacts.js';
 import { dispatchCommand } from '../lib/device-dispatch.js';
 import { deviceHub } from '../lib/device-hub.js';
 import {
@@ -156,9 +161,15 @@ export async function createCommand(request: FastifyRequest, reply: FastifyReply
 // POST /artifacts?filename=app.apk — the builder agent uploads the APK it
 // produced, authenticating with its own device token
 // (`Authorization: Device <token>`); the raw token is never stored server-side.
+// Uploads are capped at DEVICE_ARTIFACT_MAX_PER_DAY per rolling 24h (429
+// beyond), and stored APKs expire after DEVICE_ARTIFACT_TTL_DAYS days — a
+// re-install attempted after expiry gets a 404 and must rebuild.
 export async function uploadArtifact(request: FastifyRequest, reply: FastifyReply) {
   const device = await deviceByToken(deviceTokenFromHeader(request.headers.authorization));
   if (!device) return reply.code(401).send({ error: 'Invalid device token' });
+  if (!(await checkArtifactQuota(device.id))) {
+    return reply.code(429).send({ error: 'Daily artifact upload quota exceeded' });
+  }
   const filename = (request.query as { filename?: string }).filename ?? 'app.apk';
   const body = request.body;
   if (!Buffer.isBuffer(body) || body.length === 0) {
