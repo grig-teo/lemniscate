@@ -404,11 +404,12 @@ async function patchTask(request: FastifyRequest, reply: FastifyReply) {
   return { task: updated };
 }
 
-// Rerun eligibility for POST /tasks/:id/rerun: only failed tasks (including
-// user-cancelled ones, which are stored as failed) can be run again.
+// Rerun eligibility for POST /tasks/:id/rerun: failed tasks (including
+// user-cancelled ones, which are stored as failed) and closed tasks (PR
+// closed without merge) can be run again.
 export function rerunBlocker(task: { status: string }): string | null {
-  if (task.status !== 'failed') return `task is ${task.status}, not failed`;
-  return null;
+  if (task.status === 'failed' || task.status === 'closed') return null;
+  return `task is ${task.status}, not failed or closed`;
 }
 
 // Rerunning resets the run state: re-queued from scratch with a fresh

@@ -8,7 +8,7 @@ import {
   useTasks,
   type Task,
 } from '@/lib/hooks';
-import { groupRepoTasks, isArchivable, isStartableTask, showsStatusBadge, sortByArchivedAtDesc } from '@/lib/repo-tasks';
+import { groupRepoTasks, isArchivable, isRerunnable, isStartableTask, showsStatusBadge, sortByArchivedAtDesc } from '@/lib/repo-tasks';
 import { useWorkspaceSelection } from '@/lib/selection';
 import { cn } from '@/lib/utils';
 import { ArchivedTaskRow } from '@/components/repo-tree/ArchivedTaskRow';
@@ -158,7 +158,7 @@ function TaskRow({ task }: { task: Task }) {
         )}
         {showsStatusBadge(task) && <StatusBadge status={task.status} className="px-1.5 py-0 text-[10px]" />}
         {isStartableTask(task) && <StartTaskButton task={task} />}
-        {task.status === 'failed' && <RerunTaskButton task={task} />}
+        {isRerunnable(task.status) && <RerunTaskButton task={task} />}
         {isArchivable(task.status) && <ArchiveTaskButton task={task} />}
       </button>
     </li>
@@ -201,7 +201,7 @@ function StartTaskButton({ task }: { task: Task }) {
   );
 }
 
-/** Rerun button that re-queues a failed task with fresh run state. */
+/** Rerun button that re-queues a failed or closed task with fresh run state. */
 function RerunTaskButton({ task }: { task: Task }) {
   const rerunTask = useRerunTask();
   return (

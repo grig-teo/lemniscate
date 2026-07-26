@@ -152,6 +152,7 @@ export type TaskStatus =
   | 'awaiting_review'
   | 'done'
   | 'failed'
+  | 'closed'
   | (string & {});
 
 /** Per-task thinking-level override accepted by POST /api/tasks. */
@@ -494,7 +495,7 @@ export function useGenerateProposals() {
   });
 }
 
-/** POST /api/tasks/:id/rerun — re-queue a failed task with fresh run state. */
+/** POST /api/tasks/:id/rerun — re-queue a failed or closed task with fresh run state. */
 export function useRerunTask() {
   const queryClient = useQueryClient();
   return useMutation({

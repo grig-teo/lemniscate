@@ -106,17 +106,22 @@ describe('buildStartUpdate', () => {
   });
 });
 
-// Locking tests for POST /tasks/:id/rerun: only failed tasks can be rerun;
-// the rerun resets the run state (error/branch/pr) and re-queues the task.
+// Locking tests for POST /tasks/:id/rerun: failed tasks (including
+// user-cancelled ones) and closed tasks (PR closed without merge) can be
+// rerun; the rerun resets the run state (error/branch/pr) and re-queues.
 describe('rerunBlocker', () => {
   it('allows a failed task (including user-cancelled)', () => {
     expect(rerunBlocker({ status: 'failed' })).toBeNull();
   });
 
+  it('allows a closed task (PR closed without merge)', () => {
+    expect(rerunBlocker({ status: 'closed' })).toBeNull();
+  });
+
   it.each(['pending', 'queued', 'running', 'awaiting_review', 'done'])(
     'rejects tasks that are %s',
     (status) => {
-      expect(rerunBlocker({ status })).toBe(`task is ${status}, not failed`);
+      expect(rerunBlocker({ status })).toBe(`task is ${status}, not failed or closed`);
     },
   );
 });
