@@ -1,28 +1,32 @@
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import path from 'node:path';
+import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const minio = vi.hoisted(() => ({
-  putObject: vi.fn(),
-  getClient: vi.fn(),
+  getMinioClient: vi.fn(),
+  fPutObject: vi.fn(),
+  bucketExists: vi.fn(),
+  makeBucket: vi.fn(),
 }));
 
 vi.mock('../src/lib/minio-client.js', () => ({
-  getMinioClient: () => minio.getClient(),
-  getMinioBucket: () => 'test-bucket',
+  getMinioClient: minio.getMinioClient,
 }));
 
 import {
-  WORKDIR_ARCHIVE_BUCKET,
+  archiveObjectKey,
   archiveWorkdirToMinio,
-  workdirArchiveKey,
+  WORKDIR_ARCHIVE_BUCKET,
 } from '../src/lib/workdir-archive.js';
 
-describe('workdirArchiveKey', () => {
-  it('builds a dated tarball key under the archive folder', () => {
-    const key = workdirArchiveKey('task-42', new Date('2024-01-02T03:04:05Z'));
-    expect(key).toBe(`${WORKDIR_ARCHIVE_BUCKET}/task-42-20240102-030405.tar.gz`);
+describe('archiveObjectKey', () => {
+  it('builds a dated tar.gz key under workdirs/ from the workdir name', () => {
+    const key = archiveObjectKey(
+      '/tmp/lemniscate-repos/task-42',
+      new Date('2025-01-02T03:04:05.006Z'),
+    );
+    expect(key).toBe('workdirs/task-42-2025-01-02T03-04-05-006Z.tar.gz');
   });
 });
 
@@ -30,40 +34,57 @@ describe('archiveWorkdirToMinio', () => {
   let workdir: string;
 
   beforeEach(async () => {
-    workdir = await mkdtemp(path.join(tmpdir(), 'workdir-archive-test-'));
-    await writeFile(path.join(workdir, 'result.txt'), 'agent output');
-    minio.putObject.mockReset().mockResolvedValue(undefined);
-    minio.getClient.mockReset().mockReturnValue({ putObject: minio.putObject });
+    vi.clearAllMocks();
+    minio.getMinioClient.mockReturnValue({
+      fPutObject: minio.fPutObject,
+      bucketExists: minio.bucketExists,
+      makeBucket: minio.makeBucket,
+    });
+    minio.bucketExists.mockResolvedValue(true);
+    minio.fPutObject.mockResolvedValue(undefined);
+    workdir = await mkdtemp(join(tmpdir(), 'workdir-archive-test-'));
+    await writeFile(join(workdir, 'hello.txt'), 'hello');
   });
 
   afterEach(async () => {
     await rm(workdir, { recursive: true, force: true });
   });
 
-  it('uploads a tarball of the workdir into the archive folder', async () => {
+  it('uploads a tarball of the workdir into the archive bucket', async () => {
     await archiveWorkdirToMinio(workdir);
-    expect(minio.putObject).toHaveBeenCalledTimes(1);
-    const [bucket, key, body] = minio.putObject.mock.calls[0]!;
-    expect(bucket).toBe('test-bucket');
-    expect(key).toMatch(new RegExp(`^${WORKDIR_ARCHIVE_BUCKET}/.+\\.tar\\.gz$`));
-    expect(Buffer.isBuffer(body)).toBe(true);
-    expect((body as Buffer).length).toBeGreaterThan(0);
+    expect(minio.fPutObject).toHaveBeenCalledTimes(1);
+    const [bucket, key, filePath] = minio.fPutObject.mock.calls[0]!;
+    expect(bucket).toBe(WORKDIR_ARCHIVE_BUCKET);
+    expect(key).toMatch(/^workdirs\/workdir-archive-test-.+\.tar\.gz$/);
+    expect(filePath).toMatch(/\.tar\.gz$/);
   });
 
-  it('leaves the workdir itself untouched — removal stays cleanup\'s job', async () => {
+  it('leaves the workdir in place (archival only, no deletion)', async () => {
     await archiveWorkdirToMinio(workdir);
-    const content = await readFile(path.join(workdir, 'result.txt'), 'utf8');
-    expect(content).toBe('agent output');
+    await expect(stat(join(workdir, 'hello.txt'))).resolves.toBeTruthy();
+  });
+
+  it('creates the archive bucket when it is missing', async () => {
+    minio.bucketExists.mockResolvedValue(false);
+    await archiveWorkdirToMinio(workdir);
+    expect(minio.makeBucket).toHaveBeenCalledWith(WORKDIR_ARCHIVE_BUCKET);
   });
 
   it('is a no-op when MinIO is not configured', async () => {
-    minio.getClient.mockReturnValue(null);
-    await expect(archiveWorkdirToMinio(workdir)).resolves.toBeUndefined();
-    expect(minio.putObject).not.toHaveBeenCalled();
+    minio.getMinioClient.mockReturnValue(null);
+    await archiveWorkdirToMinio(workdir);
+    expect(minio.fPutObject).not.toHaveBeenCalled();
   });
 
-  it('never throws, even when the upload fails', async () => {
-    minio.putObject.mockRejectedValue(new Error('minio down'));
+  it('never rejects, even when the upload fails', async () => {
+    minio.fPutObject.mockRejectedValue(new Error('minio down'));
     await expect(archiveWorkdirToMinio(workdir)).resolves.toBeUndefined();
+  });
+
+  it('never rejects for a missing workdir', async () => {
+    await expect(
+      archiveWorkdirToMinio(join(workdir, 'does-not-exist')),
+    ).resolves.toBeUndefined();
+    expect(minio.fPutObject).not.toHaveBeenCalled();
   });
 });

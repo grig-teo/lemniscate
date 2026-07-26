@@ -1,48 +1,51 @@
 import { execFile } from 'node:child_process';
-import { readFile, rm } from 'node:fs/promises';
+import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import path from 'node:path';
+import { basename, join } from 'node:path';
 import { promisify } from 'node:util';
-import { getMinioBucket, getMinioClient } from './minio-client.js';
+import type { Client as MinioClient } from 'minio';
+import { getMinioClient } from './minio-client.js';
 
 const execFileAsync = promisify(execFile);
 
-/**
- * Folder (object-key prefix) inside the MinIO bucket where snapshots of
- * finished task workdirs are stored before the local copy is removed.
- */
-export const WORKDIR_ARCHIVE_BUCKET = 'workdir-archives';
+export const WORKDIR_ARCHIVE_BUCKET =
+  process.env.WORKDIR_ARCHIVE_BUCKET ?? 'lemniscate-workdir-archives';
 
-/** Object key for a workdir snapshot: <prefix>/<name>-<YYYYMMDD-HHmmss>.tar.gz (UTC). */
-export function workdirArchiveKey(name: string, date: Date = new Date()): string {
-  const iso = date.toISOString();
-  const stamp = `${iso.slice(0, 10).replace(/-/g, '')}-${iso.slice(11, 19).replace(/:/g, '')}`;
-  return `${WORKDIR_ARCHIVE_BUCKET}/${name}-${stamp}.tar.gz`;
+export function archiveObjectKey(workdir: string, now: Date = new Date()): string {
+  const stamp = now.toISOString().replace(/[:.]/g, '-');
+  return `workdirs/${basename(workdir)}-${stamp}.tar.gz`;
+}
+
+async function ensureBucket(client: MinioClient): Promise<void> {
+  if (await client.bucketExists(WORKDIR_ARCHIVE_BUCKET)) return;
+  await client.makeBucket(WORKDIR_ARCHIVE_BUCKET);
+}
+
+async function stageTarball(workdir: string, staging: string): Promise<string> {
+  const tarball = join(staging, 'workdir.tar.gz');
+  await execFileAsync('tar', ['-czf', tarball, '-C', workdir, '.']);
+  return tarball;
 }
 
 /**
- * Best-effort snapshot of a finished workdir into MinIO. Never throws and
- * never writes to the console. The workdir itself is untouched — removal
- * stays the job of agent-git's cleanupWorkdir.
+ * Best-effort snapshot of a finished task's workdir into MinIO, silently.
+ * Archives only — the caller (agent-git's cleanupWorkdir) stays responsible
+ * for deleting the workdir — and never throws or logs: workdir cleanup must
+ * succeed even when MinIO is down or the tmpdir is exhausted.
  */
 export async function archiveWorkdirToMinio(workdir: string): Promise<void> {
   try {
-    await snapshotWorkdir(workdir);
+    const client = getMinioClient();
+    if (!client) return;
+    const staging = await mkdtemp(join(tmpdir(), 'lemniscate-workdir-archive-'));
+    try {
+      const tarball = await stageTarball(workdir, staging);
+      await ensureBucket(client);
+      await client.fPutObject(WORKDIR_ARCHIVE_BUCKET, archiveObjectKey(workdir), tarball);
+    } finally {
+      await rm(staging, { recursive: true, force: true }).catch(() => {});
+    }
   } catch {
-    // Archiving must never break task cleanup.
-  }
-}
-
-async function snapshotWorkdir(workdir: string): Promise<void> {
-  const client = getMinioClient();
-  if (!client) return;
-  const name = path.basename(workdir);
-  const tarball = path.join(tmpdir(), `${name}-${Date.now()}.tar.gz`);
-  await execFileAsync('tar', ['-czf', tarball, '-C', path.dirname(workdir), name]);
-  try {
-    const body = await readFile(tarball);
-    await client.putObject(getMinioBucket(), workdirArchiveKey(name), body);
-  } finally {
-    await rm(tarball, { force: true });
+    // best-effort: archiving must never break workdir cleanup
   }
 }
