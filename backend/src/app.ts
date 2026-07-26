@@ -1,9 +1,11 @@
-import Fastify, { type FastifyInstance } from 'fastify';
+import Fastify, { type FastifyError, type FastifyInstance } from 'fastify';
 import cookie from '@fastify/cookie';
 import cors from '@fastify/cors';
 import rateLimit from '@fastify/rate-limit';
 import websocket from '@fastify/websocket';
-import { config } from './config.js';
+import { config, MONITORED_SECRETS } from './config.js';
+import { metrics, registerHttpMetricsHook, registerMetricsRoute } from './lib/metrics.js';
+import { initErrorReporting, reportError } from './lib/sentry.js';
 import apiRoutes from './routes/index.js';
 import healthRoutes from './routes/health.js';
 import llmConfigRoutes from './routes/llm-configs.js';
@@ -47,6 +49,25 @@ async function registerRoutes(app: FastifyInstance) {
   await app.register(appsIndexRoute, { prefix: '/api' });
   // Liveness (/health) + readiness (/health/ready), unprefixed.
   await app.register(healthRoutes);
+  // Prometheus exposition, token-guarded (404 when METRICS_TOKEN is unset).
+  registerMetricsRoute(app, metrics, config.METRICS_TOKEN);
+}
+
+// Report unexpected (5xx) errors to Sentry, then answer exactly like
+// Fastify's default handler: client errors keep their status/message,
+// server errors collapse to a generic 500 payload.
+function registerErrorReporting(app: FastifyInstance): void {
+  app.setErrorHandler((error: FastifyError, request, reply) => {
+    const statusCode = error.statusCode ?? 500;
+    if (statusCode < 500) {
+      return reply.code(statusCode).send({ error: error.name, message: error.message, statusCode });
+    }
+    request.log.error(error);
+    reportError(error, { method: request.method, route: request.routeOptions.url });
+    return reply
+      .code(500)
+      .send({ error: 'Internal Server Error', message: 'Internal Server Error', statusCode: 500 });
+  });
 }
 
 export async function buildApp(): Promise<FastifyInstance> {
@@ -59,6 +80,10 @@ export async function buildApp(): Promise<FastifyInstance> {
     // the real client IP, not the proxy's container IP (see config.ts).
     trustProxy: config.TRUST_PROXY,
   });
+  // Opt-in Sentry; a no-op unless SENTRY_DSN is set.
+  await initErrorReporting(config.SENTRY_DSN, MONITORED_SECRETS);
+  registerErrorReporting(app);
+  registerHttpMetricsHook(app, metrics);
   await registerPlugins(app);
   await registerRoutes(app);
   return app;

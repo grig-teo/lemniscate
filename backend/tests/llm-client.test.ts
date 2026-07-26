@@ -3,6 +3,7 @@ import {
   backoffMs,
   chatCompletions,
   LlmError,
+  setLlmObserver,
   timeoutForAttemptSeconds,
   toReasoningEffort,
 } from '../src/lib/llm-client.js';
@@ -293,5 +294,51 @@ describe('timeoutForAttemptSeconds', () => {
   it('caps the grown timeout at 600s', () => {
     expect(timeoutForAttemptSeconds(120, 3)).toBe(600);
     expect(timeoutForAttemptSeconds(120, 10)).toBe(600);
+  });
+});
+
+describe('setLlmObserver', () => {
+  it('reports a success observation with latency', async () => {
+    stubFetch(jsonResponse({ choices: [{ message: { content: 'ok' } }] }));
+    const seen: { outcome: string; latencyMs: number }[] = [];
+    setLlmObserver((obs) => seen.push(obs));
+    try {
+      await chatCompletions({ ...BASE });
+    } finally {
+      setLlmObserver(undefined);
+    }
+    expect(seen).toHaveLength(1);
+    expect(seen[0]?.outcome).toBe('success');
+    expect(seen[0]?.latencyMs).toBeGreaterThanOrEqual(0);
+  });
+
+  it('reports the LlmError kind when the request ultimately fails', async () => {
+    stubFetch(jsonResponse({ error: 'bad' }, 400));
+    const seen: { outcome: string; latencyMs: number }[] = [];
+    setLlmObserver((obs) => seen.push(obs));
+    try {
+      await expect(chatCompletions({ ...BASE })).rejects.toThrow(LlmError);
+    } finally {
+      setLlmObserver(undefined);
+    }
+    expect(seen.map((o) => o.outcome)).toEqual(['http']);
+  });
+
+  it('reports timeouts as outcome "timeout"', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (_url: string | URL, init?: RequestInit) => {
+      await new Promise((resolve, reject) => {
+        init?.signal?.addEventListener('abort', () => reject(new Error('aborted')));
+      });
+    }));
+    const seen: { outcome: string }[] = [];
+    setLlmObserver((obs) => seen.push(obs));
+    try {
+      await expect(
+        chatCompletions({ ...BASE, timeoutSeconds: 0 }),
+      ).rejects.toThrow(LlmError);
+    } finally {
+      setLlmObserver(undefined);
+    }
+    expect(seen.map((o) => o.outcome)).toEqual(['timeout']);
   });
 });

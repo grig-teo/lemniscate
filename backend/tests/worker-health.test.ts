@@ -153,3 +153,32 @@ describe('startWorkerHealthServer /health/ready', () => {
     }
   });
 });
+
+describe('/metrics on the worker health server', () => {
+  it('serves the Prometheus exposition when a renderer is provided', async () => {
+    const server = startWorkerHealthServer(fakeQueue({ waiting: 1 }), 0, {
+      renderMetrics: async () => 'lemniscate_job_failures_total 3\n',
+    });
+    await new Promise((resolve) => server.on('listening', resolve));
+    try {
+      const address = server.address();
+      const port = typeof address === 'object' && address !== null ? address.port : 0;
+      const response = await fetch(`http://127.0.0.1:${port}/metrics`);
+      expect(response.status).toBe(200);
+      expect(response.headers.get('content-type')).toContain('text/plain');
+      expect(await response.text()).toContain('lemniscate_job_failures_total 3');
+    } finally {
+      server.close();
+    }
+  });
+
+  it('omits /metrics when no renderer is provided', async () => {
+    const server = await listenOnRandomPort(fakeQueue({ waiting: 1 }));
+    try {
+      const { status } = await fetchJson(server, '/metrics');
+      expect(status).toBe(404);
+    } finally {
+      server.close();
+    }
+  });
+});

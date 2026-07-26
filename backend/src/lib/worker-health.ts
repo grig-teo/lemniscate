@@ -16,6 +16,10 @@ export interface WorkerHealthDeps {
   checkRedis?: () => Promise<unknown>;
   // BullMQ worker.isRunning() — false when the consumer stopped.
   isRunning?: () => boolean;
+  // Prometheus exposition for the worker process (job durations/failures,
+  // LLM outcomes, queue gauges). When omitted, /metrics 404s like any
+  // unknown path.
+  renderMetrics?: () => Promise<string>;
 }
 
 export async function queueSnapshot(queue: Queue): Promise<WorkerQueueSnapshot> {
@@ -71,6 +75,13 @@ export function startWorkerHealthServer(
     }
     if (req.url === '/health/ready') {
       void handleReady(deps, res);
+      return;
+    }
+    if (req.url === '/metrics' && deps.renderMetrics) {
+      void deps.renderMetrics().then((text) => {
+        res.writeHead(200, { 'content-type': 'text/plain; version=0.0.4; charset=utf-8' });
+        res.end(text);
+      });
       return;
     }
     sendJson(res, 404, { ok: false, error: 'not found' });

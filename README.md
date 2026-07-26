@@ -75,6 +75,12 @@ and `frontend` only starts once `backend` is `service_healthy`. Inspect with
 Point external uptime monitoring at `/health/ready`: a 503 means Postgres or
 Redis is down and the deploy/proxy should stop routing traffic to the API.
 
+For deeper observability (Prometheus metrics and opt-in Sentry error
+reporting) see [docs/observability.md](docs/observability.md): the API
+serves a token-guarded `/metrics` (`METRICS_TOKEN`, 404 when unset), the
+worker serves `/metrics` on its health port, and `SENTRY_DSN` enables
+scrubbed error reporting in both processes.
+
 ## OAuth app setup
 
 Login is via GitHub or GitLab OAuth. Register an OAuth app at each provider

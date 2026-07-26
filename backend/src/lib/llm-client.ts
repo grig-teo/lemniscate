@@ -55,6 +55,29 @@ export interface LlmRetryInfo {
   reason: string;
 }
 
+// Observability hook: exactly one process-wide observer (registered by
+// lib/metrics.ts) receives the final outcome of every chatCompletions call.
+// Kept as a setter (not a param) so the many call sites stay unchanged and
+// this module stays free of any metrics dependency.
+export type LlmOutcome = 'success' | LlmError['kind'];
+
+export interface LlmRequestObservation {
+  outcome: LlmOutcome;
+  latencyMs: number;
+}
+
+let llmObserver: ((obs: LlmRequestObservation) => void) | undefined;
+
+export function setLlmObserver(
+  observer: ((obs: LlmRequestObservation) => void) | undefined,
+): void {
+  llmObserver = observer;
+}
+
+function notifyObserver(outcome: LlmOutcome, startedAt: number): void {
+  llmObserver?.({ outcome, latencyMs: Date.now() - startedAt });
+}
+
 export interface ChatUsage {
   promptTokens: number;
   completionTokens: number;
@@ -314,6 +337,15 @@ export async function chatCompletions(
   params: ChatCompletionsParams,
 ): Promise<ChatCompletionsResult> {
   const state = makeRequestState(params);
+  try {
+    return await runRequestLoop(state);
+  } catch (err) {
+    notifyObserver(err instanceof LlmError ? err.kind : 'network', state.startedAt);
+    throw err;
+  }
+}
+
+async function runRequestLoop(state: RequestState): Promise<ChatCompletionsResult> {
   for (let attempt = 0; ; attempt++) {
     const outcome = await attemptFetch(state, buildRequestBody(state), attempt);
     if (!outcome.response) {
@@ -325,7 +357,9 @@ export async function chatCompletions(
     }
     const { response } = outcome;
     if (response.ok) {
-      return toResult(await readSuccessJson(response), state);
+      const result = toResult(await readSuccessJson(response), state);
+      notifyObserver('success', state.startedAt);
+      return result;
     }
     const status = response.status;
     const detail = await errorDetail(state, response);

@@ -3,7 +3,7 @@ import { Redis } from 'ioredis';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { z } from 'zod';
-import { config } from './config.js';
+import { config, MONITORED_SECRETS } from './config.js';
 import { planWorkdirSweep } from './lib/agent-git.js';
 import { generateProposals, reviewTask, runTask } from './lib/agent-loop.js';
 import { mergeGateTask } from './lib/merge-gate.js';
@@ -22,7 +22,9 @@ import {
 import { registerPrStateSyncSchedule, recoverStuckReviews, syncMergedPullRequests } from './lib/pr-state-sync.js';
 import { startHeartbeat } from './lib/worker-heartbeat.js';
 import { jobFailureFromError, logJobFailure } from './lib/job-failure-log.js';
+import { metrics, startQueueMetricsPoller } from './lib/metrics.js';
 import { getRedisClient } from './lib/redis.js';
+import { initErrorReporting, reportError } from './lib/sentry.js';
 import { redisEndpointForLog } from './lib/utils.js';
 import { startWorkerHealthServer } from './lib/worker-health.js';
 
@@ -71,54 +73,61 @@ async function sweepOrphanedWorkdirs(): Promise<void> {
 
 await sweepOrphanedWorkdirs();
 
+// Opt-in Sentry; a no-op unless SENTRY_DSN is set.
+await initErrorReporting(config.SENTRY_DSN, MONITORED_SECRETS);
+
+// One switch on job.name (AGENTS.md §4); metrics live in the decorator
+// below so no case carries its own timing/try-catch.
+async function processJob(job: Job): Promise<void> {
+  switch (job.name) {
+    case 'run-task': {
+      const { taskId } = runTaskDataSchema.parse(job.data);
+      await runTask(taskId);
+      return;
+    }
+    case 'review-pr': {
+      const { taskId, attempt } = reviewPrDataSchema.parse(job.data);
+      await reviewTask(taskId, attempt);
+      return;
+    }
+    case 'merge-gate': {
+      const { taskId, attempt, ciFixes } = mergeGateDataSchema.parse(job.data);
+      await mergeGateTask(taskId, attempt, ciFixes);
+      return;
+    }
+    case 'deploy-service': {
+      const { deploymentId } = deployServiceDataSchema.parse(job.data);
+      await deployService(deploymentId);
+      return;
+    }
+    case 'generate-proposals': {
+      const { repositoryId } = generateProposalsDataSchema.parse(job.data);
+      await generateProposals(repositoryId);
+      return;
+    }
+    case 'proposals-topup': {
+      proposalsTopUpDataSchema.parse(job.data);
+      await enqueueProposalTopUps();
+      return;
+    }
+    case 'proposals-autorun': {
+      proposalsTopUpDataSchema.parse(job.data);
+      await enqueueProposalAutoRuns();
+      return;
+    }
+    case 'pr-state-sync': {
+      proposalsTopUpDataSchema.parse(job.data);
+      await syncMergedPullRequests();
+      return;
+    }
+    default:
+      throw new Error(`unknown job name: ${job.name}`);
+  }
+}
+
 const worker = new Worker(
   AGENT_QUEUE_NAME,
-  async (job: Job) => {
-    switch (job.name) {
-      case 'run-task': {
-        const { taskId } = runTaskDataSchema.parse(job.data);
-        await runTask(taskId);
-        return;
-      }
-      case 'review-pr': {
-        const { taskId, attempt } = reviewPrDataSchema.parse(job.data);
-        await reviewTask(taskId, attempt);
-        return;
-      }
-      case 'merge-gate': {
-        const { taskId, attempt, ciFixes } = mergeGateDataSchema.parse(job.data);
-        await mergeGateTask(taskId, attempt, ciFixes);
-        return;
-      }
-      case 'deploy-service': {
-        const { deploymentId } = deployServiceDataSchema.parse(job.data);
-        await deployService(deploymentId);
-        return;
-      }
-      case 'generate-proposals': {
-        const { repositoryId } = generateProposalsDataSchema.parse(job.data);
-        await generateProposals(repositoryId);
-        return;
-      }
-      case 'proposals-topup': {
-        proposalsTopUpDataSchema.parse(job.data);
-        await enqueueProposalTopUps();
-        return;
-      }
-      case 'proposals-autorun': {
-        proposalsTopUpDataSchema.parse(job.data);
-        await enqueueProposalAutoRuns();
-        return;
-      }
-      case 'pr-state-sync': {
-        proposalsTopUpDataSchema.parse(job.data);
-        await syncMergedPullRequests();
-        return;
-      }
-      default:
-        throw new Error(`unknown job name: ${job.name}`);
-    }
-  },
+  async (job: Job) => metrics.observeJob(job.name, () => processJob(job)),
   { connection, concurrency: config.AGENT_WORKER_CONCURRENCY },
 );
 
@@ -129,12 +138,12 @@ function jobTaskId(data: unknown): string | undefined {
 }
 
 worker.on('failed', (job, err) => {
-  logJobFailure(
-    jobFailureFromError(job?.name ?? 'unknown', err, {
-      jobId: job?.id,
-      taskId: jobTaskId(job?.data),
-    }),
-  );
+  const entry = jobFailureFromError(job?.name ?? 'unknown', err, {
+    jobId: job?.id,
+    taskId: jobTaskId(job?.data),
+  });
+  logJobFailure(entry);
+  reportError(err, { jobName: entry.jobName, jobId: entry.jobId, taskId: entry.taskId });
 });
 
 await worker.waitUntilReady();
@@ -171,15 +180,27 @@ await recoverStuckReviews();
 // Liveness + readiness endpoints: compose's healthcheck probes these; the
 // queue counts /health serves (waiting/active/failed) make a stalled
 // pipeline visible, and /health/ready 503s when Redis is unreachable or the
-// consumer stopped.
+// consumer stopped. The same server exposes /metrics (Prometheus: job
+// durations/failures, LLM outcomes, queue gauges) — the worker has no other
+// HTTP surface, so it shares this internal port.
 const healthServer = startWorkerHealthServer(getAgentTasksQueue(), config.WORKER_HEALTH_PORT, {
   checkRedis: () => getRedisClient().ping(),
   isRunning: () => worker.isRunning(),
+  renderMetrics: () => metrics.render(),
 });
 console.log(`worker health endpoint listening on :${config.WORKER_HEALTH_PORT}`);
 
+// Refresh lemniscate_queue_jobs gauges from BullMQ every 15s.
+const QUEUE_METRICS_INTERVAL_MS = 15_000;
+const stopQueueMetrics = startQueueMetricsPoller(
+  metrics,
+  [{ name: AGENT_QUEUE_NAME, getCounts: () => getAgentTasksQueue().getJobCounts() }],
+  QUEUE_METRICS_INTERVAL_MS,
+);
+
 for (const signal of ['SIGINT', 'SIGTERM'] as const) {
   process.once(signal, () => {
+    stopQueueMetrics();
     stopHeartbeat();
     healthServer.close();
     void worker.close().then(
