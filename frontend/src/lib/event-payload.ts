@@ -29,6 +29,10 @@ export function firstStringField(
 /** Console log text for a `log` event payload. */
 export function payloadToLogText(payload: unknown): string {
   if (typeof payload === 'string') return payload;
+  const record = asRecord(payload);
+  if (record && Array.isArray(record.lines)) {
+    return record.lines.filter((l): l is string => typeof l === 'string').join('\n');
+  }
   return firstStringField(payload, ['message', 'line', 'text']) ?? JSON.stringify(payload);
 }
 
