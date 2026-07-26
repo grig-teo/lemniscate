@@ -17,6 +17,9 @@ const optionalString = z.preprocess(emptyToUndefined, z.string().optional());
 const envSchema = z.object({
   // --- Server ---
   PORT: z.coerce.number().int().positive().default(3000),
+  // Worker liveness endpoint (worker.ts): serves BullMQ job counts for the
+  // compose healthcheck. Separate port so the API surface stays untouched.
+  WORKER_HEALTH_PORT: z.coerce.number().int().positive().default(3100),
   NODE_ENV: z
     .enum(['development', 'test', 'production'])
     .default('development'),

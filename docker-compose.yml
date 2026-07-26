@@ -6,52 +6,49 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-lemniscate}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-lemniscate}
       POSTGRES_DB: ${POSTGRES_DB:-lemniscate}
-    ports:
-      - "${POSTGRES_BIND:-127.0.0.1:5432}:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
+    ports:
+      - "${POSTGRES_BIND:-127.0.0.1:5432}:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
+      interval: 5s
+      timeout: 3s
+      retries: 10
 
   redis:
     image: redis:7-alpine
     restart: unless-stopped
-    ports:
-      - "${REDIS_BIND:-127.0.0.1:6379}:6379"
     volumes:
       - redisdata:/data
+    ports:
+      - "${REDIS_BIND:-127.0.0.1:6379}:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
+      interval: 5s
+      timeout: 3s
+      retries: 10
 
   minio:
-    # Pinned release (never :latest); see https://github.com/minio/minio/releases
+    # Pinned release (never :latest)
     image: minio/minio:RELEASE.2025-09-07T16-13-09Z
     restart: unless-stopped
-    command: ["server", "/data", "--console-address", ":9001"]
+    command: server /data
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-lemniscate}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-lemniscate-minio}
-    ports:
-      - "${MINIO_BIND:-127.0.0.1:9000}:9000"
-      - "${MINIO_CONSOLE_BIND:-127.0.0.1:9001}:9001"
     volumes:
       - miniodata:/data
+    ports:
+      - "${MINIO_BIND:-127.0.0.1:9000}:9000"
     healthcheck:
-      test: ["CMD", "mc", "ready", "local"]
+      test: ["CMD-SHELL", "curl -f http://localhost:9000/minio/health/live || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 5
 
   backend:
-    build:
-      context: ./backend
-      dockerfile: Dockerfile
+    build: ./backend
     restart: unless-stopped
     env_file:
       - ./backend/.env
@@ -59,73 +56,63 @@ services:
       DATABASE_URL: postgresql://${POSTGRES_USER:-lemniscate}:${POSTGRES_PASSWORD:-lemniscate}@postgres:5432/${POSTGRES_DB:-lemniscate}
       REDIS_URL: redis://redis:6379
       MINIO_ENDPOINT: minio
+      MINIO_PORT: "9000"
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-lemniscate}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-lemniscate-minio}
-      MINIO_BUCKET: ${MINIO_BUCKET:-lemniscate-library}
     ports:
       - "${BACKEND_BIND:-127.0.0.1:3000}:3000"
-    healthcheck:
-      # Readiness, not liveness: 503s when Postgres or Redis are unreachable.
-      test: ["CMD-SHELL", "curl -fsS \"http://localhost:$${PORT:-3000}/health/ready\" || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 30s
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
       minio:
-        condition: service_healthy
+        condition: service_started
+    healthcheck:
+      # curl is installed in the backend runtime image (see backend/Dockerfile)
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health/ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 40s
 
   worker:
-    build:
-      context: ./backend
-      dockerfile: Dockerfile
+    build: ./backend
     restart: unless-stopped
-    command: ["node", "dist/worker.js"]
+    command: node dist/worker.js
     env_file:
       - ./backend/.env
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:-lemniscate}:${POSTGRES_PASSWORD:-lemniscate}@postgres:5432/${POSTGRES_DB:-lemniscate}
       REDIS_URL: redis://redis:6379
       MINIO_ENDPOINT: minio
+      MINIO_PORT: "9000"
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-lemniscate}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-lemniscate-minio}
-      MINIO_BUCKET: ${MINIO_BUCKET:-lemniscate-library}
+      WORKER_HEALTH_PORT: "3100"
+    ports:
+      - "${WORKER_HEALTH_BIND:-127.0.0.1:3100}:3100"
     volumes:
-      # Persistent task clones: a redeploy mid-run leaves the workdir intact
-      # so the recovered task resumes instead of restarting. Must match
-      # AGENT_WORKDIR in backend/.env.
-      - agentworkdir:/tmp/lemniscate-repos
-    healthcheck:
-      # The worker has no HTTP port; it rewrites a heartbeat file on a timer
-      # (src/lib/worker-heartbeat.ts). Stale > 30s = wedged, restart it.
-      test: ["CMD-SHELL", "node -e \"const fs=require('fs');try{process.exit(Date.now()-fs.statSync('/tmp/lemniscate-worker-heartbeat').mtimeMs<30000?0:1)}catch{process.exit(1)}\""]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 30s
+      - agent-workdir:/tmp/lemniscate-repos
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
       minio:
-        condition: service_healthy
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3100/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
 
   frontend:
-    build:
-      context: ./frontend
-      dockerfile: Dockerfile
-      args:
-        # Subpath deploys (e.g. example.com/lemniscate) override these in the environment
-        VITE_BASE_PATH: ${VITE_BASE_PATH:-/}
-        VITE_API_URL: ${VITE_API_URL:-}
+    build: ./frontend
     restart: unless-stopped
     ports:
-      - "${FRONTEND_BIND:-8080}:80"
+      - "8080:80"
     depends_on:
       backend:
         condition: service_healthy
@@ -134,4 +121,4 @@ volumes:
   pgdata:
   redisdata:
   miniodata:
-  agentworkdir:
+  agent-workdir:
