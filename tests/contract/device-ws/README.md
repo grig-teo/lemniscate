@@ -48,7 +48,6 @@ directory contents.
 | `command-build-android.json` | server→client | `build_android` envelope (enriched at dispatch) |
 | `command-run-desktop.json` | server→client | `run_desktop` envelope |
 | `command-run-ios.json` | server→client | `run_ios` envelope |
-| `command-run-tests.json` | server→client | `run_tests` envelope |
 | `close-4001.json` | close | token-rejection close code (agent must re-pair) |
 
 ## Adding a new command type

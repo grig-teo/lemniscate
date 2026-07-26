@@ -1,4 +1,3 @@
-#!/usr/bin/env node
 // CI lint for the device-WS shared contract fixtures.
 //
 // Run: node tests/contract/device-ws/lint.js
@@ -9,9 +8,10 @@
 //      (a new command was added but the manifest was not updated).
 //   3. A fixture is malformed (missing _comment / direction, or
 //      missing `frame` for wire messages / `closeCode` for close codes).
-//
-// This guards against silent divergence: every consumer test iterates
-// index.json, so an unlisted fixture would be invisible to CI.
+//   4. A consumer test suite is not wired to the manifest: the backend and
+//      Node-agent must reference index.json; the Tauri protocol tests must
+//      include_str! every fixture listed in the manifest. This catches a
+//      consumer that silently drops coverage of the shared contract.
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -59,6 +59,39 @@ for (const name of index.fixtures) {
   }
 }
 
+// 4. consumer-wiring: verify each consumer test is wired to the manifest.
+//    Backend + Node-agent iterate index.json dynamically; Tauri uses
+//    include_str! per fixture. A missing reference means that consumer
+//    silently stopped decoding the shared contract.
+const repoRoot = path.resolve(dir, '..', '..', '..');
+const manifestConsumers = [
+  path.join(repoRoot, 'backend', 'tests', 'devices-ws.test.ts'),
+  path.join(repoRoot, 'agent', 'lib.test.js'),
+];
+const tauriProtocol = path.join(repoRoot, 'agent-tauri', 'src-tauri', 'src', 'protocol.rs');
+
+for (const consumer of manifestConsumers) {
+  const rel = path.relative(repoRoot, consumer);
+  if (!fs.existsSync(consumer)) {
+    errors.push(`consumer not found: ${rel}`);
+    continue;
+  }
+  const src = fs.readFileSync(consumer, 'utf8');
+  if (!src.includes('index.json')) {
+    errors.push(`${rel}: does not reference index.json — manifest wiring is missing`);
+  }
+}
+if (fs.existsSync(tauriProtocol)) {
+  const src = fs.readFileSync(tauriProtocol, 'utf8');
+  for (const name of index.fixtures) {
+    if (!src.includes(`device-ws/${name}`)) {
+      errors.push(`protocol.rs: missing include_str! for fixture "${name}"`);
+    }
+  }
+} else {
+  errors.push('consumer not found: agent-tauri/src-tauri/src/protocol.rs');
+}
+
 if (errors.length > 0) {
   for (const err of errors) console.error(`  ✗ ${err}`);
   console.error(`\n${errors.length} fixture-lint error(s) in tests/contract/device-ws/`);
@@ -66,3 +99,4 @@ if (errors.length > 0) {
 }
 
 console.log(`  ✓ ${index.fixtures.length} fixtures validated (index.json matches disk)`);
+console.log(`  ✓ 3 consumer suites wired to the manifest`);

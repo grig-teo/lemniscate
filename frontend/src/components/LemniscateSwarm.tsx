@@ -16,6 +16,12 @@ interface LemniscateSwarmProps {
   particleScale?: number;
   /** Accessible label; when omitted the mark is decorative (aria-hidden). */
   label?: string;
+  /**
+   * Whether the swarm travels along the lemniscate. Defaults to true (e.g. the
+   * marketing hero). Set false to show only the static mark — used by the brand
+   * logo when no task is actively running or in review.
+   */
+  animate?: boolean;
 }
 
 /**
@@ -30,6 +36,7 @@ export function LemniscateSwarm({
   strokeWidth = 2,
   particleScale = 1,
   label,
+  animate = true,
 }: LemniscateSwarmProps) {
   const a11y = label ? { role: 'img', 'aria-label': label } : { 'aria-hidden': true } as const;
   return (
@@ -42,18 +49,20 @@ export function LemniscateSwarm({
         strokeLinejoin="round"
         opacity={0.3}
       />
-      <g className="motion-reduce:hidden">
-        {PARTICLES.map((p, i) => (
-          <circle key={i} r={p.radius * particleScale} fill="currentColor" opacity={p.opacity}>
-            <animateMotion
-              path={path}
-              dur={`${p.duration}s`}
-              begin={`${p.begin}s`}
-              repeatCount="indefinite"
-            />
-          </circle>
-        ))}
-      </g>
+      {animate && (
+        <g className="motion-reduce:hidden">
+          {PARTICLES.map((p, i) => (
+            <circle key={i} r={p.radius * particleScale} fill="currentColor" opacity={p.opacity}>
+              <animateMotion
+                path={path}
+                dur={`${p.duration}s`}
+                begin={`${p.begin}s`}
+                repeatCount="indefinite"
+              />
+            </circle>
+          ))}
+        </g>
+      )}
     </svg>
   );
 }

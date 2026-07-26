@@ -13,8 +13,8 @@ pub const AGENT_VERSION: &str = "0.2.2";
 /// Server close code meaning "device token rejected — pair again".
 pub const CLOSE_CODE_RE_PAIR: u16 = 4001;
 
-pub const COMMAND_TYPES: [&str; 6] =
-    ["run_web", "install_apk", "build_android", "run_desktop", "run_ios", "run_tests"];
+pub const COMMAND_TYPES: [&str; 5] =
+    ["run_web", "install_apk", "build_android", "run_desktop", "run_ios"];
 
 /// Device metadata sent in the claim body and the WS hello.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -268,8 +268,6 @@ mod tests {
         include_str!("../../../tests/contract/device-ws/command-run-desktop.json");
     const CMD_RUN_IOS_FIXTURE: &str =
         include_str!("../../../tests/contract/device-ws/command-run-ios.json");
-    const CMD_RUN_TESTS_FIXTURE: &str =
-        include_str!("../../../tests/contract/device-ws/command-run-tests.json");
     const CLOSE_4001_FIXTURE: &str = include_str!("../../../tests/contract/device-ws/close-4001.json");
 
     /// Extract the `frame` object from a fixture wrapper.
@@ -342,13 +340,12 @@ mod tests {
         // One key payload field per command type — the field name is
         // hardcoded so a rename in the fixture (e.g. port -> portNumber)
         // causes payload.get(key) to return None and fail the assertion.
-        let commands: [(&str, &str, &str); 6] = [
+        let commands: [(&str, &str, &str); 5] = [
             ("run_web", CMD_RUN_WEB_FIXTURE, "port"),
             ("install_apk", CMD_INSTALL_APK_FIXTURE, "apkUrl"),
             ("build_android", CMD_BUILD_ANDROID_FIXTURE, "gradleTask"),
             ("run_desktop", CMD_RUN_DESKTOP_FIXTURE, "startScript"),
             ("run_ios", CMD_RUN_IOS_FIXTURE, "scheme"),
-            ("run_tests", CMD_RUN_TESTS_FIXTURE, "testCommand"),
         ];
         for (expected_type, raw, payload_key) in commands {
             let frame = fixture_frame(raw);

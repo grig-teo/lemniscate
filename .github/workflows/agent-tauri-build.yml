@@ -76,6 +76,10 @@ jobs:
         run: npm ci
         working-directory: agent-tauri
 
+      - name: Module size guard (max 300 lines per AGENTS.md)
+        run: npm run check:max-lines
+        working-directory: agent-tauri
+
       - name: Rust unit tests (protocol + config)
         run: cargo test
         working-directory: agent-tauri/src-tauri

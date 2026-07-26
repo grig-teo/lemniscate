@@ -1,0 +1,4 @@
+[
+  { "path": "index.js", "lines": 624, "date": "2026-07-26", "reason": "Pre-existing at max-lines enforcement rollout" },
+  { "path": "lib.js", "lines": 569, "date": "2026-07-26", "reason": "Pre-existing at max-lines enforcement rollout" }
+]

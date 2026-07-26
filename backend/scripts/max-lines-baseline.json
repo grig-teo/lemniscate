@@ -1,0 +1,12 @@
+[
+  { "path": "src/lib/agent-git.ts", "lines": 362, "date": "2026-07-26", "reason": "Pre-existing at max-lines enforcement rollout" },
+  { "path": "src/lib/agent-prompts.ts", "lines": 373, "date": "2026-07-26", "reason": "Pre-existing at max-lines enforcement rollout" },
+  { "path": "src/lib/agent-review.ts", "lines": 387, "date": "2026-07-26", "reason": "Pre-existing at max-lines enforcement rollout" },
+  { "path": "src/lib/agent-run.ts", "lines": 409, "date": "2026-07-26", "reason": "Pre-existing at max-lines enforcement rollout" },
+  { "path": "src/lib/agent-runtime.ts", "lines": 360, "date": "2026-07-26", "reason": "Pre-existing at max-lines enforcement rollout" },
+  { "path": "src/lib/llm-client.ts", "lines": 396, "date": "2026-07-26", "reason": "Pre-existing at max-lines enforcement rollout" },
+  { "path": "src/lib/merge-gate.ts", "lines": 430, "date": "2026-07-26", "reason": "Pre-existing at max-lines enforcement rollout" },
+  { "path": "src/lib/notification-delivery.ts", "lines": 306, "date": "2026-07-26", "reason": "Pre-existing at max-lines enforcement rollout" },
+  { "path": "src/routes/repositories.ts", "lines": 386, "date": "2026-07-26", "reason": "Pre-existing at max-lines enforcement rollout" },
+  { "path": "src/routes/services.ts", "lines": 364, "date": "2026-07-26", "reason": "Pre-existing at max-lines enforcement rollout" }
+]

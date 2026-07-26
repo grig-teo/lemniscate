@@ -191,10 +191,9 @@ test('parseServerMessage decodes every command fixture', () => {
     build_android: ['gradleTask', 'assembleDebug'],
     run_desktop: ['startScript', 'tauri'],
     run_ios: ['scheme', 'Lemniscate'],
-    run_tests: ['testCommand', 'npm test'],
   };
   const commands = SERVER_FRAMES.filter((f) => f.frame.type !== 'welcome');
-  assert.ok(commands.length >= 6, `expected >= 6 command fixtures, got ${commands.length}`);
+  assert.ok(commands.length >= 5, `expected >= 5 command fixtures, got ${commands.length}`);
   for (const fixture of commands) {
     const message = lib.parseServerMessage(JSON.stringify(fixture.frame));
     assert.equal(message.kind, 'command', fixture._comment);

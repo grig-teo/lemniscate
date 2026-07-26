@@ -13,7 +13,6 @@
     "command-build-android.json",
     "command-run-desktop.json",
     "command-run-ios.json",
-    "command-run-tests.json",
     "close-4001.json"
   ]
 }

@@ -5,13 +5,14 @@
  * move and the mutation-wrapper unification).
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { waitFor } from '@testing-library/react';
+import { cleanup, waitFor } from '@testing-library/react';
 
 import {
   useArchiveTask,
   useCancelTask,
   useCreateTask,
   useGenerateProposals,
+  useHasActiveProcesses,
   useImproveTask,
   useRerunTask,
   useStartTask,
@@ -30,6 +31,7 @@ import {
 const task = { id: 't1', repositoryId: 'r1', title: 'Task', status: 'pending' };
 
 afterEach(() => {
+  cleanup(); // unmount renderHook output so polling observers don't leak across tests
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
@@ -186,6 +188,55 @@ describe('useGenerateProposals', () => {
       { url: '/api/repositories/r1/proposals', method: 'POST', body: undefined },
     ]);
     expect(invalidate).toHaveBeenCalledWith({ queryKey: ['tasks', 'r1'] });
+  });
+});
+
+describe('useHasActiveProcesses', () => {
+  const runningTask = {
+    id: 't1',
+    repositoryId: 'r1',
+    kind: 'prompt',
+    title: 'T',
+    status: 'running',
+    archivedAt: null,
+    llmTokensUsed: 0,
+    createdAt: '',
+    updatedAt: '',
+  };
+  const doneTask = { ...runningTask, id: 't2', status: 'done' };
+  const user = { id: 'u1', createdAt: '' };
+
+  it('is true when any task is running or awaiting review', async () => {
+    const queryClient = createTestQueryClient();
+    const { calls } = mockFetchSequence(
+      { json: { user } },
+      { json: { tasks: [doneTask, runningTask] } },
+    );
+
+    const { result } = renderHookWithClient(() => useHasActiveProcesses(), queryClient);
+    await waitFor(() => expect(result.current).toBe(true));
+
+    // tasks are only fetched once authenticated (me resolves first)
+    expect(calls.map((c) => c.url)).toEqual(['/api/auth/me', '/api/tasks']);
+  });
+
+  it('is false when only idle tasks exist', async () => {
+    const queryClient = createTestQueryClient();
+    mockFetchSequence({ json: { user } }, { json: { tasks: [doneTask] } });
+
+    const { result } = renderHookWithClient(() => useHasActiveProcesses(), queryClient);
+    await waitFor(() => expect(result.current).toBe(false));
+  });
+
+  it('does not fetch tasks and stays false when not authenticated', async () => {
+    const queryClient = createTestQueryClient();
+    const { calls } = mockFetchSequence({ status: 401, json: { error: 'unauthorized' } });
+
+    const { result } = renderHookWithClient(() => useHasActiveProcesses(), queryClient);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    expect(result.current).toBe(false);
+    expect(calls.map((c) => c.url)).toEqual(['/api/auth/me']);
   });
 });
 
