@@ -9,8 +9,11 @@ import {
   apiRequest,
   conflictOrThrow,
   createOrFindExistingPr,
+  fetchAllPages,
+  PR_LIST_PAGE_SIZE,
   prStateFromString,
   type ApiResponse,
+  type ListedPullRequest,
   type MergePullRequestResult,
   type OpenPullRequestInput,
   type OpenPullRequestResult,
@@ -208,12 +211,42 @@ async function gitlabPullRequestState(
   return prStateFromString(match.state);
 }
 
+const gitlabListedMrSchema = z.array(
+  z.object({
+    state: z.string(),
+    source_branch: z.string(),
+    target_branch: z.string(),
+  }),
+);
+
+// Batched per-repo listing for the state-sync job: the MR list payload
+// carries the state directly, so one call resolves every awaiting branch.
+async function gitlabListPullRequests(
+  connection: PrConnectionInput,
+  token: string,
+  repoFullName: string,
+): Promise<ListedPullRequest[]> {
+  const mrs = await fetchAllPages(async (page) => {
+    const url =
+      `${gitlabMrsUrl(connection, repoFullName)}?state=all` +
+      `&per_page=${PR_LIST_PAGE_SIZE}&page=${page}`;
+    const { body } = await gitlabGet(connection, token, url);
+    return gitlabListedMrSchema.parse(body);
+  });
+  return mrs.map((mr) => ({
+    headBranch: mr.source_branch,
+    baseBranch: mr.target_branch,
+    state: prStateFromString(mr.state),
+  }));
+}
+
 export function gitlabPrApi(connection: PrConnectionInput, token: string): ProviderPrApi {
   return {
     open: (input) => gitlabOpenPullRequest(connection, token, input),
     merge: (input) => gitlabMergePullRequest(connection, token, input),
     diff: (input) => gitlabPullRequestDiff(connection, token, input),
     state: (input) => gitlabPullRequestState(connection, token, input),
+    list: (repoFullName) => gitlabListPullRequests(connection, token, repoFullName),
     checks: (input) => gitlabChecksStatus(connection, token, input),
   };
 }

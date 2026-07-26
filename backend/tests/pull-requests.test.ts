@@ -5,6 +5,7 @@ import {
   assembleUnifiedDiff,
   createOrFindExistingPr,
   getPullRequestDiff,
+  listPullRequests,
   mergePullRequest,
   openPullRequest,
   prStateFromOpenMerged,
@@ -593,6 +594,86 @@ describe('pullRequestState', () => {
       ]);
     });
     expect(await pullRequestState(giteeConnection, gvRef)).toBe('closed');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Batched per-repo PR listing (pr-state-sync job)
+// ---------------------------------------------------------------------------
+
+describe('listPullRequests', () => {
+  const ghListUrl = 'https://api.github.com/repos/ivan/repo/pulls';
+
+  it('github: maps the state=all list, merged via merged_at', async () => {
+    const fetchMock = stubFetch((url) => {
+      expect(url).toBe(`${ghListUrl}?state=all&per_page=100&page=1`);
+      return mockResponse(200, [
+        { state: 'closed', merged_at: '2026-01-01T00:00:00Z', head: { ref: 'a' }, base: { ref: 'main' } },
+        { state: 'open', merged_at: null, head: { ref: 'b' }, base: { ref: 'main' } },
+        { state: 'closed', merged_at: null, head: { ref: 'c' }, base: { ref: 'dev' } },
+      ]);
+    });
+    expect(await listPullRequests(ghConnection, 'ivan/repo')).toEqual([
+      { headBranch: 'a', baseBranch: 'main', state: 'merged' },
+      { headBranch: 'b', baseBranch: 'main', state: 'open' },
+      { headBranch: 'c', baseBranch: 'dev', state: 'closed' },
+    ]);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('github: paginates while pages are full, capped at three pages', async () => {
+    const fullPage = Array.from({ length: 100 }, (_, i) => ({
+      state: 'open',
+      merged_at: null,
+      head: { ref: `b${i}` },
+      base: { ref: 'main' },
+    }));
+    const fetchMock = stubFetch(() => mockResponse(200, fullPage));
+    const pulls = await listPullRequests(ghConnection, 'ivan/repo');
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(pulls).toHaveLength(300);
+  });
+
+  it('gitlab: maps source/target branches and the MR state', async () => {
+    const fetchMock = stubFetch((url) => {
+      expect(url).toBe(
+        'https://gitlab.com/api/v4/projects/ivan%2Frepo/merge_requests' +
+          '?state=all&per_page=100&page=1',
+      );
+      return mockResponse(200, [
+        { state: 'merged', source_branch: 'a', target_branch: 'main' },
+        { state: 'opened', source_branch: 'b', target_branch: 'main' },
+      ]);
+    });
+    expect(await listPullRequests(gitlabConnection, 'ivan/repo')).toEqual([
+      { headBranch: 'a', baseBranch: 'main', state: 'merged' },
+      { headBranch: 'b', baseBranch: 'main', state: 'open' },
+    ]);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('gitverse: maps merged via merged_at on the list payload', async () => {
+    stubFetch((url) => {
+      expect(url).toBe(`${pullsUrl}?state=all&per_page=100&page=1`);
+      return mockResponse(200, [
+        { state: 'closed', merged_at: '2026-01-01T00:00:00Z', head: { ref: 'a' }, base: { ref: 'main' } },
+      ]);
+    });
+    expect(await listPullRequests(gvConnection, 'ivan/repo')).toEqual([
+      { headBranch: 'a', baseBranch: 'main', state: 'merged' },
+    ]);
+  });
+
+  it('gitee: maps head/base refs and the PR state', async () => {
+    stubFetch((url) => {
+      expect(url).toBe(`${giteePullsUrl}?state=all&per_page=100&page=1`);
+      return mockResponse(200, [
+        { state: 'closed', head: { ref: 'a' }, base: { ref: 'main' } },
+      ]);
+    });
+    expect(await listPullRequests(giteeConnection, 'ivan/repo')).toEqual([
+      { headBranch: 'a', baseBranch: 'main', state: 'closed' },
+    ]);
   });
 });
 
