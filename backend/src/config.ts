@@ -81,6 +81,12 @@ const envSchema = z.object({
   MINIO_ROOT_USER: optionalString,
   MINIO_ROOT_PASSWORD: optionalString,
   MINIO_BUCKET: z.string().min(1).default('lemniscate-library'),
+  // Device build artifacts (APKs in the 'device-artifacts' bucket) are
+  // transient: a bucket lifecycle rule expires them after this many days.
+  DEVICE_ARTIFACT_TTL_DAYS: z.coerce.number().int().positive().default(7),
+  // Max artifact uploads one device token may make per rolling 24h window
+  // (Redis counter); the (N+1)th upload is rejected with 429.
+  DEVICE_ARTIFACT_MAX_PER_DAY: z.coerce.number().int().positive().default(20),
 
   // --- Agent loop ---
   AGENT_WORKDIR: z.string().min(1).default('/tmp/lemniscate-repos'),

@@ -5,9 +5,13 @@
 // endpoint, unreachable from devices.
 
 import { randomUUID } from 'node:crypto';
-import { getMinioBucket } from './minio-client.js';
+import { config } from '../config.js';
+import { DEVICE_ARTIFACTS_BUCKET, getMinioBucket } from './minio-client.js';
+import { getRedisClient } from './redis.js';
 
-export const DEVICE_ARTIFACTS_BUCKET = 'device-artifacts';
+// Bucket name lives in minio-client.ts (the bucket-ensuring module); this
+// re-export keeps a single import site for artifact-store consumers.
+export { DEVICE_ARTIFACTS_BUCKET } from './minio-client.js';
 
 /** Filesystem/hostile characters out, path traversal stripped to basename. */
 export function safeArtifactFilename(name: string): string {
@@ -19,6 +23,33 @@ export function safeArtifactFilename(name: string): string {
 /** Object key: scoped per device, unique per upload. */
 export function artifactKeyFor(deviceId: string, filename: string, uniqueId: string): string {
   return `${deviceId}/${uniqueId}-${safeArtifactFilename(filename)}`;
+}
+
+const ARTIFACT_QUOTA_WINDOW_SECONDS = 24 * 60 * 60;
+
+/** Redis key for the device's rolling 24h upload counter. */
+export function artifactQuotaKey(deviceId: string): string {
+  return `artifact-quota:${deviceId}`;
+}
+
+/** Whether the `count`-th upload in the window is still within the daily cap. */
+export function artifactQuotaAllowed(count: number, maxPerDay: number): boolean {
+  return count <= maxPerDay;
+}
+
+// Sliding daily cap: INCR the per-device counter, starting the 24h window on
+// the first upload. Fails OPEN on Redis outage — availability of uploads
+// beats quota strictness (same trade-off as the best-effort lifecycle rule).
+export async function checkArtifactQuota(deviceId: string): Promise<boolean> {
+  const redis = getRedisClient();
+  const key = artifactQuotaKey(deviceId);
+  try {
+    const count = await redis.incr(key);
+    if (count === 1) await redis.expire(key, ARTIFACT_QUOTA_WINDOW_SECONDS);
+    return artifactQuotaAllowed(count, config.DEVICE_ARTIFACT_MAX_PER_DAY);
+  } catch {
+    return true;
+  }
 }
 
 /** Owning device id (the first key segment, matching artifactKeyFor); null when malformed. */
