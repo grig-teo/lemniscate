@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { Hammer, Loader2, Paperclip, Save } from 'lucide-react';
+import { Hammer, Loader2, Paperclip, Save, Sparkles } from 'lucide-react';
 
 import { api } from '@/lib/api';
 import {
@@ -9,7 +9,7 @@ import {
   taskMcpSelections,
   taskSkillSelections,
 } from '@/lib/proposal-detail';
-import { useSkills, useStartTask, useTask, type Task, type TaskImage } from '@/lib/hooks';
+import { useSkills, useImproveTask, useStartTask, useTask, type Task, type TaskImage } from '@/lib/hooks';
 import { useLibraryAttachments } from '@/lib/library-attachments';
 import { IMAGE_ACCEPT, MAX_IMAGES } from '@/lib/prompt-composer';
 import { cn } from '@/lib/utils';
@@ -67,18 +67,55 @@ function ToggleButton({
   );
 }
 
-/** Segmented Preview/Edit toggle for the prompt field. */
+/** Right-aligned Improve action: the LLM rewrites the prompt into the
+ *  structured document shape used for generated proposals. */
+function ImproveButton({
+  disabled,
+  pending,
+  onClick,
+}: {
+  disabled: boolean;
+  pending: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled || pending}
+      aria-label="Improve description"
+      title="Improve the description with the LLM, structured like a generated proposal"
+      className={cn(
+        'ml-auto flex items-center gap-1 rounded px-2 py-0.5 text-[11px] text-muted-foreground hover:text-foreground',
+        'disabled:cursor-not-allowed disabled:opacity-50',
+      )}
+    >
+      {pending ? (
+        <Loader2 className="h-3 w-3 animate-spin" aria-hidden />
+      ) : (
+        <Sparkles className="h-3 w-3" aria-hidden />
+      )}
+      Improve
+    </button>
+  );
+}
+
+/** Segmented Preview/Edit toggle for the prompt field, with an optional
+ *  right-aligned action on the same line. */
 function ViewToggle({
   preview,
   onChange,
+  action,
 }: {
   preview: boolean;
   onChange: (preview: boolean) => void;
+  action?: React.ReactNode;
 }) {
   return (
     <div className="flex shrink-0 items-center gap-1 border-b px-2 py-1">
       <ToggleButton active={preview} onClick={() => onChange(true)} label="Preview" />
       <ToggleButton active={!preview} onClick={() => onChange(false)} label="Edit" />
+      {action}
     </div>
   );
 }
@@ -208,6 +245,7 @@ function TaskEditorInner({
 }) {
   const startTask = useStartTask();
   const patchTask = usePatchTask();
+  const improveTask = useImproveTask();
   const [title, setTitle] = React.useState(task.title);
   const [prompt, setPrompt] = React.useState(task.prompt ?? '');
   const [preview, setPreview] = React.useState(true);
@@ -243,7 +281,19 @@ function TaskEditorInner({
     patchTask.mutate({ id: task.id, body: editBody() }, { onSuccess: () => setSaved(true) });
   };
   const start = () => startTask.mutate({ id: task.id, body: editBody() });
-  const actionError = startTask.error ?? patchTask.error;
+  // Improve applies the LLM-rewritten description to the editor only —
+  // Save/Start persists it, exactly like a hand edit.
+  const improve = () =>
+    improveTask.mutate(
+      { id: task.id, body: { title: title.trim(), prompt: prompt.trim() } },
+      {
+        onSuccess: (res) => {
+          setPrompt(res.prompt);
+          setSaved(false);
+        },
+      },
+    );
+  const actionError = startTask.error ?? patchTask.error ?? improveTask.error;
 
   return (
     <div className="flex h-full min-h-0 flex-1 flex-col gap-3 overflow-hidden p-4">
@@ -273,7 +323,17 @@ function TaskEditorInner({
         className="flex h-1/2 shrink-0 flex-col overflow-hidden rounded-lg border bg-background shadow-sm focus-within:ring-1 focus-within:ring-ring"
       >
         <ImageThumbnails images={images} onRemove={removeImage} />
-        <ViewToggle preview={preview} onChange={setPreview} />
+        <ViewToggle
+          preview={preview}
+          onChange={setPreview}
+          action={
+            <ImproveButton
+              disabled={!prompt.trim()}
+              pending={improveTask.isPending}
+              onClick={improve}
+            />
+          }
+        />
         {preview ? (
           <div className="min-h-0 flex-1 overflow-y-auto px-3 py-2">
             <PromptPreview prompt={prompt} />
@@ -337,7 +397,9 @@ function TaskEditorInner({
  * Detail view for a pending task (proposal or saved-for-later prompt): the
  * full task is fetched, then shown as an editable title + prompt with a
  * markdown/image attach row and the library attachments (skills, MCP
- * servers, per-folder AGENTS.md). SAVE persists edits without starting;
+ * servers, per-folder AGENTS.md). IMPROVE (next to Preview/Edit) rewrites the
+ * description with the LLM in the structured proposal shape; SAVE persists
+ * edits without starting;
  * START posts them to POST /api/tasks/:id/start and the console view takes
  * over once the task flips to queued.
  */

@@ -9,6 +9,7 @@ import { prisma } from '../lib/prisma.js';
 import { detectRunTargets, type RunTarget } from '../lib/run-targets.js';
 import { attachmentsData, taskImagesSchema, taskThinkingLevelSchema } from '../lib/task-attachments.js';
 import { publishTaskEvent, serializeTaskEvent } from '../lib/task-events.js';
+import { requestImprovedPrompt, resolveImproveLlmConfig } from '../lib/task-improve.js';
 import {
   findUnknownMcpServerSlugs,
   findUnknownSkillSlugs,
@@ -106,6 +107,16 @@ export const patchBodySchema = z
   .merge(attachmentFieldsSchema)
   .strict();
 export type PatchBody = z.infer<typeof patchBodySchema>;
+
+// POST /tasks/:id/improve — the Improve button sends the editor's current
+// title + prompt; the improved description is returned, never persisted.
+export const improveBodySchema = z
+  .object({
+    title: z.string().min(1).max(200).optional(),
+    prompt: promptSchema,
+  })
+  .strict();
+export type ImproveBody = z.infer<typeof improveBodySchema>;
 
 const idParamsSchema = z.object({ id: z.string().min(1) });
 
@@ -404,6 +415,47 @@ async function patchTask(request: FastifyRequest, reply: FastifyReply) {
   return { task: updated };
 }
 
+// Improve a pending task's description with the LLM (same structured shape
+// as generated proposals). Same eligibility as start/PATCH; the improved
+// text is returned to the editor without touching the stored task.
+async function improveTask(request: FastifyRequest, reply: FastifyReply) {
+  const userId = authenticatedUserId(request);
+  const params = parseOrReply(idParamsSchema, request.params, reply, 'Invalid task id');
+  if (params === null) return;
+  const body = parseOrReply(improveBodySchema, request.body, reply, 'Invalid request body', {
+    includeIssues: true,
+  });
+  if (body === null) return;
+  const task = await prisma.task.findFirst({
+    where: ownedTaskWhere(userId, params.id),
+    select: {
+      id: true,
+      kind: true,
+      status: true,
+      llmConfigId: true,
+      repository: { select: { llmConfigId: true } },
+    },
+  });
+  if (!task) {
+    return reply.code(404).send({ error: 'Task not found' });
+  }
+  const blocker = startBlocker(task);
+  if (blocker) {
+    return reply.code(400).send({ error: blocker });
+  }
+  const llmConfig = await resolveImproveLlmConfig(userId, task);
+  if (!llmConfig) {
+    return reply.code(400).send({ error: 'No LLM config — set one in Settings first' });
+  }
+  try {
+    const prompt = await requestImprovedPrompt(llmConfig, body);
+    return { prompt };
+  } catch (err) {
+    request.log.warn({ err }, 'task prompt improvement failed');
+    return reply.code(502).send({ error: 'Prompt improvement failed — try again' });
+  }
+}
+
 // Rerun eligibility for POST /tasks/:id/rerun: failed tasks (including
 // user-cancelled ones, which are stored as failed) and closed tasks (PR
 // closed without merge) can be run again.
@@ -615,6 +667,7 @@ const tasksRoutes: FastifyPluginAsync = async (app) => {
   app.get('/tasks/:id/run-targets', getTaskRunTargets);
   app.post('/tasks/:id/start', startTask);
   app.patch('/tasks/:id', patchTask);
+  app.post('/tasks/:id/improve', improveTask);
   app.post('/tasks/:id/rerun', rerunTask);
   app.post('/tasks/:id/cancel', cancelTask);
   app.post('/tasks/:id/archive', archiveTask);

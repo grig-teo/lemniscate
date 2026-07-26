@@ -297,15 +297,23 @@ const llmProposalSchema = z.object({
 export const llmProposalsSchema = z.array(llmProposalSchema).max(5);
 export type LlmProposals = z.infer<typeof llmProposalsSchema>;
 
+/** Structured sections of the proposal task document — the single home for
+ *  the shape shared by proposal generation and the task Improve button. */
+export function proposalDocumentSectionLines(): string[] {
+  return [
+    '## 1. Non-Technical Summary — Problem, Why it matters, Risk of not addressing it, Expected benefit (quantify if possible).',
+    '## 2. Technical Details — Root cause/current state (reference specific files and functions), Proposed solution, Tech stack/tools required, numbered Implementation steps, Dependencies, Risks/trade-offs, Testing strategy.',
+    '## 3. Success Metrics — how we will know the improvement worked.',
+  ];
+}
+
 /** Shared JSON contract lines used by both proposal generation prompts. */
 export function proposalJsonContractLines(): string[] {
   return [
     '[{"title": string, "category": string, "priority": "critical"|"high"|"medium"|"low", "effort": "small"|"medium"|"large", "prompt": string}]',
     '"title" is a short imperative summary; "category" is exactly one of the categories above; "effort" is small (hours), medium (days), or large (weeks).',
     '"prompt" is the full structured proposal document in markdown, with exactly these sections:',
-    '## 1. Non-Technical Summary — Problem, Why it matters, Risk of not addressing it, Expected benefit (quantify if possible).',
-    '## 2. Technical Details — Root cause/current state (reference specific files and functions), Proposed solution, Tech stack/tools required, numbered Implementation steps, Dependencies, Risks/trade-offs, Testing strategy.',
-    '## 3. Success Metrics — how we will know the improvement worked.',
+    ...proposalDocumentSectionLines(),
     'Ground every claim in what you actually observe in the code — no generic advice. End the document with a one-line directive the implementing coding agent can execute directly.',
   ];
 }
