@@ -7,53 +7,51 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-lemniscate}
       POSTGRES_DB: ${POSTGRES_DB:-lemniscate}
     volumes:
-      - postgres-data:/var/lib/postgresql/data
+      - pgdata:/var/lib/postgresql/data
     ports:
-      - "127.0.0.1:5432:5432"
+      - "${POSTGRES_BIND:-127.0.0.1:5432}:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 10s
+      interval: 5s
+      timeout: 3s
+      retries: 10
 
   redis:
     image: redis:7-alpine
     restart: unless-stopped
     volumes:
-      - redis-data:/data
+      - redisdata:/data
     ports:
-      - "127.0.0.1:6379:6379"
+      - "${REDIS_BIND:-127.0.0.1:6379}:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 5s
+      interval: 5s
+      timeout: 3s
+      retries: 10
 
   minio:
-    image: minio/minio:latest
+    # Pinned release (never :latest)
+    image: minio/minio:RELEASE.2025-09-07T16-13-09Z
     restart: unless-stopped
-    command: server /data --console-address ":9001"
+    command: server /data
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-lemniscate}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-lemniscate-minio}
     volumes:
-      - minio-data:/data
+      - miniodata:/data
     ports:
       - "${MINIO_BIND:-127.0.0.1:9000}:9000"
-      - "${MINIO_CONSOLE_BIND:-127.0.0.1:9001}:9001"
     healthcheck:
-      test: ["CMD", "mc", "ready", "local"]
+      test: ["CMD-SHELL", "curl -f http://localhost:9000/minio/health/live || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 5
-      start_period: 10s
 
   backend:
     build: ./backend
     restart: unless-stopped
-    env_file: ./backend/.env
+    env_file:
+      - ./backend/.env
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:-lemniscate}:${POSTGRES_PASSWORD:-lemniscate}@postgres:5432/${POSTGRES_DB:-lemniscate}
       REDIS_URL: redis://redis:6379
@@ -61,6 +59,8 @@ services:
       MINIO_PORT: "9000"
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-lemniscate}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-lemniscate-minio}
+    ports:
+      - "3000:3000"
     depends_on:
       postgres:
         condition: service_healthy
@@ -68,12 +68,9 @@ services:
         condition: service_healthy
       minio:
         condition: service_started
-    ports:
-      - "127.0.0.1:3000:3000"
     healthcheck:
-      # curl is installed in the backend runtime image (see backend/Dockerfile).
-      # /health/ready fails when Postgres or Redis is unreachable.
-      test: ["CMD-SHELL", "curl -fsS http://localhost:3000/health/ready || exit 1"]
+      # curl is installed in the backend runtime image (see backend/Dockerfile)
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health/ready"]
       interval: 10s
       timeout: 5s
       retries: 3
@@ -82,8 +79,9 @@ services:
   worker:
     build: ./backend
     restart: unless-stopped
-    command: ["node", "dist/worker.js"]
-    env_file: ./backend/.env
+    command: node dist/worker.js
+    env_file:
+      - ./backend/.env
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:-lemniscate}:${POSTGRES_PASSWORD:-lemniscate}@postgres:5432/${POSTGRES_DB:-lemniscate}
       REDIS_URL: redis://redis:6379
@@ -92,6 +90,10 @@ services:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-lemniscate}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-lemniscate-minio}
       WORKER_HEALTH_PORT: "3100"
+    ports:
+      - "${WORKER_HEALTH_BIND:-127.0.0.1:3100}:3100"
+    volumes:
+      - agent-workdir:/tmp/lemniscate-repos
     depends_on:
       postgres:
         condition: service_healthy
@@ -99,31 +101,23 @@ services:
         condition: service_healthy
       minio:
         condition: service_started
-    volumes:
-      - agent-workdir:/tmp/lemniscate-repos
     healthcheck:
-      # Worker liveness endpoint (same image as backend, so curl is present).
-      # Port 3100 is only reached inside the compose network — no host publish.
-      test: ["CMD-SHELL", "curl -fsS http://localhost:3100/health || exit 1"]
+      test: ["CMD", "curl", "-f", "http://localhost:3100/health"]
       interval: 10s
       timeout: 5s
       retries: 3
-      start_period: 30s
+      start_period: 15s
 
   frontend:
-    build:
-      context: ./frontend
-      args:
-        VITE_BASE_PATH: ${VITE_BASE_PATH:-/}
-        VITE_API_URL: ${VITE_API_URL:-}
+    build: ./frontend
     restart: unless-stopped
+    ports:
+      - "8080:80"
     depends_on:
       - backend
-    ports:
-      - "127.0.0.1:8080:80"
 
 volumes:
-  postgres-data:
-  redis-data:
-  minio-data:
+  pgdata:
+  redisdata:
+  miniodata:
   agent-workdir:
