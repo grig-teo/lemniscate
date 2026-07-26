@@ -260,6 +260,28 @@ async function finishReview(task: TaskWithRepo, review: PrReview): Promise<void>
   await enqueueMergeGate(task.id, 0, 0);
 }
 
+// Shared tail of both executors' review flows (single home — it used to be
+// duplicated verbatim between the internal and hermes paths): while the
+// reviewer keeps requesting changes and the attempt cap allows it, run one
+// fix iteration and queue a re-review; otherwise hand the PR to the merge
+// gate / manual review.
+async function continueOrFinishReview(
+  task: TaskWithRepo,
+  rt: LlmRuntime,
+  review: PrReview,
+  attempt: number,
+  runFixIteration: () => Promise<void>,
+): Promise<void> {
+  if (review.verdict === 'changes_requested' && attempt < MAX_REVIEW_FIX_ATTEMPTS) {
+    await runFixIteration();
+    await persistTokenUsage(task.id, rt.usedTokens, tokenSplit(rt));
+    await enqueueReviewTask(task.id, attempt + 1);
+    await logEvent(task.id, 'queued re-review of the updated pull request');
+    return;
+  }
+  await finishReview(task, review);
+}
+
 // Returns the runtime so the caller can persist cumulative token usage.
 async function executeReviewTask(
   task: TaskWithRepo,
@@ -284,14 +306,9 @@ async function executeReviewTask(
   await logEvent(task.id, `reviewing pull request (attempt ${attempt + 1})`);
   const review = await requestReview(rt, task, diff);
   await logReview(task.id, review, rt.usedTokens);
-  if (review.verdict === 'changes_requested' && attempt < MAX_REVIEW_FIX_ATTEMPTS) {
-    await runReviewFixIteration(task, rt, review, headBranch, workdir, cloneUrl, secrets, gitAuth);
-    await persistTokenUsage(task.id, rt.usedTokens, tokenSplit(rt));
-    await enqueueReviewTask(task.id, attempt + 1);
-    await logEvent(task.id, 'queued re-review of the updated pull request');
-    return rt;
-  }
-  await finishReview(task, review);
+  await continueOrFinishReview(task, rt, review, attempt, () =>
+    runReviewFixIteration(task, rt, review, headBranch, workdir, cloneUrl, secrets, gitAuth),
+  );
   return rt;
 }
 
@@ -326,14 +343,9 @@ async function executeHermesReview(
     review = await requestReview(rt, task, await fetchReviewDiff(task, headBranch));
   }
   await logReview(task.id, review, rt.usedTokens);
-  if (review.verdict === 'changes_requested' && attempt < MAX_REVIEW_FIX_ATTEMPTS) {
-    await runHermesFixIteration(task, rt, review, headBranch, workdir, secrets, auth);
-    await persistTokenUsage(task.id, rt.usedTokens, tokenSplit(rt));
-    await enqueueReviewTask(task.id, attempt + 1);
-    await logEvent(task.id, 'queued re-review of the updated pull request');
-    return rt;
-  }
-  await finishReview(task, review);
+  await continueOrFinishReview(task, rt, review, attempt, () =>
+    runHermesFixIteration(task, rt, review, headBranch, workdir, secrets, auth),
+  );
   return rt;
 }
 

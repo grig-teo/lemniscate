@@ -60,19 +60,27 @@ function hermesLlm(rt: LlmRuntime) {
   };
 }
 
+// Everything one merge-gate action needs: the loaded task, its runtime, and
+// the git/enqueue parameters shared by the CI-fix and conflict-resolution
+// paths (previously threaded as 7-10 positional parameters per function).
+interface GateContext {
+  task: TaskWithRepo;
+  rt: LlmRuntime;
+  headBranch: string;
+  attempt: number;
+  ciFixes: number;
+  workdir: string;
+  cloneUrl: string;
+  secrets: string[];
+  auth: GitAuth;
+}
+
 // ---------------------------------------------------------------------------
 // CI fix (hermes)
 // ---------------------------------------------------------------------------
 
-async function runCiFixViaHermes(
-  task: TaskWithRepo,
-  rt: LlmRuntime,
-  headBranch: string,
-  workdir: string,
-  cloneUrl: string,
-  secrets: string[],
-  auth: GitAuth,
-): Promise<void> {
+async function runCiFixViaHermes(ctx: GateContext): Promise<void> {
+  const { task, rt, headBranch, workdir, cloneUrl, secrets, auth } = ctx;
   await checkoutTaskBranch(
     workdir,
     cloneUrl,
@@ -129,12 +137,10 @@ async function mergeHeadBranch(workdir: string): Promise<string[]> {
 }
 
 async function resolveConflictedFile(
-  task: TaskWithRepo,
-  rt: LlmRuntime,
-  headBranch: string,
-  workdir: string,
+  ctx: GateContext,
   relPath: string,
 ): Promise<void> {
+  const { task, rt, headBranch, workdir } = ctx;
   const rel = sanitizeRelativePath(relPath);
   const abs = path.join(workdir, rel);
   const conflictedContent = await fs.readFile(abs, 'utf8');
@@ -163,15 +169,8 @@ async function resolveConflictedFile(
 // of the base branch, let the LLM rewrite each conflicted file, commit, and
 // push the merge commit to the PR head branch (a fast-forward there, since
 // the old head is the merge commit's second parent).
-async function resolveMergeConflictsOnce(
-  task: TaskWithRepo,
-  rt: LlmRuntime,
-  headBranch: string,
-  workdir: string,
-  cloneUrl: string,
-  secrets: string[],
-  auth: GitAuth,
-): Promise<void> {
+async function resolveMergeConflictsOnce(ctx: GateContext): Promise<void> {
+  const { task, headBranch, workdir, cloneUrl, secrets, auth } = ctx;
   // Full clone: a shallow one lacks the common ancestor a real merge needs.
   await cloneRepository(workdir, cloneUrl, task.repository.defaultBranch, secrets, {
     shallow: false,
@@ -180,7 +179,7 @@ async function resolveMergeConflictsOnce(
   await git(['fetch', 'origin', headBranch], { cwd: workdir, secrets, auth });
   const conflicted = await mergeHeadBranch(workdir);
   for (const rel of conflicted) {
-    await resolveConflictedFile(task, rt, headBranch, workdir, rel);
+    await resolveConflictedFile(ctx, rel);
   }
   if (conflicted.length > 0) {
     await git(['commit', '-m', 'resolve merge conflicts'], { cwd: workdir });
@@ -192,15 +191,8 @@ async function resolveMergeConflictsOnce(
 
 // Hermes variant: the agent rewrites every conflicted file inside the merge
 // checkout; staging, marker verification, commit, and push stay external.
-async function resolveMergeConflictsViaHermes(
-  task: TaskWithRepo,
-  rt: LlmRuntime,
-  headBranch: string,
-  workdir: string,
-  cloneUrl: string,
-  secrets: string[],
-  auth: GitAuth,
-): Promise<void> {
+async function resolveMergeConflictsViaHermes(ctx: GateContext): Promise<void> {
+  const { task, rt, headBranch, workdir, cloneUrl, secrets, auth } = ctx;
   // Full clone: a shallow one lacks the common ancestor a real merge needs.
   await cloneRepository(workdir, cloneUrl, task.repository.defaultBranch, secrets, {
     shallow: false,
@@ -262,17 +254,8 @@ async function maybeQueueServiceDeploy(task: TaskWithRepo): Promise<void> {
 // One merge attempt. On conflict the branch is resolved and pushed, then the
 // gate re-enqueues — CI must pass on the resolution commit before the next
 // merge attempt (this is how a broken resolution never reaches main).
-async function mergeWithConflictResolution(
-  task: TaskWithRepo,
-  rt: LlmRuntime,
-  headBranch: string,
-  attempt: number,
-  ciFixes: number,
-  workdir: string,
-  cloneUrl: string,
-  secrets: string[],
-  auth: GitAuth,
-): Promise<void> {
+async function mergeWithConflictResolution(ctx: GateContext): Promise<void> {
+  const { task, rt, headBranch, attempt, ciFixes } = ctx;
   const result = await mergePullRequest(task.repository.connection, {
     repoFullName: task.repository.fullName,
     headBranch,
@@ -296,9 +279,9 @@ async function mergeWithConflictResolution(
     `merge conflict — resolving with the ${config.AGENT_EXECUTOR === 'hermes' ? 'hermes agent' : 'LLM'}`,
   );
   if (config.AGENT_EXECUTOR === 'hermes') {
-    await resolveMergeConflictsViaHermes(task, rt, headBranch, workdir, cloneUrl, secrets, auth);
+    await resolveMergeConflictsViaHermes(ctx);
   } else {
-    await resolveMergeConflictsOnce(task, rt, headBranch, workdir, cloneUrl, secrets, auth);
+    await resolveMergeConflictsOnce(ctx);
   }
   await persistTokenUsage(task.id, rt.usedTokens, tokenSplit(rt));
   await logEvent(task.id, 'pushed conflict resolution; waiting for CI before the next merge attempt');
@@ -326,6 +309,51 @@ export function mergeGateAction(
   return 'fix-ci';
 }
 
+// Why the gate stops at manual, for the task log.
+function manualGateMessage(checks: PrChecksStatus, ciFixes: number): string {
+  if (checks.state === 'pending') {
+    return 'CI checks still running after ~30 minutes — awaiting manual merge';
+  }
+  if (ciFixes >= MAX_CI_FIX_ATTEMPTS) {
+    return `CI still failing after ${MAX_CI_FIX_ATTEMPTS} fix attempt(s) — awaiting manual fix`;
+  }
+  return 'CI checks are failing — awaiting manual fix';
+}
+
+// fix-ci: hermes fixes the branch, then the gate re-enqueues — CI must pass
+// on the fix commit before the next merge attempt.
+async function runCiFixAndRequeue(ctx: GateContext): Promise<void> {
+  const { task, rt } = ctx;
+  await logEvent(
+    task.id,
+    `CI checks are failing — fixing with the hermes agent (attempt ${ctx.ciFixes + 1}/${MAX_CI_FIX_ATTEMPTS})`,
+  );
+  await runCiFixViaHermes(ctx);
+  await persistTokenUsage(task.id, rt.usedTokens, tokenSplit(rt));
+  await enqueueMergeGate(task.id, ctx.attempt + 1, ctx.ciFixes + 1, MERGE_GATE_DELAY_MS);
+}
+
+// Dispatches the decided action. Returns false when the gate is done for
+// this job (wait/manual) and no runtime needs preparing.
+async function dispatchGateAction(
+  action: MergeGateAction,
+  checks: PrChecksStatus,
+  taskId: string,
+  attempt: number,
+  ciFixes: number,
+): Promise<boolean> {
+  if (action === 'wait') {
+    await logEvent(taskId, `CI checks are running — re-checking in ${MERGE_GATE_DELAY_MS / 1000}s`);
+    await enqueueMergeGate(taskId, attempt + 1, ciFixes, MERGE_GATE_DELAY_MS);
+    return false;
+  }
+  if (action === 'manual') {
+    await logEvent(taskId, manualGateMessage(checks, ciFixes));
+    return false;
+  }
+  return true;
+}
+
 export async function mergeGateTask(taskId: string, attempt = 0, ciFixes = 0): Promise<void> {
   const task = await loadTaskWithRepo(taskId);
   if (!task) {
@@ -348,48 +376,21 @@ export async function mergeGateTask(taskId: string, attempt = 0, ciFixes = 0): P
       baseBranch: task.repository.defaultBranch,
     });
     const action = mergeGateAction(checks, attempt, ciFixes, config.AGENT_EXECUTOR);
-    if (action === 'wait') {
-      await logEvent(task.id, `CI checks are running — re-checking in ${MERGE_GATE_DELAY_MS / 1000}s`);
-      await enqueueMergeGate(taskId, attempt + 1, ciFixes, MERGE_GATE_DELAY_MS);
-      return;
-    }
-    if (action === 'manual') {
-      await logEvent(
-        task.id,
-        checks.state === 'pending'
-          ? 'CI checks still running after ~30 minutes — awaiting manual merge'
-          : ciFixes >= MAX_CI_FIX_ATTEMPTS
-            ? `CI still failing after ${MAX_CI_FIX_ATTEMPTS} fix attempt(s) — awaiting manual fix`
-            : 'CI checks are failing — awaiting manual fix',
-      );
-      return;
-    }
+    if (!(await dispatchGateAction(action, checks, taskId, attempt, ciFixes))) return;
     if (!checks.supported) {
       await logEvent(task.id, 'provider check statuses unavailable; merging on the review verdict alone');
     }
     const prepared = await prepareAgentRuntime(task, task.repository, secrets, task.llmTokensUsed);
     rt = prepared.rt;
+    const ctx: GateContext = {
+      task, rt, headBranch, attempt, ciFixes, workdir,
+      cloneUrl: prepared.cloneUrl, secrets, auth: prepared.gitAuth,
+    };
     if (action === 'fix-ci') {
-      await logEvent(
-        task.id,
-        `CI checks are failing — fixing with the hermes agent (attempt ${ciFixes + 1}/${MAX_CI_FIX_ATTEMPTS})`,
-      );
-      await runCiFixViaHermes(task, rt, headBranch, workdir, prepared.cloneUrl, secrets, prepared.gitAuth);
-      await persistTokenUsage(task.id, rt.usedTokens, tokenSplit(rt));
-      await enqueueMergeGate(taskId, attempt + 1, ciFixes + 1, MERGE_GATE_DELAY_MS);
+      await runCiFixAndRequeue(ctx);
       return;
     }
-    await mergeWithConflictResolution(
-      task,
-      rt,
-      headBranch,
-      attempt,
-      ciFixes,
-      workdir,
-      prepared.cloneUrl,
-      secrets,
-      prepared.gitAuth,
-    );
+    await mergeWithConflictResolution(ctx);
   } catch (err) {
     // Rethrow so BullMQ retries with backoff; after the final attempt the
     // task stays awaiting_review for pr-state-sync's bounded recovery.
