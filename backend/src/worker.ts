@@ -11,12 +11,15 @@ import {
   AGENT_QUEUE_NAME,
   enqueueProposalAutoRuns,
   enqueueProposalTopUps,
+  getAgentTasksQueue,
   recoverInterruptedTasks,
   recoverQueuedTasks,
   registerProposalAutoRunSchedule,
   registerProposalTopUpSchedule,
 } from './lib/proposal-scheduler.js';
 import { registerPrStateSyncSchedule, syncMergedPullRequests } from './lib/pr-state-sync.js';
+import { jobFailureFromError, logJobFailure } from './lib/job-failure-log.js';
+import { startWorkerHealthServer } from './lib/worker-health.js';
 
 const runTaskDataSchema = z.object({ taskId: z.string().min(1) });
 const reviewPrDataSchema = z.object({
@@ -98,8 +101,19 @@ const worker = new Worker(
   { connection, concurrency: config.AGENT_WORKER_CONCURRENCY },
 );
 
+function jobTaskId(data: unknown): string | undefined {
+  if (typeof data !== 'object' || data === null) return undefined;
+  const { taskId } = data as { taskId?: unknown };
+  return typeof taskId === 'string' ? taskId : undefined;
+}
+
 worker.on('failed', (job, err) => {
-  console.error(`job ${job?.id} (${job?.name}) failed:`, err);
+  logJobFailure(
+    jobFailureFromError(job?.name ?? 'unknown', err, {
+      jobId: job?.id,
+      taskId: jobTaskId(job?.data),
+    }),
+  );
 });
 
 await worker.waitUntilReady();
@@ -118,8 +132,14 @@ await recoverQueuedTasks();
 // their persisted workdirs let the re-runs resume where they stopped.
 await recoverInterruptedTasks();
 
+// Liveness endpoint: compose's healthcheck probes this; the queue counts it
+// serves (waiting/active/failed) make a stalled pipeline visible.
+const healthServer = startWorkerHealthServer(getAgentTasksQueue(), config.WORKER_HEALTH_PORT);
+console.log(`worker health endpoint listening on :${config.WORKER_HEALTH_PORT}`);
+
 for (const signal of ['SIGINT', 'SIGTERM'] as const) {
   process.once(signal, () => {
+    healthServer.close();
     void worker.close().then(
       () => connection.quit(),
       () => connection.disconnect(),

@@ -64,6 +64,15 @@ services:
       MINIO_BUCKET: ${MINIO_BUCKET:-lemniscate-library}
     ports:
       - "${BACKEND_BIND:-127.0.0.1:3000}:3000"
+    healthcheck:
+      # Readiness, not just liveness: 503s while Postgres or Redis is down.
+      # Informational only — restart policy is unchanged on purpose.
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:3000/health/ready || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      # Migrations run before the API starts listening.
+      start_period: 40s
     depends_on:
       postgres:
         condition: service_healthy
@@ -92,6 +101,14 @@ services:
       # so the recovered task resumes instead of restarting. Must match
       # AGENT_WORKDIR in backend/.env.
       - agentworkdir:/tmp/lemniscate-repos
+    healthcheck:
+      # Worker liveness endpoint (dist/worker.js, WORKER_HEALTH_PORT): 503s
+      # when the queue is unreadable; a dead worker fails the probe outright.
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:3100/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
     depends_on:
       postgres:
         condition: service_healthy

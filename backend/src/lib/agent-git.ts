@@ -7,6 +7,7 @@ import type { LlmChange } from './agent-prompts.js';
 import { generateCommitMessage } from './agent-prompts.js';
 import type { LlmRuntime } from './agent-runtime.js';
 import { prisma } from './prisma.js';
+import { errorKind, logJobFailure } from './job-failure-log.js';
 import { publishTaskEvent } from './task-events.js';
 import { errorMessage, redactSecrets } from './utils.js';
 
@@ -215,8 +216,9 @@ export function explainGitFailure(message: string): string {
   return message;
 }
 
-// Logs a job failure to the console and the task's event stream (both
-// best-effort scrubbed). Returns the sanitized message for status updates.
+// Logs a job failure as one structured JSON line (and to the task's event
+// stream, both best-effort scrubbed). Returns the sanitized message for
+// status updates.
 export async function recordJobFailure(
   jobKind: string,
   taskId: string,
@@ -224,7 +226,7 @@ export async function recordJobFailure(
   secrets: string[],
 ): Promise<string> {
   const message = explainGitFailure(redactSecrets(errorMessage(err), secrets)).slice(0, 1_000);
-  console.error(`${jobKind} ${taskId} failed:`, message);
+  logJobFailure({ jobName: jobKind, taskId, errorKind: errorKind(err), message });
   await logEvent(taskId, `error: ${message}`).catch(() => {});
   return message;
 }

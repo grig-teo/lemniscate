@@ -5,6 +5,7 @@ import rateLimit from '@fastify/rate-limit';
 import websocket from '@fastify/websocket';
 import { config } from './config.js';
 import apiRoutes from './routes/index.js';
+import healthRoutes from './routes/health.js';
 import llmConfigRoutes from './routes/llm-configs.js';
 import skillsRoutes from './routes/skills.js';
 import mcpServersRoutes from './routes/mcp-servers.js';
@@ -36,6 +37,8 @@ async function registerRoutes(app: FastifyInstance) {
   // tasks.ts declares its routes as `/tasks...` (same convention as
   // repositories.ts), so it mounts under /api, not /api/tasks.
   await app.register(tasksRoutes, { prefix: '/api' });
+  // Liveness (/health) + readiness (/health/ready), unprefixed.
+  await app.register(healthRoutes);
 }
 
 export async function buildApp(): Promise<FastifyInstance> {
@@ -50,6 +53,5 @@ export async function buildApp(): Promise<FastifyInstance> {
   });
   await registerPlugins(app);
   await registerRoutes(app);
-  app.get('/health', async () => ({ ok: true }));
   return app;
 }
