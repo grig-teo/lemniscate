@@ -123,6 +123,12 @@ by hand:
 7. Watch the live console (SSE) and the proposed diff.
 8. Approve/let the worker finish, then confirm the branch and pull request
    appear on the git host.
+9. Confirm the TopNav bell shows an unread "PR opened" notification within
+   30s of the PR being created, and that clicking it opens the PR; merge the
+   PR on the git host and confirm a "PR merged" notification appears within
+   one pr-state-sync interval (5 min). Optionally set a webhook URL via
+   `PUT /api/notifications/settings` and verify the HMAC-signed POST
+   (`x-lemniscate-signature: sha256=…`) reaches the bridge.
 
 > Note: the live OAuth login, LLM calls, and branch/PR creation paths could
 > not be exercised without real provider and LLM credentials — verify them

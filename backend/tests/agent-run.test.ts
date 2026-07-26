@@ -30,6 +30,7 @@ const mocks = vi.hoisted(() => ({
   buildRepoContext: vi.fn(),
   setTaskStatus: vi.fn(),
   runHermesTask: vi.fn(),
+  notify: vi.fn(),
 }));
 
 vi.mock('../src/config.js', () => ({ config: mocks.config }));
@@ -61,6 +62,7 @@ vi.mock('../src/lib/pull-requests.js', () => ({ openPullRequest: mocks.openPullR
 vi.mock('../src/lib/repo-context.js', () => ({ buildRepoContext: mocks.buildRepoContext }));
 vi.mock('../src/lib/task-events.js', () => ({ setTaskStatus: mocks.setTaskStatus }));
 vi.mock('../src/lib/hermes-runner.js', () => ({ runHermesTask: mocks.runHermesTask }));
+vi.mock('../src/lib/notifications.js', () => ({ notify: mocks.notify }));
 
 import { runTask } from '../src/lib/agent-run.js';
 
@@ -163,6 +165,21 @@ describe('runTask with AGENT_EXECUTOR=hermes', () => {
       }),
     );
     expect(mocks.setTaskStatus).toHaveBeenCalledWith('task-1', 'awaiting_review');
+  });
+
+  it('notifies the repo owner that the PR awaits review', async () => {
+    mocks.loadTaskWithRepo.mockResolvedValue({
+      ...stubTask(),
+      repository: { ...stubTask().repository, connection: { userId: 'user-1' } },
+    });
+    await runTask('task-1');
+
+    expect(mocks.notify).toHaveBeenCalledWith('user-1', 'pr_opened', {
+      title: 'PR opened: Add feature X',
+      body: 'acme/widgets — pull request is awaiting review',
+      taskId: 'task-1',
+      prUrl: 'https://pr/1',
+    });
   });
 
   it('finishes without committing when hermes left the workdir clean', async () => {
