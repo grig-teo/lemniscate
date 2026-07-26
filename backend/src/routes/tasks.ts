@@ -568,6 +568,7 @@ async function getTaskRunTargets(request: FastifyRequest, reply: FastifyReply) {
           name: device.name,
           platform: device.platform,
           online: online(device),
+          meta: device.meta,
         })),
     })),
   };

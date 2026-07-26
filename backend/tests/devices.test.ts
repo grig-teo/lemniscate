@@ -345,6 +345,34 @@ describe('install_apk commands', () => {
     }
   });
 
+  it('accepts install_apk targeting a specific adb device', async () => {
+    mocks.deviceFindFirst.mockResolvedValue({ id: 'dev-1', userId: 'user-1', platform: 'android' });
+    const app = await buildApp();
+    const body = {
+      type: 'install_apk',
+      payload: { ...APK_BODY.payload, deviceSerial: '192.168.1.5:5555' },
+    };
+    const response = await postApk(app, body);
+    expect(response.statusCode).toBe(201);
+    expect(mocks.commandCreate).toHaveBeenCalledWith({
+      data: { deviceId: 'dev-1', type: 'install_apk', payload: body.payload },
+    });
+  });
+
+  it.each(['abc; rm -rf ~', 'abc`id`', 'abc$(id)', 'abc def'])(
+    '400s a shell-hostile deviceSerial %j',
+    async (deviceSerial) => {
+      mocks.deviceFindFirst.mockResolvedValue({ id: 'dev-1', userId: 'user-1', platform: 'android' });
+      const app = await buildApp();
+      const response = await postApk(app, {
+        type: 'install_apk',
+        payload: { ...APK_BODY.payload, deviceSerial },
+      });
+      expect(response.statusCode).toBe(400);
+      expect(mocks.commandCreate).not.toHaveBeenCalled();
+    },
+  );
+
   it('400s an invalid apkUrl', async () => {
     mocks.deviceFindFirst.mockResolvedValue({ id: 'dev-1', userId: 'user-1', platform: 'android' });
     const app = await buildApp();

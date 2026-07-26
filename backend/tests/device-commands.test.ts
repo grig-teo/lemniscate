@@ -50,6 +50,35 @@ describe('nextCommandAfterBuild', () => {
     });
   });
 
+  it('passes a string deviceSerial through to the chained install', () => {
+    expect(
+      nextCommandAfterBuild(
+        { type: 'build_android', payload: { ...command.payload, deviceSerial: 'emulator-5554' } },
+        { artifactKey: 'k' },
+      ),
+    ).toEqual({
+      installDeviceId: 'dev-android',
+      artifactKey: 'k',
+      appName: 'B',
+      deviceSerial: 'emulator-5554',
+    });
+  });
+
+  it('drops a deviceSerial that is absent or not a string', () => {
+    expect(nextCommandAfterBuild(command, { artifactKey: 'k' })).toEqual({
+      installDeviceId: 'dev-android',
+      artifactKey: 'k',
+      appName: 'B',
+      deviceSerial: undefined,
+    });
+    expect(
+      nextCommandAfterBuild(
+        { type: 'build_android', payload: { ...command.payload, deviceSerial: 42 } },
+        { artifactKey: 'k' },
+      )?.deviceSerial,
+    ).toBeUndefined();
+  });
+
   it('does not chain for other command types', () => {
     expect(
       nextCommandAfterBuild({ type: 'run_web', payload: command.payload }, { artifactKey: 'k' }),

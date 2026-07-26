@@ -13,6 +13,7 @@ export interface BuildChainTarget {
   installDeviceId: string;
   artifactKey: string;
   appName?: string;
+  deviceSerial?: string;
 }
 
 /**
@@ -45,5 +46,6 @@ export function nextCommandAfterBuild(
     installDeviceId: payload.installDeviceId,
     artifactKey: data.artifactKey,
     appName: typeof payload.appName === 'string' ? payload.appName : undefined,
+    deviceSerial: typeof payload.deviceSerial === 'string' ? payload.deviceSerial : undefined,
   };
 }

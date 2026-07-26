@@ -60,6 +60,8 @@ const commandBodySchema = z.discriminatedUnion('type', [
     payload: z.object({
       apkUrl: z.string().url(),
       appName: z.string().min(1).max(120).optional(),
+      // Lands in `adb -s <serial>` on the agent — no shell metacharacters.
+      deviceSerial: z.string().min(1).max(100).regex(/^[a-zA-Z0-9._:-]+$/).optional(),
     }),
   }),
   // User-facing part of a build request; the server adds gradle/docker
@@ -73,6 +75,8 @@ const commandBodySchema = z.discriminatedUnion('type', [
       gradleTask: gradleName.optional(),
       gradleModule: gradleName.optional(),
       image: z.string().min(1).max(200).optional(),
+      // Forwarded to the chained install_apk (same `adb -s` constraint).
+      deviceSerial: z.string().min(1).max(100).regex(/^[a-zA-Z0-9._:-]+$/).optional(),
     }),
   }),
   // startScript lands inside an `npm run <script>` spawn on the device —
@@ -91,14 +95,15 @@ const commandBodySchema = z.discriminatedUnion('type', [
     }),
   }),
   // scheme/destination are passed to xcodebuild on a macOS agent; both
-  // optional — the agent auto-detects when omitted.
+  // optional — the agent auto-detects when omitted. destination is a UDID
+  // (xcodebuild `-destination id=<udid>`), so hex-and-dashes only.
   z.object({
     type: z.literal('run_ios'),
     payload: z.object({
       repoUrl: z.string().url(),
       branch: z.string().min(1).max(200),
       scheme: z.string().min(1).max(200).optional(),
-      destination: z.string().min(1).max(200).optional(),
+      destination: z.string().min(1).max(200).regex(/^[a-zA-Z0-9-]+$/).optional(),
     }),
   }),
 ]);
@@ -388,7 +393,11 @@ async function chainInstallAfterBuild(
       data: {
         deviceId: next.installDeviceId,
         type: 'install_apk',
-        payload: { apkUrl, appName: next.appName },
+        payload: {
+          apkUrl,
+          appName: next.appName,
+          ...(next.deviceSerial ? { deviceSerial: next.deviceSerial } : {}),
+        },
       },
     });
     await dispatchCommand(install);
