@@ -3,7 +3,8 @@ import { enqueueRunTask } from '../lib/proposal-scheduler.js';
 import { prisma } from '../lib/prisma.js';
 import { attachmentsData } from '../lib/task-attachments.js';
 import { publishTaskEvent } from '../lib/task-events.js';
-import { requestImprovedPrompt, resolveImproveLlmConfig } from '../lib/task-improve.js';
+import { findLlmConfig } from '../lib/agent-runtime.js';
+import { requestImprovedPrompt } from '../lib/task-improve.js';
 import { authenticatedUserId } from '../plugins/auth.js';
 import { parseOrReply } from './helpers.js';
 import {
@@ -124,7 +125,10 @@ export async function improveTask(request: FastifyRequest, reply: FastifyReply) 
   if (blocker) {
     return reply.code(400).send({ error: blocker });
   }
-  const llmConfig = await resolveImproveLlmConfig(userId, task);
+  // Shared resolver (agent-runtime): task → repository → default → any
+  // enabled config — same chain Start would use, so Improve never 400s in a
+  // setup where running the task would succeed.
+  const llmConfig = await findLlmConfig(task, task.repository, userId);
   if (!llmConfig) {
     return reply.code(400).send({ error: 'No LLM config — set one in Settings first' });
   }

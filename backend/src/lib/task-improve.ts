@@ -2,7 +2,6 @@ import type { LlmConfig } from '@prisma/client';
 import { proposalDocumentSectionLines } from './agent-prompts.js';
 import { decrypt } from './crypto.js';
 import { chatCompletions } from './llm-client.js';
-import { prisma } from './prisma.js';
 
 // POST /tasks/:id/improve helpers — the console pane's Improve button asks
 // the LLM to rewrite a pending task's rough description into the structured
@@ -11,8 +10,11 @@ import { prisma } from './prisma.js';
 // text and the editor applies it, so Save/Start keeps working unchanged.
 // The pure builders/sanitizers are unit-tested in tests/task-improve.test.ts.
 
-// Same ceiling as the generated-proposal prompt field (llmProposalSchema).
-export const IMPROVED_PROMPT_MAX_CHARS = 16_000;
+// Same ceiling as promptSchema (task-schemas.ts): the editor applies the
+// improved text and always sends the changed prompt on Save/Start, so a
+// longer document would fail PATCH /tasks/:id and POST /tasks/:id/start
+// validation. Locked by tests/task-improve.test.ts.
+export const IMPROVED_PROMPT_MAX_CHARS = 8_000;
 
 // System prompt for the rewrite: the proposal document sections, minus the
 // repo-exploration parts (this lightweight call never clones the repository).
@@ -44,20 +46,9 @@ export function sanitizeImprovedPrompt(raw: string, fallback: string): string {
   return text.slice(0, IMPROVED_PROMPT_MAX_CHARS);
 }
 
-// Config resolution mirrors task creation: the task's own config wins, then
-// the repository's, then the user's default — disabled configs are skipped.
-export async function resolveImproveLlmConfig(
-  userId: string,
-  task: { llmConfigId: string | null; repository: { llmConfigId: string | null } },
-): Promise<LlmConfig | null> {
-  const candidateIds = [task.llmConfigId, task.repository.llmConfigId];
-  for (const id of candidateIds) {
-    if (!id) continue;
-    const cfg = await prisma.llmConfig.findFirst({ where: { id, userId, enabled: true } });
-    if (cfg) return cfg;
-  }
-  return prisma.llmConfig.findFirst({ where: { userId, isDefault: true, enabled: true } });
-}
+// LLM config resolution uses the shared resolver in agent-runtime.ts
+// (findLlmConfig) — the route imports it directly so the task → repository →
+// default → any-enabled chain lives in exactly one place.
 
 // One lightweight chat call (same shape as the library structure-preview):
 // no repo clone, no job — the improved text comes back in the response.

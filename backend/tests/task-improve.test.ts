@@ -74,6 +74,12 @@ describe('sanitizeImprovedPrompt', () => {
     const huge = `x${'y'.repeat(IMPROVED_PROMPT_MAX_CHARS + 500)}`;
     expect(sanitizeImprovedPrompt(huge, 'fallback')).toHaveLength(IMPROVED_PROMPT_MAX_CHARS);
   });
+
+  it('never exceeds the promptSchema limit enforced by PATCH/START (8,000 chars)', () => {
+    // The editor applies the improved text and always sends the changed prompt
+    // on Save/Start — anything above the schema cap bricks both actions.
+    expect(IMPROVED_PROMPT_MAX_CHARS).toBe(8000);
+  });
 });
 
 describe('improveBodySchema', () => {
