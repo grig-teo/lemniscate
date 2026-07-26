@@ -3,6 +3,7 @@ import { GitBranch, Loader2, Plus } from 'lucide-react';
 
 import { useRepositories, useSyncConnection } from '@/lib/hooks';
 import { groupByConnection, type ConnectionGroup as ConnectionGroupData } from '@/lib/group-repos';
+import { isSectionCollapsed, useSidebarSections } from '@/lib/sidebar-sections';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 
@@ -11,6 +12,7 @@ import { CreateRepoDialog } from '@/components/repo-tree/CreateRepoDialog';
 import { useExpandedMap } from '@/components/repo-tree/useExpandedMap';
 import { DeviceBar } from '@/components/devices/DeviceBar';
 import { ServicesSection } from '@/components/services/ServicesSection';
+import { SectionHeader } from '@/components/sidebar/SectionHeader';
 
 type ReposQuery = ReturnType<typeof useRepositories>;
 
@@ -89,47 +91,62 @@ export function RepoTree({ width }: { width: number }) {
   const reposQuery = useRepositories();
   const syncConnection = useSyncConnection();
   const { expanded, toggle } = useExpandedMap();
+  const { collapsed: collapsedSections, toggle: toggleSection } = useSidebarSections();
   const [createOpen, setCreateOpen] = React.useState(false);
 
   const groups = React.useMemo(() => groupByConnection(reposQuery.data ?? []), [reposQuery.data]);
 
+  const createButton = (
+    <Button
+      variant="ghost"
+      size="icon"
+      className="h-6 w-6"
+      aria-label="Create repository"
+      onClick={() => setCreateOpen(true)}
+    >
+      <Plus className="h-3.5 w-3.5" />
+    </Button>
+  );
+
   return (
     <aside className="flex h-full shrink-0 flex-col border-r bg-card" style={{ width }}>
-      <div className="flex items-center justify-between border-b px-3 py-2">
-        <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-          Repositories
-        </span>
-        <Button
-          variant="ghost"
-          size="icon"
-          className="h-6 w-6"
-          aria-label="Create repository"
-          onClick={() => setCreateOpen(true)}
-        >
-          <Plus className="h-3.5 w-3.5" />
-        </Button>
+      <div className="border-b">
+        <SectionHeader
+          label="Repositories"
+          collapsed={isSectionCollapsed(collapsedSections, 'repositories')}
+          onToggle={() => toggleSection('repositories')}
+          action={createButton}
+        />
       </div>
 
       {/* Rows are bounded to the sidebar width: titles truncate with an
           ellipsis while badges/action icons stay pinned to the resize edge. */}
-      <ScrollArea className="flex-1">
-        <RepoTreeBody
-          reposQuery={reposQuery}
-          groups={groups}
-          syncing={syncConnection.isPending}
-          onSync={(connectionId) => syncConnection.mutate(connectionId)}
-          expanded={expanded}
-          onToggleRepo={toggle}
-        />
-      </ScrollArea>
+      {!isSectionCollapsed(collapsedSections, 'repositories') && (
+        <ScrollArea className="flex-1">
+          <RepoTreeBody
+            reposQuery={reposQuery}
+            groups={groups}
+            syncing={syncConnection.isPending}
+            onSync={(connectionId) => syncConnection.mutate(connectionId)}
+            expanded={expanded}
+            onToggleRepo={toggle}
+          />
+        </ScrollArea>
+      )}
 
       {/* Services (deployed apps): fixed block between the scrolling repo
           list and the pinned device bar. */}
-      <ServicesSection />
+      <ServicesSection
+        collapsed={isSectionCollapsed(collapsedSections, 'services')}
+        onToggle={() => toggleSection('services')}
+      />
 
       {/* Paired devices: a constant, non-scrolling strip pinned to the
           bottom of the sidebar while the repo list scrolls above it. */}
-      <DeviceBar />
+      <DeviceBar
+        collapsed={isSectionCollapsed(collapsedSections, 'devices')}
+        onToggle={() => toggleSection('devices')}
+      />
 
       <CreateRepoDialog open={createOpen} onOpenChange={setCreateOpen} />
     </aside>
