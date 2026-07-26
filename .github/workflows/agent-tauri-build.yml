@@ -23,8 +23,11 @@ jobs:
         include:
           - os: macos-latest
             arch: arm64
-          - os: macos-13
+          # amd64 mac is cross-compiled on the arm64 runner: macos-13 (the
+          # only free Intel mac) is capacity-starved and stalled the release.
+          - os: macos-latest
             arch: amd64
+            target: x86_64-apple-darwin
           - os: windows-latest
             arch: amd64
           - os: windows-11-arm
@@ -51,6 +54,10 @@ jobs:
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Add cross-compile target
+        if: matrix.target
+        run: rustup target add ${{ matrix.target }}
+
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
         with:
@@ -76,7 +83,7 @@ jobs:
         working-directory: agent-tauri/src-tauri
 
       - name: Bundle installers (tauri build)
-        run: npm run tauri build
+        run: npm run tauri build -- ${{ matrix.target && format('--target {0}', matrix.target) || '' }}
         working-directory: agent-tauri
 
       - name: Upload bundles
@@ -85,6 +92,7 @@ jobs:
           name: lemniscate-agent-${{ matrix.os }}-${{ matrix.arch }}
           path: |
             agent-tauri/src-tauri/target/release/bundle/**
+            agent-tauri/src-tauri/target/*/release/bundle/**
           if-no-files-found: warn
 
   release:
