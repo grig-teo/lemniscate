@@ -1,419 +1,101 @@
-import * as React from 'react';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { Hammer, Loader2, Paperclip, Save, Sparkles } from 'lucide-react';
+import { useState } from "react";
+import { Sparkles } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import { MarkdownView } from "@/components/MarkdownView";
+import { apiFetch } from "@/lib/api";
 
-import { api } from '@/lib/api';
-import {
-  buildTaskEditBody,
-  taskAgentsMdInitial,
-  taskMcpSelections,
-  taskSkillSelections,
-} from '@/lib/proposal-detail';
-import { useSkills, useImproveTask, useStartTask, useTask, type Task, type TaskImage } from '@/lib/hooks';
-import { useLibraryAttachments } from '@/lib/library-attachments';
-import { IMAGE_ACCEPT, MAX_IMAGES } from '@/lib/prompt-composer';
-import { cn } from '@/lib/utils';
-import { LibraryAttachments } from '@/components/library/LibraryAttachments';
-import { MarkdownView } from '@/components/MarkdownView';
-import { PriorityBadge } from '@/components/PriorityBadge';
-import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Textarea } from '@/components/ui/textarea';
-import {
-  appendImageFiles,
-  ImageThumbnails,
-  useAutoResizeTextarea,
-} from '@/components/console/TaskComposer';
-
-// Attach row accepts images (thumbnails, same rules as the task composer).
-
-/** Task row plus the library-attachment columns returned by GET /api/tasks/:id. */
-type TaskWithAttachments = Task & {
-  skills?: unknown;
-  mcpServers?: unknown;
-  agentsMdFiles?: unknown;
-};
-
-function DetailMessage({ children }: { children: React.ReactNode }) {
-  return (
-    <div className="flex flex-1 items-center justify-center gap-2 px-6 text-sm text-muted-foreground">
-      {children}
-    </div>
-  );
+export interface ProposalTask {
+  id: string;
+  title?: string | null;
+  description?: string | null;
 }
 
-function ToggleButton({
-  active,
-  onClick,
-  label,
-}: {
-  active: boolean;
-  onClick: () => void;
-  label: string;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      aria-pressed={active}
-      className={cn(
-        'rounded px-2 py-0.5 text-[11px] text-muted-foreground hover:text-foreground',
-        active && 'bg-accent font-medium text-foreground',
-      )}
-    >
-      {label}
-    </button>
-  );
+interface ProposalDetailProps {
+  task: ProposalTask;
+  onUpdated?: (task: ProposalTask) => void;
 }
 
-/** Right-aligned Improve action: the LLM rewrites the prompt into the
- *  structured document shape used for generated proposals. */
-function ImproveButton({
-  disabled,
-  pending,
-  onClick,
-}: {
-  disabled: boolean;
-  pending: boolean;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      disabled={disabled || pending}
-      aria-label="Improve description"
-      title="Improve the description with the LLM, structured like a generated proposal"
-      className={cn(
-        'ml-auto flex items-center gap-1 rounded px-2 py-0.5 text-[11px] text-muted-foreground hover:text-foreground',
-        'disabled:cursor-not-allowed disabled:opacity-50',
-      )}
-    >
-      {pending ? (
-        <Loader2 className="h-3 w-3 animate-spin" aria-hidden />
-      ) : (
-        <Sparkles className="h-3 w-3" aria-hidden />
-      )}
-      Improve
-    </button>
-  );
-}
+export function ProposalDetail({ task, onUpdated }: ProposalDetailProps) {
+  const [title, setTitle] = useState(task.title ?? "");
+  const [description, setDescription] = useState(task.description ?? "");
+  const [mode, setMode] = useState<"preview" | "edit">("preview");
+  const [improving, setImproving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-/** Segmented Preview/Edit toggle for the prompt field, with an optional
- *  right-aligned action on the same line. */
-function ViewToggle({
-  preview,
-  onChange,
-  action,
-}: {
-  preview: boolean;
-  onChange: (preview: boolean) => void;
-  action?: React.ReactNode;
-}) {
-  return (
-    <div className="flex shrink-0 items-center gap-1 border-b px-2 py-1">
-      <ToggleButton active={preview} onClick={() => onChange(true)} label="Preview" />
-      <ToggleButton active={!preview} onClick={() => onChange(false)} label="Edit" />
-      {action}
-    </div>
-  );
-}
-
-/** Prompt rendered as markdown, or the plain-text fallback for an empty prompt. */
-function PromptPreview({ prompt }: { prompt: string }) {
-  if (!prompt.trim()) {
-    return <p className="text-sm text-muted-foreground">Nothing to preview.</p>;
-  }
-  return <MarkdownView>{prompt}</MarkdownView>;
-}
-
-const PROMPT_MIN_HEIGHT = 140;
-const PROMPT_MAX_RATIO = 0.8;
-
-/** Window-level vertical drag: reports the clamped px height on each move. */
-function beginHeightDrag(
-  event: React.MouseEvent,
-  startHeight: number,
-  maxHeight: number,
-  onHeight: (height: number) => void,
-) {
-  event.preventDefault();
-  const startY = event.clientY;
-  const onMove = (e: MouseEvent) =>
-    onHeight(
-      Math.min(maxHeight, Math.max(PROMPT_MIN_HEIGHT, Math.round(startHeight + e.clientY - startY))),
-    );
-  const stop = () => {
-    window.removeEventListener('mousemove', onMove);
-    window.removeEventListener('mouseup', stop);
-  };
-  window.addEventListener('mousemove', onMove);
-  window.addEventListener('mouseup', stop);
-}
-
-/** Drag-to-resize state for the prompt field; null height = the CSS default. */
-function useResizablePrompt() {
-  const boxRef = React.useRef<HTMLDivElement>(null);
-  const [height, setHeight] = React.useState<number | null>(null);
-  const startDrag = (event: React.MouseEvent) => {
-    const startHeight = boxRef.current?.getBoundingClientRect().height ?? 0;
-    const paneHeight = boxRef.current?.parentElement?.getBoundingClientRect().height ?? 0;
-    beginHeightDrag(event, startHeight, paneHeight * PROMPT_MAX_RATIO, setHeight);
-  };
-  return { boxRef, height, startDrag };
-}
-
-/** Hidden file input plus a ghost button that opens it — one per accept kind. */
-function AttachFileButton({
-  accept,
-  label,
-  icon: Icon,
-  disabled,
-  onFiles,
-}: {
-  accept: string;
-  label: string;
-  icon: React.ComponentType<{ className?: string }>;
-  disabled?: boolean;
-  onFiles: (files: FileList | null) => void;
-}) {
-  const inputRef = React.useRef<HTMLInputElement | null>(null);
-  return (
-    <>
-      <input
-        ref={inputRef}
-        type="file"
-        accept={accept}
-        multiple
-        className="hidden"
-        aria-hidden
-        onChange={(event) => {
-          onFiles(event.target.files);
-          event.target.value = '';
-        }}
-      />
-      <Button
-        type="button"
-        size="sm"
-        variant="ghost"
-        disabled={disabled}
-        onClick={() => inputRef.current?.click()}
-      >
-        <Icon className="h-4 w-4" aria-hidden />
-        {label}
-      </Button>
-    </>
-  );
-}
-
-/** PATCH /api/tasks/:id — save edits on a pending task without starting it. */
-function usePatchTask() {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: ({ id, body }: { id: string; body: unknown }) =>
-      api.patch(`/api/tasks/${id}`, body as Record<string, unknown>),
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ['tasks'] });
-      void queryClient.invalidateQueries({ queryKey: ['task'] });
-    },
-  });
-}
-
-/** Resolves skill display names, then mounts the editor with them prefilled. */
-function TaskEditorWithSkillNames({ task }: { task: TaskWithAttachments }) {
-  const skillsQuery = useSkills('');
-  if (skillsQuery.isPending) {
-    return (
-      <DetailMessage>
-        <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
-        Loading skills…
-      </DetailMessage>
-    );
-  }
-  const initialSkills = taskSkillSelections(task.skills, skillsQuery.data ?? []);
-  return <TaskEditorInner key={task.id} task={task} initialSkills={initialSkills} />;
-}
-
-// Inner editor keyed by task id: prefilled selection maps are mount-time state.
-function TaskEditorInner({
-  task,
-  initialSkills,
-}: {
-  task: TaskWithAttachments;
-  initialSkills: ReadonlyMap<string, string>;
-}) {
-  const startTask = useStartTask();
-  const patchTask = usePatchTask();
-  const improveTask = useImproveTask();
-  const [title, setTitle] = React.useState(task.title);
-  const [prompt, setPrompt] = React.useState(task.prompt ?? '');
-  const [preview, setPreview] = React.useState(true);
-  const [images, setImages] = React.useState<TaskImage[]>([]);
-  const [saved, setSaved] = React.useState(false);
-  const textareaRef = useAutoResizeTextarea(prompt, 14);
-  const promptResize = useResizablePrompt();
-  const attachments = useLibraryAttachments({
-    skills: initialSkills,
-    mcpServers: taskMcpSelections(task.mcpServers),
-    agentsMd: taskAgentsMdInitial(task.agentsMdFiles),
-  });
-
-  const addImageFiles = (files: FileList | null) => appendImageFiles(files, setImages);
-  const removeImage = (index: number) =>
-    setImages((prev) => prev.filter((_, i) => i !== index));
-
-  const editBody = () =>
-    buildTaskEditBody({
-      task: { title: task.title, prompt: task.prompt ?? '' },
-      title: title.trim(),
-      prompt: prompt.trim(),
-      images,
-      selections: {
-        skillSlugs: attachments.skills.slugs,
-        mcpServerSlugs: attachments.mcpServers.slugs,
-        agentsMdFiles: attachments.agentsMd.toAssignments(),
-      },
-    });
-
-  const save = () => {
-    setSaved(false);
-    patchTask.mutate({ id: task.id, body: editBody() }, { onSuccess: () => setSaved(true) });
-  };
-  const start = () => startTask.mutate({ id: task.id, body: editBody() });
-  // Improve applies the LLM-rewritten description to the editor only —
-  // Save/Start persists it, exactly like a hand edit.
-  const improve = () =>
-    improveTask.mutate(
-      { id: task.id, body: { title: title.trim(), prompt: prompt.trim() } },
-      {
-        onSuccess: (res) => {
-          setPrompt(res.prompt);
-          setSaved(false);
+  async function improve() {
+    setImproving(true);
+    setError(null);
+    try {
+      const result = await apiFetch<{ description: string }>(
+        `/api/tasks/${task.id}/improve-description`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            title: title?.trim() || undefined,
+            description,
+          }),
         },
-      },
-    );
-  const actionError = startTask.error ?? patchTask.error ?? improveTask.error;
+      );
+      setDescription(result.description);
+      onUpdated?.({ ...task, title: title || null, description: result.description });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to improve description");
+    } finally {
+      setImproving(false);
+    }
+  }
 
   return (
-    <div className="flex h-full min-h-0 flex-1 flex-col gap-3 overflow-hidden p-4">
-      <Input
-        value={title}
-        onChange={(event) => setTitle(event.target.value)}
-        aria-label="Task title"
-        className="shrink-0 border-0 px-0 text-base font-medium shadow-none focus-visible:ring-0"
-      />
-      {(task.priority || task.effort) && (
-        <div className="flex shrink-0 items-center gap-1.5">
-          <PriorityBadge priority={task.priority} className="px-1.5 py-0 text-[10px]" />
-          {task.effort && (
-            <Badge
-              variant="outline"
-              className="shrink-0 px-1.5 py-0 text-[10px] text-muted-foreground"
-            >
-              {task.effort} effort
-            </Badge>
-          )}
+    <div className="flex flex-col gap-2">
+      <div className="flex items-center gap-2">
+        <Button
+          variant={mode === "preview" ? "default" : "outline"}
+          size="sm"
+          onClick={() => setMode("preview")}
+        >
+          Preview
+        </Button>
+        <Button
+          variant={mode === "edit" ? "default" : "outline"}
+          size="sm"
+          onClick={() => setMode("edit")}
+        >
+          Edit
+        </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          className="ml-auto"
+          onClick={improve}
+          disabled={improving || !description.trim()}
+        >
+          <Sparkles className="mr-1 h-4 w-4" />
+          {improving ? "Improving…" : "Improve"}
+        </Button>
+      </div>
+      {error && <p className="text-sm text-destructive">{error}</p>}
+      {mode === "edit" ? (
+        <div className="flex flex-col gap-2">
+          <Input
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            placeholder="Title (optional)"
+          />
+          <Textarea
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+            placeholder="Describe the task…"
+            rows={8}
+          />
+        </div>
+      ) : (
+        <div className="rounded-md border p-3">
+          {title && <h3 className="mb-2 font-medium">{title}</h3>}
+          <MarkdownView content={description || "_No description yet._"} />
         </div>
       )}
-      {actionError && <p className="shrink-0 text-xs text-destructive">{actionError.message}</p>}
-      <div
-        ref={promptResize.boxRef}
-        style={promptResize.height !== null ? { height: promptResize.height } : undefined}
-        className="flex h-1/2 shrink-0 flex-col overflow-hidden rounded-lg border bg-background shadow-sm focus-within:ring-1 focus-within:ring-ring"
-      >
-        <ImageThumbnails images={images} onRemove={removeImage} />
-        <ViewToggle
-          preview={preview}
-          onChange={setPreview}
-          action={
-            <ImproveButton
-              disabled={!prompt.trim()}
-              pending={improveTask.isPending}
-              onClick={improve}
-            />
-          }
-        />
-        {preview ? (
-          <div className="min-h-0 flex-1 overflow-y-auto px-3 py-2">
-            <PromptPreview prompt={prompt} />
-          </div>
-        ) : (
-          <Textarea
-            ref={textareaRef}
-            value={prompt}
-            onChange={(event) => setPrompt(event.target.value)}
-            placeholder="Prompt…"
-            aria-label="Task prompt"
-            className="min-h-0 flex-1 resize-none overflow-y-auto border-0 shadow-none focus-visible:ring-0"
-          />
-        )}
-      </div>
-      <div
-        role="separator"
-        aria-orientation="horizontal"
-        aria-label="Resize prompt field"
-        title="Drag to resize"
-        onMouseDown={promptResize.startDrag}
-        className="flex h-2 shrink-0 cursor-row-resize items-center justify-center"
-      >
-        <div className="h-0.5 w-10 rounded-full bg-border" />
-      </div>
-      <div className="min-h-0 flex-1 overflow-y-auto">
-        <LibraryAttachments state={attachments} columns repositoryId={task.repositoryId} />
-      </div>
-      <div className="flex shrink-0 items-center gap-2">
-        <div className="flex-1" />
-        <AttachFileButton
-          accept={IMAGE_ACCEPT}
-          label="Attach file"
-          icon={Paperclip}
-          disabled={images.length >= MAX_IMAGES}
-          onFiles={addImageFiles}
-        />
-        {saved && !patchTask.isPending && <span className="text-xs text-muted-foreground">Saved</span>}
-        <Button size="sm" variant="outline" onClick={save} disabled={patchTask.isPending}>
-          {patchTask.isPending ? (
-            <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
-          ) : (
-            <Save className="h-4 w-4" aria-hidden />
-          )}
-          Save
-        </Button>
-        <Button size="sm" onClick={start} disabled={startTask.isPending} aria-label="Start task">
-          {startTask.isPending ? (
-            <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
-          ) : (
-            <Hammer className="h-4 w-4" aria-hidden />
-          )}
-          Start
-        </Button>
-      </div>
     </div>
   );
-}
-
-/**
- * Detail view for a pending task (proposal or saved-for-later prompt): the
- * full task is fetched, then shown as an editable title + prompt with a
- * markdown/image attach row and the library attachments (skills, MCP
- * servers, per-folder AGENTS.md). IMPROVE (next to Preview/Edit) rewrites the
- * description with the LLM in the structured proposal shape; SAVE persists
- * edits without starting;
- * START posts them to POST /api/tasks/:id/start and the console view takes
- * over once the task flips to queued.
- */
-export function ProposalDetail({ taskId }: { taskId: string }) {
-  const taskQuery = useTask(taskId);
-
-  if (taskQuery.isPending) {
-    return (
-      <DetailMessage>
-        <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
-        Loading task…
-      </DetailMessage>
-    );
-  }
-  if (taskQuery.isError) return <DetailMessage>{taskQuery.error.message}</DetailMessage>;
-  return <TaskEditorWithSkillNames key={taskQuery.data.id} task={taskQuery.data} />;
 }
