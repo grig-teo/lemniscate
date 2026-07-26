@@ -265,12 +265,16 @@ async function assertSafeLlmBaseUrl(baseUrl: string): Promise<void> {
 
 // Decrypts the connection token + LLM key (recording both as secrets to
 // scrub from any output) and builds the LLM runtime for a job. Shared by
-// run-task, review-pr, and generate-proposals.
+// run-task, review-pr, and generate-proposals. `llmConfigIdOverride` (e.g.
+// the repository's review LLM for the review-pr job) is resolved BEFORE
+// task.llmConfigId; when it is set-but-broken the chain continues with
+// repo.llmConfigId → user default.
 export async function prepareAgentRuntime(
   task: Task | null,
   repository: Repository & { connection: GitConnection },
   secrets: string[],
   usedTokens = 0,
+  llmConfigIdOverride: string | null = null,
 ): Promise<AgentRunContext> {
   const connection = repository.connection;
   await assertSafeCloneUrl(repository.cloneUrl);
@@ -290,7 +294,11 @@ export async function prepareAgentRuntime(
   secrets.push(token);
   const cloneUrl = tokenlessCloneUrl(repository.cloneUrl);
   const gitAuth: GitAuth = { username: GIT_HTTP_AUTH_USERNAME, token };
-  const llmConfig = await resolveLlmConfig(task, repository, repository.connection.userId);
+  const llmConfig = await resolveLlmConfig(
+    { llmConfigId: llmConfigIdOverride ?? task?.llmConfigId ?? null },
+    repository,
+    repository.connection.userId,
+  );
   await assertSafeLlmBaseUrl(llmConfig.baseUrl);
   const apiKey = decrypt(llmConfig.apiKeyEnc);
   secrets.push(apiKey);

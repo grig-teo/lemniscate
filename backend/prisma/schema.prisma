@@ -105,7 +105,8 @@ model LlmConfig {
   isDefault         Boolean       @default(false)
   enabled           Boolean       @default(true)
   user              User          @relation(fields: [userId], references: [id], onDelete: Cascade)
-  repositories      Repository[]
+  repositories      Repository[]  @relation("RepositoryLlm")
+  reviewRepositories Repository[] @relation("RepositoryReviewLlm")
   tasks             Task[]
 
   @@index([userId])
@@ -143,12 +144,17 @@ model Repository {
   // the first successful detection (see lib/repo-platform.ts).
   platform      String?
   llmConfigId   String?
+  // LLM config used by the review-pr job (review + fix iterations); null =
+  // the standard resolution (task → repo llmConfigId → user default).
+  reviewLlmConfigId String?
   connection    GitConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
-  llmConfig     LlmConfig?    @relation(fields: [llmConfigId], references: [id], onDelete: SetNull)
+  llmConfig     LlmConfig?    @relation("RepositoryLlm", fields: [llmConfigId], references: [id], onDelete: SetNull)
+  reviewLlmConfig LlmConfig?  @relation("RepositoryReviewLlm", fields: [reviewLlmConfigId], references: [id], onDelete: SetNull)
   tasks         Task[]
 
   @@unique([connectionId, externalId])
   @@index([llmConfigId])
+  @@index([reviewLlmConfigId])
 }
 
 model Task {
