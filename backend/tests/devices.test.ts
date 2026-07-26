@@ -517,6 +517,7 @@ describe('POST /api/devices/artifacts', () => {
       'dev-builder',
       'my app.apk',
       Buffer.from('fake-apk-bytes'),
+      'application/vnd.android.package-archive',
     );
   });
 

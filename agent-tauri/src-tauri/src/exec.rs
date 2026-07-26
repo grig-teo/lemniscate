@@ -14,6 +14,14 @@ use crate::protocol::{self, ClientMessage};
 /// Node's execFile default timeout (agent/index.js `run`).
 pub const DEFAULT_CMD_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 
+/// Inline log tail size in the `failed` result (bytes).
+pub const LOG_TAIL_BYTES: usize = 2048;
+
+/// Logs larger than this are uploaded as a `.log` artifact; smaller ones
+/// stay inline (the tail IS the full log). Single source of truth for both
+/// the Node agent (lib.js) and this Tauri agent.
+pub const LOG_UPLOAD_THRESHOLD_BYTES: usize = 8192;
+
 pub type ResultSender = mpsc::Sender<ClientMessage>;
 
 /// Outcome of a spawned process; never errors — the failure is in the value
@@ -52,8 +60,22 @@ impl CommandContext {
     }
 
     pub async fn fail(&self, error: String) {
-        let log = protocol::tail_log(&self.log, 2048);
+        let log = protocol::tail_log(&self.log, LOG_TAIL_BYTES);
         self.send("failed", Some(json!({ "error": error, "log": log }))).await;
+    }
+
+    /// Like `fail` but uploads the full log as a `.log` artifact when it
+    /// exceeds LOG_UPLOAD_THRESHOLD_BYTES, adding `logArtifactUrl` to the
+    /// result. Falls back gracefully to tail-only on quota/network failure.
+    pub async fn fail_with_log(&self, error: String, server: &str, device_token: &str) {
+        let tail = protocol::tail_log(&self.log, LOG_TAIL_BYTES);
+        let mut result = json!({ "error": error, "log": tail });
+        if self.log.len() > LOG_UPLOAD_THRESHOLD_BYTES {
+            if let Some(url) = upload_log_artifact(server, device_token, &self.id, &self.log).await {
+                result["logArtifactUrl"] = json!(url);
+            }
+        }
+        self.send("failed", Some(result)).await;
     }
 
     pub fn append(&mut self, line: &str) {
@@ -156,6 +178,66 @@ pub fn required_str(payload: &Value, key: &str, command_type: &str) -> Result<St
         .ok_or_else(|| format!("{command_type} payload is missing '{key}'"))
 }
 
+// --- artifact upload (shared by build_android and fail_with_log) ---------------
+
+/// Upload endpoint for a built artifact on the Lemniscate server.
+pub fn artifact_upload_url(upload_base: &str, filename: &str) -> String {
+    format!(
+        "{}/api/devices/artifacts?filename={}",
+        upload_base.trim_end_matches('/'),
+        protocol::percent_encode(filename)
+    )
+}
+
+/// Backend-relative download path for a stored artifact key.
+pub fn artifact_download_url(key: &str) -> String {
+    format!("/api/devices/artifacts/{key}")
+}
+
+/// POST a raw artifact body to the server with device-token auth; returns
+/// the stored key. Used by build_android (APKs) and fail_with_log (logs).
+pub async fn post_artifact(
+    upload_base: &str,
+    filename: &str,
+    body: &[u8],
+    device_token: &str,
+) -> Result<String, String> {
+    let response = reqwest::Client::new()
+        .post(artifact_upload_url(upload_base, filename))
+        .header("content-type", "application/octet-stream")
+        .header("authorization", format!("Device {device_token}"))
+        .body(body.to_vec())
+        .send()
+        .await
+        .map_err(|e| format!("artifact upload failed: {e}"))?;
+    if !response.status().is_success() {
+        return Err(format!("artifact upload failed (HTTP {})", response.status()));
+    }
+    let parsed: Value = response.json().await.map_err(|e| format!("bad upload response: {e}"))?;
+    parsed
+        .get("key")
+        .and_then(Value::as_str)
+        .map(str::to_string)
+        .ok_or_else(|| "upload response is missing 'key'".to_string())
+}
+
+/// Upload the full build/run log as a `.log` artifact; returns the download
+/// URL or None on failure (quota exhausted, network error, bad response).
+pub async fn upload_log_artifact(
+    server: &str,
+    device_token: &str,
+    command_id: &str,
+    log: &str,
+) -> Option<String> {
+    let filename = format!("{command_id}-{}.log", std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0));
+    let body = log.as_bytes();
+    let key = post_artifact(server, &filename, body, device_token).await.ok()?;
+    Some(artifact_download_url(&key))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -191,6 +273,36 @@ mod tests {
             recv_value(&mut rx).await,
             json!({"type": "command_result", "id": "c2", "status": "failed",
                    "result": {"error": "boom", "log": "some step output\n"}})
+        );
+    }
+
+    #[tokio::test]
+    async fn fail_with_log_skips_upload_when_log_is_below_threshold() {
+        let (tx, mut rx) = mpsc::channel(4);
+        let mut ctx = CommandContext::new(tx, "c5".into());
+        ctx.append("short output");
+        ctx.fail_with_log("err".into(), "https://x.space", "tok").await;
+        let frame = recv_value(&mut rx).await;
+        assert_eq!(frame["status"], "failed");
+        assert_eq!(frame["result"]["error"], "err");
+        assert!(frame["result"]["log"].as_str().unwrap().contains("short output"));
+        // No upload attempted → no logArtifactUrl.
+        assert!(frame["result"].get("logArtifactUrl").is_none());
+    }
+
+    #[test]
+    fn artifact_upload_url_appends_encoded_filename_query() {
+        assert_eq!(
+            artifact_upload_url("https://x.space/", "my app.apk"),
+            "https://x.space/api/devices/artifacts?filename=my%20app.apk"
+        );
+    }
+
+    #[test]
+    fn artifact_download_url_builds_backend_relative_path() {
+        assert_eq!(
+            artifact_download_url("dev-1/abc-app.apk"),
+            "/api/devices/artifacts/dev-1/abc-app.apk"
         );
     }
 

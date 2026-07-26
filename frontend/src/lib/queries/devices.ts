@@ -94,6 +94,7 @@ export type DeviceCommand = {
     sizeBytes?: number;
     error?: string;
     log?: string;
+    logArtifactUrl?: string;
   } | null;
   createdAt: string;
   updatedAt: string;
