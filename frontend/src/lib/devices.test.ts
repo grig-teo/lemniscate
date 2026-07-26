@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   AGENT_CLI_ZIP_FILE,
   AGENT_DOWNLOADS,
+  AGENT_DOWNLOAD_LINUX_DEBS,
   agentDownloadUrl,
   agentPairCommand,
   androidRepos,
@@ -12,6 +13,7 @@ import {
   commandTypeLabel,
   defaultRunPort,
   desktopRepos,
+  detectClientArch,
   detectClientPlatform,
   devicePlatformLabel,
   formatLastSeen,
@@ -247,9 +249,60 @@ describe('detectClientPlatform', () => {
   });
 });
 
+describe('detectClientArch', () => {
+  const INTEL_MAC_UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36';
+
+  it('trusts the Chromium high-entropy architecture over the UA', () => {
+    // Apple-Silicon browsers report "Intel" in the UA; uaDataArch wins.
+    expect(detectClientArch(INTEL_MAC_UA, 'arm')).toBe('arm64');
+  });
+
+  it('maps Chromium x86 high-entropy architecture to amd64', () => {
+    expect(detectClientArch(INTEL_MAC_UA, 'x86')).toBe('amd64');
+  });
+
+  it('detects arm64 from an aarch64 Linux UA', () => {
+    const ua = 'Mozilla/5.0 (X11; Linux aarch64) AppleWebKit/537.36';
+    expect(detectClientArch(ua)).toBe('arm64');
+  });
+
+  it('detects amd64 from an Intel macOS UA', () => {
+    expect(detectClientArch(INTEL_MAC_UA)).toBe('amd64');
+  });
+
+  it('detects amd64 from a Windows Win64 UA', () => {
+    const ua = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36';
+    expect(detectClientArch(ua)).toBe('amd64');
+  });
+
+  it('returns unknown for empty input', () => {
+    expect(detectClientArch('', '')).toBe('unknown');
+  });
+});
+
 describe('AGENT_DOWNLOADS / agentDownloadUrl', () => {
-  it('offers macos, windows and linux downloads in order', () => {
-    expect(AGENT_DOWNLOADS.map((d) => d.platform)).toEqual(['macos', 'windows', 'linux']);
+  it('offers per-arch downloads for macos, windows and linux', () => {
+    expect(
+      AGENT_DOWNLOADS.map((d) => `${d.platform}-${d.arch}`),
+    ).toEqual([
+      'macos-arm64',
+      'macos-amd64',
+      'windows-amd64',
+      'windows-arm64',
+      'linux-amd64',
+      'linux-arm64',
+    ]);
+  });
+
+  it('matches the installer names published by the agent-latest release', () => {
+    expect(AGENT_DOWNLOADS.map((d) => d.fileName)).toEqual([
+      'lemniscate-agent-macos-arm64.dmg',
+      'lemniscate-agent-macos-amd64.dmg',
+      'lemniscate-agent-windows-amd64.msi',
+      'lemniscate-agent-windows-arm64.msi',
+      'lemniscate-agent-linux-amd64.AppImage',
+      'lemniscate-agent-linux-arm64.AppImage',
+    ]);
   });
 
   it('gives each download a label and a stable file name', () => {
@@ -259,9 +312,20 @@ describe('AGENT_DOWNLOADS / agentDownloadUrl', () => {
     }
   });
 
+  it('offers per-arch .deb packages for linux', () => {
+    expect(AGENT_DOWNLOAD_LINUX_DEBS.map((d) => `${d.platform}-${d.arch}`)).toEqual([
+      'linux-amd64',
+      'linux-arm64',
+    ]);
+    expect(AGENT_DOWNLOAD_LINUX_DEBS.map((d) => d.fileName)).toEqual([
+      'lemniscate-agent-linux-amd64.deb',
+      'lemniscate-agent-linux-arm64.deb',
+    ]);
+  });
+
   it('builds a stable agent-latest release URL', () => {
-    expect(agentDownloadUrl('lemniscate-agent-macos.dmg')).toBe(
-      'https://github.com/grig-teo/lemniscate/releases/download/agent-latest/lemniscate-agent-macos.dmg',
+    expect(agentDownloadUrl('lemniscate-agent-macos-arm64.dmg')).toBe(
+      'https://github.com/grig-teo/lemniscate/releases/download/agent-latest/lemniscate-agent-macos-arm64.dmg',
     );
   });
 

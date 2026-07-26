@@ -16,11 +16,23 @@ on:
 
 jobs:
   build:
-    name: Build (${{ matrix.os }})
+    name: Build (${{ matrix.os }}-${{ matrix.arch }})
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-latest, windows-latest, ubuntu-latest]
+        include:
+          - os: macos-latest
+            arch: arm64
+          - os: macos-13
+            arch: amd64
+          - os: windows-latest
+            arch: amd64
+          - os: windows-11-arm
+            arch: arm64
+          - os: ubuntu-latest
+            arch: amd64
+          - os: ubuntu-24.04-arm
+            arch: arm64
     runs-on: ${{ matrix.os }}
 
     steps:
@@ -70,7 +82,7 @@ jobs:
       - name: Upload bundles
         uses: actions/upload-artifact@v4
         with:
-          name: lemniscate-agent-${{ matrix.os }}
+          name: lemniscate-agent-${{ matrix.os }}-${{ matrix.arch }}
           path: |
             agent-tauri/src-tauri/target/release/bundle/**
           if-no-files-found: warn
@@ -109,37 +121,67 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p out
-          dmg=$(find dist -type f -name '*.dmg' | head -n 1)
-          msi=$(find dist -type f -name '*.msi' | head -n 1)
-          nsis=$(find dist -type f -name '*-setup.exe' | head -n 1)
-          appimage=$(find dist -type f -name '*.AppImage' | head -n 1)
-          deb=$(find dist -type f -name '*.deb' | head -n 1)
 
-          if [ -z "$dmg" ]; then
-            echo '::error::macOS .dmg missing from build artifacts'
-            exit 1
-          fi
-          cp "$dmg" out/lemniscate-agent-macos.dmg
+          # Artifact dirs match the build matrix:
+          #   lemniscate-agent-macos-latest-arm64, lemniscate-agent-macos-13-amd64,
+          #   lemniscate-agent-windows-latest-amd64, lemniscate-agent-windows-11-arm-arm64,
+          #   lemniscate-agent-ubuntu-latest-amd64, lemniscate-agent-ubuntu-24.04-arm-arm64
+          macos_arm64=dist/lemniscate-agent-macos-latest-arm64
+          macos_amd64=dist/lemniscate-agent-macos-13-amd64
+          windows_amd64=dist/lemniscate-agent-windows-latest-amd64
+          windows_arm64=dist/lemniscate-agent-windows-11-arm-arm64
+          linux_amd64=dist/lemniscate-agent-ubuntu-latest-amd64
+          linux_arm64=dist/lemniscate-agent-ubuntu-24.04-arm-arm64
 
-          if [ -n "$msi" ]; then
-            cp "$msi" out/lemniscate-agent-windows.msi
-          elif [ -n "$nsis" ]; then
-            cp "$nsis" out/lemniscate-agent-windows-setup.exe
-          else
-            echo '::error::Windows installer (.msi or nsis .exe) missing from build artifacts'
-            exit 1
-          fi
+          copy_dmg() {
+            local dir=$1 name=$2
+            local dmg
+            dmg=$(find "$dir" -type f -name '*.dmg' | head -n 1)
+            if [ -z "$dmg" ]; then
+              echo "::error::macOS $name .dmg missing from build artifacts"
+              exit 1
+            fi
+            cp "$dmg" "out/lemniscate-agent-macos-$name.dmg"
+          }
 
-          if [ -n "$appimage" ]; then
-            cp "$appimage" out/lemniscate-agent-linux.AppImage
-          else
-            echo '::warning::Linux .AppImage missing from build artifacts'
-          fi
-          if [ -n "$deb" ]; then
-            cp "$deb" out/lemniscate-agent-linux.deb
-          else
-            echo '::warning::Linux .deb missing from build artifacts'
-          fi
+          copy_windows() {
+            local dir=$1 name=$2
+            local msi nsis
+            msi=$(find "$dir" -type f -name '*.msi' | head -n 1)
+            nsis=$(find "$dir" -type f -name '*-setup.exe' | head -n 1)
+            if [ -n "$msi" ]; then
+              cp "$msi" "out/lemniscate-agent-windows-$name.msi"
+            elif [ -n "$nsis" ]; then
+              cp "$nsis" "out/lemniscate-agent-windows-$name-setup.exe"
+            else
+              echo "::error::Windows $name installer (.msi or nsis .exe) missing from build artifacts"
+              exit 1
+            fi
+          }
+
+          copy_linux() {
+            local dir=$1 name=$2
+            local appimage deb
+            appimage=$(find "$dir" -type f -name '*.AppImage' | head -n 1)
+            deb=$(find "$dir" -type f -name '*.deb' | head -n 1)
+            if [ -n "$appimage" ]; then
+              cp "$appimage" "out/lemniscate-agent-linux-$name.AppImage"
+            else
+              echo "::warning::Linux $name .AppImage missing from build artifacts"
+            fi
+            if [ -n "$deb" ]; then
+              cp "$deb" "out/lemniscate-agent-linux-$name.deb"
+            else
+              echo "::warning::Linux $name .deb missing from build artifacts"
+            fi
+          }
+
+          copy_dmg "$macos_arm64" arm64
+          copy_dmg "$macos_amd64" amd64
+          copy_windows "$windows_amd64" amd64
+          copy_windows "$windows_arm64" arm64
+          copy_linux "$linux_amd64" amd64
+          copy_linux "$linux_arm64" arm64
           ls -la out/
 
       - name: Publish release

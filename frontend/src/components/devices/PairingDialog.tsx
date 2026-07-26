@@ -5,11 +5,13 @@ import { describeApiError } from '@/lib/api';
 import {
   AGENT_CLI_ZIP_FILE,
   AGENT_DOWNLOADS,
-  AGENT_DOWNLOAD_LINUX_DEB,
+  AGENT_DOWNLOAD_LINUX_DEBS,
   agentDownloadUrl,
   agentPairCommand,
+  detectClientArch,
   detectClientPlatform,
   pairingExpirySeconds,
+  type ClientArch,
 } from '@/lib/devices';
 import { useCreatePairing, useDevices } from '@/lib/hooks';
 import { Button, buttonVariants } from '@/components/ui/button';
@@ -66,11 +68,37 @@ function PairingCode({ code, expiresAt }: { code: string; expiresAt: string }) {
   );
 }
 
-/** Download buttons for the desktop agent installers; detected OS is primary. */
+/** Download buttons for the desktop agent installers; detected OS+arch is primary. */
 function AgentDownloads() {
   const nav = typeof window === 'undefined' ? undefined : window.navigator;
   const clientOs = nav ? detectClientPlatform(nav.userAgent, nav.platform ?? '') : 'unknown';
-  const downloads = [...AGENT_DOWNLOADS, AGENT_DOWNLOAD_LINUX_DEB];
+  const [uaDataArch, setUaDataArch] = React.useState<string | undefined>(undefined);
+
+  // Chromium only: the high-entropy 'architecture' hint ('arm'/'x86') is the
+  // only reliable signal on Apple Silicon, where the UA still says "Intel".
+  React.useEffect(() => {
+    if (!nav) return;
+    const uaData = (
+      nav as Navigator & {
+        userAgentData?: { getHighEntropyValues(hints: string[]): Promise<{ architecture?: string }> };
+      }
+    ).userAgentData;
+    if (!uaData) return;
+    let cancelled = false;
+    uaData
+      .getHighEntropyValues(['architecture'])
+      .then((values) => {
+        if (!cancelled && values.architecture) setUaDataArch(values.architecture);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const clientArch: ClientArch = nav ? detectClientArch(nav.userAgent, uaDataArch) : 'unknown';
+  const downloads = [...AGENT_DOWNLOADS, ...AGENT_DOWNLOAD_LINUX_DEBS];
   return (
     <div className="flex min-w-0 flex-col gap-2 text-sm">
       <p className="font-medium">Download the desktop app</p>
@@ -80,7 +108,10 @@ function AgentDownloads() {
             key={download.fileName}
             href={agentDownloadUrl(download.fileName)}
             className={buttonVariants({
-              variant: download.platform === clientOs ? 'default' : 'outline',
+              variant:
+                download.platform === clientOs && download.arch === clientArch
+                  ? 'default'
+                  : 'outline',
               size: 'sm',
             })}
           >

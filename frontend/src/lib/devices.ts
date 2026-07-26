@@ -114,8 +114,31 @@ export function detectClientPlatform(userAgent: string, platform: string): Clien
   return 'unknown';
 }
 
+export type ClientArch = 'arm64' | 'amd64' | 'unknown';
+
+/**
+ * Best-effort client CPU-architecture detection. `uaDataArch` is the
+ * `architecture` value from Chromium's `userAgentData.getHighEntropyValues`
+ * ('arm' / 'x86') and wins when provided.
+ *
+ * Caveat: Apple-Silicon browsers still report "Intel Mac OS X" in the UA, so
+ * UA-only detection cannot tell them apart — Chromium callers should pass
+ * `uaDataArch`. Safari-on-ARM falls back to amd64 here, which is acceptable:
+ * the user can pick the other button and Rosetta runs the amd64 build anyway.
+ */
+export function detectClientArch(userAgent: string, uaDataArch?: string): ClientArch {
+  if (uaDataArch === 'arm') return 'arm64';
+  if (uaDataArch === 'x86') return 'amd64';
+  if (/arm64|aarch64/i.test(userAgent)) return 'arm64';
+  if (/x86_64|amd64|win64|wow64/i.test(userAgent) || /intel mac os x/i.test(userAgent)) {
+    return 'amd64';
+  }
+  return 'unknown';
+}
+
 export interface AgentDownload {
   platform: Exclude<ClientPlatform, 'unknown'>;
+  arch: Exclude<ClientArch, 'unknown'>;
   label: string;
   fileName: string;
 }
@@ -125,17 +148,59 @@ const AGENT_RELEASE_BASE =
 
 /** Desktop-agent installers published by the agent-latest GitHub release. */
 export const AGENT_DOWNLOADS: AgentDownload[] = [
-  { platform: 'macos', label: 'macOS (.dmg)', fileName: 'lemniscate-agent-macos.dmg' },
-  { platform: 'windows', label: 'Windows (.msi)', fileName: 'lemniscate-agent-windows.msi' },
-  { platform: 'linux', label: 'Linux (.AppImage)', fileName: 'lemniscate-agent-linux.AppImage' },
+  {
+    platform: 'macos',
+    arch: 'arm64',
+    label: 'macOS Apple Silicon (.dmg)',
+    fileName: 'lemniscate-agent-macos-arm64.dmg',
+  },
+  {
+    platform: 'macos',
+    arch: 'amd64',
+    label: 'macOS Intel (.dmg)',
+    fileName: 'lemniscate-agent-macos-amd64.dmg',
+  },
+  {
+    platform: 'windows',
+    arch: 'amd64',
+    label: 'Windows x64 (.msi)',
+    fileName: 'lemniscate-agent-windows-amd64.msi',
+  },
+  {
+    platform: 'windows',
+    arch: 'arm64',
+    label: 'Windows ARM64 (.msi)',
+    fileName: 'lemniscate-agent-windows-arm64.msi',
+  },
+  {
+    platform: 'linux',
+    arch: 'amd64',
+    label: 'Linux x64 (.AppImage)',
+    fileName: 'lemniscate-agent-linux-amd64.AppImage',
+  },
+  {
+    platform: 'linux',
+    arch: 'arm64',
+    label: 'Linux ARM64 (.AppImage)',
+    fileName: 'lemniscate-agent-linux-arm64.AppImage',
+  },
 ];
 
-/** Debian package, offered next to the AppImage for Linux users. */
-export const AGENT_DOWNLOAD_LINUX_DEB: AgentDownload = {
-  platform: 'linux',
-  label: 'Linux (.deb)',
-  fileName: 'lemniscate-agent-linux.deb',
-};
+/** Debian packages per arch, offered next to the AppImage for Linux users. */
+export const AGENT_DOWNLOAD_LINUX_DEBS: AgentDownload[] = [
+  {
+    platform: 'linux',
+    arch: 'amd64',
+    label: 'Linux x64 (.deb)',
+    fileName: 'lemniscate-agent-linux-amd64.deb',
+  },
+  {
+    platform: 'linux',
+    arch: 'arm64',
+    label: 'Linux ARM64 (.deb)',
+    fileName: 'lemniscate-agent-linux-arm64.deb',
+  },
+];
 
 /** Zip of the Node CLI agent folder (agent/), for Termux/servers. */
 export const AGENT_CLI_ZIP_FILE = 'lemniscate-agent-cli.zip';
