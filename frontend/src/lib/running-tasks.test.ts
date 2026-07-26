@@ -1,7 +1,14 @@
 import { describe, expect, it } from 'vitest';
 
 import type { Repository, Task, TaskStatus } from '@/lib/hooks';
-import { groupTasksByRepository, isRunningStatus, selectRunningTasks } from '@/lib/running-tasks';
+import {
+  groupTasksByRepository,
+  hasInFlightTasks,
+  IN_FLIGHT_POLL_INTERVAL_MS,
+  inFlightPollInterval,
+  isRunningStatus,
+  selectRunningTasks,
+} from '@/lib/running-tasks';
 
 function makeTask(id: string, repositoryId: string, status: TaskStatus): Task {
   return {
@@ -43,6 +50,38 @@ describe('isRunningStatus', () => {
     for (const status of ['pending', 'awaiting_review', 'done', 'failed', 'archived']) {
       expect(isRunningStatus(status)).toBe(false);
     }
+  });
+});
+
+describe('hasInFlightTasks', () => {
+  it('is true while any task is queued or running', () => {
+    expect(hasInFlightTasks([makeTask('t1', 'r1', 'queued')])).toBe(true);
+    expect(hasInFlightTasks([makeTask('t1', 'r1', 'done'), makeTask('t2', 'r1', 'running')])).toBe(
+      true,
+    );
+  });
+
+  it('is false when nothing is in flight', () => {
+    expect(hasInFlightTasks(undefined)).toBe(false);
+    expect(hasInFlightTasks([])).toBe(false);
+    expect(
+      hasInFlightTasks([makeTask('t1', 'r1', 'pending'), makeTask('t2', 'r1', 'done')]),
+    ).toBe(false);
+  });
+});
+
+describe('inFlightPollInterval', () => {
+  it('polls while any task is queued or running', () => {
+    expect(inFlightPollInterval([makeTask('t1', 'r1', 'queued')])).toBe(IN_FLIGHT_POLL_INTERVAL_MS);
+    expect(inFlightPollInterval([makeTask('t1', 'r1', 'running')])).toBe(
+      IN_FLIGHT_POLL_INTERVAL_MS,
+    );
+  });
+
+  it('stops polling once no task is in flight', () => {
+    expect(inFlightPollInterval(undefined)).toBe(false);
+    expect(inFlightPollInterval([])).toBe(false);
+    expect(inFlightPollInterval([makeTask('t1', 'r1', 'done')])).toBe(false);
   });
 });
 
