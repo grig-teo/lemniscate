@@ -10,6 +10,7 @@ import { cleanup, waitFor } from '@testing-library/react';
 import {
   useArchiveTask,
   useCancelTask,
+  useClosePrTask,
   useCreateTask,
   useGenerateProposals,
   useHasActiveProcesses,
@@ -245,6 +246,7 @@ describe.each([
   ['cancel', useCancelTask],
   ['archive', useArchiveTask],
   ['unarchive', useUnarchiveTask],
+  ['close-pr', useClosePrTask],
 ])('useTaskAction %s', (action, useHook) => {
   it(`POSTs /api/tasks/:id/${action} and invalidates ["tasks"] and ["task"]`, async () => {
     const queryClient = createTestQueryClient();
