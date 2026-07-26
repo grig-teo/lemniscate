@@ -114,6 +114,11 @@ docs/                 # design specs
 
 - Backend: `cd backend && npm run build && npm test` (tsc strict, vitest)
 - Frontend: `cd frontend && npm run build` (tsc --noEmit + vite build)
+- Android: `cd android && ./gradlew assembleDebug lint` (CI: path-filtered job on
+  `android/**`, lint currently non-blocking)
+- iOS: `cd ios && xcodegen && xcodebuild -project Lemniscate.xcodeproj -scheme
+  Lemniscate -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO
+  build` (CI: path-filtered job on `ios/**`, macos runner)
 - Full stack: `docker compose up --build` → `/health/ready` on :3000 (deep check:
   Postgres `SELECT 1` + Redis `PING`, 503 on failure; `/health` stays a static
   liveness probe), worker liveness with queue counts on :3100/health, SPA on :8080
