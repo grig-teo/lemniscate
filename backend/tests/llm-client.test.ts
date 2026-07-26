@@ -328,5 +328,16 @@ describe('chatCompletions metrics', () => {
     const text = await metricsRegistry.metrics();
     expect(text).toContain('lemniscate_llm_requests_total{model="test-model",status="http"} 1');
     expect(text).not.toContain('lemniscate_llm_tokens_total{');
+
+    // Failed calls must still observe a finite duration — a NaN sum would
+    // poison the latency histogram. RequestState.startedAt is set by
+    // makeRequestState before the first attempt.
+    const sumLine = text
+      .split('\n')
+      .find((line) => line.startsWith('lemniscate_llm_request_duration_seconds_sum{model="test-model"}'));
+    expect(sumLine).toBeDefined();
+    const sum = Number(sumLine?.split(' ').pop());
+    expect(Number.isFinite(sum)).toBe(true);
+    expect(sum).toBeGreaterThanOrEqual(0);
   });
 });

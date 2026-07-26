@@ -1,0 +1,10 @@
+{
+  "verdict": "changes_requested",
+  "summary": "The metrics implementation itself is exactly what the task specified and is well executed: prom-client added, a single registry in backend/src/lib/metrics.ts with strictly bounded labels (job name, error kind, model — never taskId/userId), measureJob wrapping the worker dispatcher with a duration histogram and outcome counter, the failure counter fed from logJobFailure, LLM request/latency/token metrics recorded once per logical call in chatCompletions, queue gauges polled every 15s from the same getJobCounts source as worker-health, /metrics served unauthenticated on the internal worker port and token-guarded (constant-time compare, 503-when-disabled) on the API, plus README scrape-config/alert docs and thorough tests. Backend tsc build passes and the full suite is green (852 tests, including the 6 new/updated metrics test files). Important context: the huge 'deletions' visible in the two-dot diff against origin/main (usage.ts, migration 0024, frontend usage UI, toasts) are NOT changes made by this PR — the branch was cut before PRs #26/#27 merged, and the diff from the real merge base shows only clean, in-scope additions; the only overlapping file with main is app.ts in non-conflicting hunks, so no feature is actually removed on merge. The single blocking problem is that the branch accidentally commits a previous review artifact, frontend/.lemniscate-review.json, into the repository — it must be deleted before merge. A rebase onto current main is advisable (the task premise about usage being discarded is now stale since main persists token usage, which these metrics complement) but is not strictly required for a clean merge.",
+  "issues": [
+    {
+      "path": "frontend/.lemniscate-review.json",
+      "comment": "Remove this accidentally committed file. It is a leftover review artifact from a previous review round (in the wrong directory, frontend/), containing a stale verdict that misread branch staleness as feature deletions. It must not ship in the repository."
+    }
+  ]
+}

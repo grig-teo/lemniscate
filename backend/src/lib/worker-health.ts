@@ -9,12 +9,23 @@ export interface WorkerQueueSnapshot {
   ts: string;
 }
 
+// BullMQ keys getJobCounts' result by the requested state names ('waiting',
+// ...), but the underlying Redis list is 'wait' and older versions/docs
+// surface that alias — fold it in here so /health and the queue gauges never
+// silently read a 0 backlog. This is the single normalization point; metrics
+// and health both consume this snapshot.
+function normalizeCounts(counts: Record<string, number>): Record<string, number> {
+  if (counts.wait === undefined) return counts;
+  const { wait, ...rest } = counts;
+  return { ...rest, waiting: (rest.waiting ?? 0) + wait };
+}
+
 export async function queueSnapshot(queue: Queue): Promise<WorkerQueueSnapshot> {
   const counts = await queue.getJobCounts('waiting', 'active', 'delayed', 'failed', 'completed');
   return {
     ok: true,
     queue: queue.name,
-    counts,
+    counts: normalizeCounts(counts),
     ts: new Date().toISOString(),
   };
 }
