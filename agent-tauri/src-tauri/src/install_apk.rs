@@ -23,7 +23,7 @@ pub async fn execute(tx: ResultSender, config: Config, id: String, payload: Valu
     ctx.running().await;
     match attempt(&mut ctx, &config, &payload).await {
         Ok(result) => ctx.done(result).await,
-        Err(error) => ctx.fail(error).await,
+        Err(error) => ctx.fail_with_log(error, &config.server, &config.device_token).await,
     }
 }
 

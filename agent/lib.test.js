@@ -642,3 +642,84 @@ test('dockerCandidates puts PATH docker first, then per-OS fallbacks', () => {
   assert.ok(lib.dockerCandidates('win32').some((c) => c.includes('Docker\\Docker\\resources')));
   assert.deepEqual(lib.dockerCandidates('freebsd'), ['docker']);
 });
+
+// --- full-log artifact upload on failure -------------------------------------
+
+const sampleConfig = { server: 'https://x.space', deviceId: 'd1', deviceToken: 'tok', name: 'Mac', platform: 'desktop' };
+
+test('logArtifactFilename includes the command id and ends with .log', () => {
+  const name = lib.logArtifactFilename('cmd-42', 1700000000000);
+  assert.equal(name, 'cmd-42-1700000000000.log');
+});
+
+test('artifactDownloadUrl builds the backend-relative path', () => {
+  assert.equal(lib.artifactDownloadUrl('dev-1/abc-app.apk'), '/api/devices/artifacts/dev-1/abc-app.apk');
+});
+
+test('finalizeFailure returns tail-only when the log is below the threshold', async () => {
+  const originalFetch = globalThis.fetch;
+  let fetchCalled = false;
+  globalThis.fetch = () => { fetchCalled = true; throw new Error('should not be called'); };
+  try {
+    const msg = await lib.finalizeFailure(sampleConfig, 'cmd-1', 'oops', 'short log');
+    assert.equal(fetchCalled, false);
+    assert.equal(msg.status, 'failed');
+    assert.equal(msg.result.error, 'oops');
+    assert.equal(msg.result.log, 'short log');
+    assert.equal(msg.result.logArtifactUrl, undefined);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('finalizeFailure uploads and includes logArtifactUrl when the log exceeds the threshold', async () => {
+  const originalFetch = globalThis.fetch;
+  const largeLog = 'x'.repeat(lib.LOG_UPLOAD_THRESHOLD_BYTES + 1);
+  globalThis.fetch = async (url, opts) => {
+    assert.ok(String(url).includes('/api/devices/artifacts?filename='));
+    assert.ok(String(url).includes('.log'));
+    assert.equal(opts.headers.authorization, 'Device tok');
+    return {
+      ok: true,
+      json: async () => ({ key: 'dev-1/uuid-cmd.log' }),
+    };
+  };
+  try {
+    const msg = await lib.finalizeFailure(sampleConfig, 'cmd-2', 'gradle failed', largeLog);
+    assert.equal(msg.status, 'failed');
+    assert.equal(msg.result.error, 'gradle failed');
+    assert.equal(msg.result.log.length, 2048);
+    assert.equal(msg.result.logArtifactUrl, '/api/devices/artifacts/dev-1/uuid-cmd.log');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('finalizeFailure falls back to tail-only when the upload is rejected (429)', async () => {
+  const originalFetch = globalThis.fetch;
+  const largeLog = 'x'.repeat(lib.LOG_UPLOAD_THRESHOLD_BYTES + 100);
+  globalThis.fetch = async () => ({ ok: false, status: 429 });
+  try {
+    const msg = await lib.finalizeFailure(sampleConfig, 'cmd-3', 'quota hit', largeLog);
+    assert.equal(msg.status, 'failed');
+    assert.equal(msg.result.error, 'quota hit');
+    assert.equal(msg.result.log.length, 2048);
+    assert.equal(msg.result.logArtifactUrl, undefined);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('finalizeFailure falls back to tail-only when fetch throws', async () => {
+  const originalFetch = globalThis.fetch;
+  const largeLog = 'x'.repeat(lib.LOG_UPLOAD_THRESHOLD_BYTES + 1);
+  globalThis.fetch = async () => { throw new Error('network down'); };
+  try {
+    const msg = await lib.finalizeFailure(sampleConfig, 'cmd-4', 'net err', largeLog);
+    assert.equal(msg.status, 'failed');
+    assert.equal(msg.result.error, 'net err');
+    assert.equal(msg.result.logArtifactUrl, undefined);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});

@@ -556,6 +556,69 @@ export function tailLog(text, maxBytes = 2048) {
   return text.slice(text.length - maxBytes);
 }
 
+// --- full-log artifact upload on failure -------------------------------------
+
+/**
+ * Logs at or below this size are kept inline in the `failed` result (the tail
+ * is the full log). Larger logs are uploaded as a `.log` artifact and the
+ * download path is returned as `logArtifactUrl`.
+ */
+export const LOG_UPLOAD_THRESHOLD_BYTES = 8192;
+
+/** Filename for a full-log artifact: `<commandId>-<timestamp>.log`. */
+export function logArtifactFilename(commandId, ts = Date.now()) {
+  return `${commandId}-${ts}.log`;
+}
+
+/** Backend-relative download path for a stored artifact key. */
+export function artifactDownloadUrl(key) {
+  return `/api/devices/artifacts/${key}`;
+}
+
+/**
+ * Upload the full build/run log as a `.log` artifact via the existing
+ * device-artifact endpoint. Returns the backend-relative download URL,
+ * or null when the upload fails (quota exhausted, network error, etc.).
+ */
+export async function uploadLogArtifact(config, commandId, fullLog) {
+  try {
+    const filename = logArtifactFilename(commandId);
+    const url = artifactUploadUrl(config.server, filename);
+    const body = Buffer.from(fullLog, 'utf8');
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/octet-stream',
+        authorization: `Device ${config.deviceToken}`,
+      },
+      body,
+    });
+    if (!response.ok) return null;
+    const { key } = await response.json();
+    if (typeof key !== 'string' || !key) return null;
+    return artifactDownloadUrl(key);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Build the `failed` command_result, uploading the full log as an artifact
+ * when it exceeds LOG_UPLOAD_THRESHOLD_BYTES. The short tail is always
+ * present; `logArtifactUrl` is added only on a successful upload. Falls back
+ * gracefully to tail-only on quota exhaustion or network failure.
+ */
+export async function finalizeFailure(config, commandId, errorMessage, fullLog) {
+  const tail = tailLog(fullLog);
+  const base = { error: errorMessage, log: tail };
+  if (fullLog.length <= LOG_UPLOAD_THRESHOLD_BYTES) {
+    return commandResultMessage(commandId, 'failed', base);
+  }
+  const logArtifactUrl = await uploadLogArtifact(config, commandId, fullLog);
+  const result = logArtifactUrl ? { ...base, logArtifactUrl } : base;
+  return commandResultMessage(commandId, 'failed', result);
+}
+
 /** meta object sent in the claim body and the WS hello. */
 export function collectMeta({ agentVersion = AGENT_VERSION, dockerAvailable = false } = {}) {
   return {
