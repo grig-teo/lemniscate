@@ -5,6 +5,7 @@ import { config } from '../config.js';
 import { cleanupWorkdir, cloneRepository } from './agent-git.js';
 import {
   buildSkillsSection,
+  featuresProposalGuidanceLines,
   llmProposalsSchema,
   PROPOSAL_CATEGORIES,
   proposalJsonContractLines,
@@ -51,6 +52,7 @@ export function buildHermesProposalPrompt(opts: HermesProposalPromptOptions): st
     `Explore the current directory (a freshly cloned repository) and propose up to ${opts.maxProposals} concrete, URGENT improvements this repository genuinely needs — do not pad with filler or cosmetic tweaks.`,
     `Categorize each proposal under exactly one of: ${PROPOSAL_CATEGORIES.join(', ')}.`,
     'Cover DIFFERENT categories across the proposals. Order them by priority, critical first.',
+    ...featuresProposalGuidanceLines(),
     `Write them to ${PROPOSALS_FILENAME} in the repository root as STRICT JSON:`,
     ...proposalJsonContractLines(),
     `Do NOT implement the proposals. Do NOT git commit, push, or create branches — your only output is ${PROPOSALS_FILENAME}.`,

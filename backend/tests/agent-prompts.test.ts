@@ -11,6 +11,7 @@ import {
   llmProposalsSchema,
   maxBranchSlugLength,
   MAX_SKILLS_SECTION_CHARS,
+  PROPOSAL_CATEGORIES,
   proposalsSystemPrompt,
   requestChanges,
   slugify,
@@ -118,6 +119,32 @@ describe('system prompts', () => {
     expect(parsed[0]).toMatchObject({ priority: 'medium', effort: 'medium' });
     expect(parsed[1]).toMatchObject({ priority: 'critical', effort: 'large' });
     expect(parsed[2]).toMatchObject({ priority: 'medium', effort: 'medium' });
+  });
+
+  it('PROPOSAL_CATEGORIES registers features alongside the existing categories', () => {
+    expect(PROPOSAL_CATEGORIES).toContain('features');
+    expect(PROPOSAL_CATEGORIES).toContain('security');
+    expect(PROPOSAL_CATEGORIES).toContain('testing');
+  });
+
+  it('proposalsSystemPrompt requires features proposals for new implementations', () => {
+    const prompt = proposalsSystemPrompt(null);
+    expect(prompt).toContain('features');
+    expect(prompt).toContain('at least one `features` proposal');
+    expect(prompt).toContain('NEW implementations');
+  });
+
+  it('llmProposalsSchema accepts the features category', () => {
+    const parsed = llmProposalsSchema.parse([
+      {
+        title: 'Add SSO login',
+        prompt: 'P',
+        category: 'features',
+        priority: 'high',
+        effort: 'large',
+      },
+    ]);
+    expect(parsed[0]).toMatchObject({ category: 'features', priority: 'high', effort: 'large' });
   });
 });
 

@@ -248,6 +248,7 @@ export function buildPrBody(task: Task, summary: string): string {
 
 /** Canonical category labels for generated proposals (shown as badges in the UI). */
 export const PROPOSAL_CATEGORIES = [
+  'features',
   'ux/ui',
   'security',
   'bug fix',
@@ -307,6 +308,17 @@ export function proposalDocumentSectionLines(): string[] {
   ];
 }
 
+/** Shared guidance for the `features` category — the single home for the
+ *  rules used by both proposal generation prompts (direct LLM and hermes).
+ *  Feature proposals extend the product: new implementations, not
+ *  maintenance of what already exists. */
+export function featuresProposalGuidanceLines(): string[] {
+  return [
+    '`features` proposals suggest NEW implementations: capabilities, modules, integrations, or user-facing functionality the repository does not have yet — not maintenance of what exists.',
+    'Include at least one `features` proposal whenever a genuine opportunity exists. A features proposal must name the concrete area of the codebase it extends, state the user/business value it unlocks, and be implementable within this repository.',
+  ];
+}
+
 /** Shared JSON contract lines used by both proposal generation prompts. */
 export function proposalJsonContractLines(): string[] {
   return [
@@ -325,6 +337,7 @@ export function proposalsSystemPrompt(systemPromptExtra: string | null): string 
     'Analyze the code and propose up to 5 concrete, URGENT improvements this repository genuinely needs — do not pad with filler or cosmetic tweaks.',
     `Categorize each proposal under exactly one of: ${PROPOSAL_CATEGORIES.join(', ')}.`,
     'Cover DIFFERENT categories across the proposals.',
+    ...featuresProposalGuidanceLines(),
     'Order the proposals by priority, critical first.',
     'Respond with STRICT JSON only — no markdown fences, no commentary — a JSON array matching:',
     ...proposalJsonContractLines(),
