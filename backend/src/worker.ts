@@ -144,9 +144,11 @@ console.log(
   `worker ready, consuming queue '${AGENT_QUEUE_NAME}' via ${redisEndpointForLog(config.REDIS_URL)}`,
 );
 
-// Liveness signal for the container healthcheck: rewritten on a timer, so a
-// wedged worker (blocked event loop, dead consumer) goes stale and Docker
-// restarts it. An idle worker with an empty queue keeps ticking.
+// Process-level tripwire: rewritten on a timer, so a wedged worker (blocked
+// event loop, dead consumer) leaves a stale file an external watchdog can
+// detect. The compose healthcheck probes the HTTP health server below; this
+// file is only a fallback signal. An idle worker with an empty queue keeps
+// ticking.
 const stopHeartbeat = startHeartbeat();
 
 // Register the single global repeatable 'proposals-topup' job (every 6h).

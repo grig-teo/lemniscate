@@ -1,13 +1,15 @@
 import type { FastifyInstance } from 'fastify';
 import { checkReadiness, type HealthDeps } from '../lib/health.js';
-import { assertLibraryBucket, minioConfigured } from '../lib/minio-client.js';
+import { ensureLibraryBucket, minioConfigured } from '../lib/minio-client.js';
 import { prisma } from '../lib/prisma.js';
 import { getRedisClient } from '../lib/redis.js';
 
 // Liveness vs readiness: /health only proves the process answers HTTP (kept
 // cheap so it never flaps), while /health/ready proves the API can actually
 // serve — Postgres accepts a query, Redis answers PING, and (when MinIO is
-// configured) the library bucket exists — each bounded by
+// configured) the library bucket is reachable (ensuring it exists, so a
+// fresh deployment converges to healthy instead of wedging on the
+// lazily-created bucket) — each bounded by
 // READINESS_TIMEOUT_MS. Readiness returns 503 with per-check results so
 // compose healthchecks and external monitors reflect real dependency
 // health; a 503 there means "stop routing traffic/jobs to me".
@@ -22,7 +24,7 @@ async function productionDeps(): Promise<HealthDeps> {
   // MinIO is optional (local dev runs without it); only probe it when the
   // operator configured it, otherwise it would 503 every readiness check.
   if (await minioConfigured()) {
-    deps.checkMinio = () => assertLibraryBucket();
+    deps.checkMinio = () => ensureLibraryBucket();
   }
   return deps;
 }

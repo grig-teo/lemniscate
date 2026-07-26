@@ -61,18 +61,27 @@ export async function minioConfigured(): Promise<boolean> {
   return (await getMinioClient()) !== null;
 }
 
+/** Create the bucket when missing; rejects when MinIO is unreachable. */
+async function ensureBucket(minio: Client, bucket: string): Promise<void> {
+  if (!(await minio.bucketExists(bucket))) {
+    await minio.makeBucket(bucket);
+  }
+}
+
 /**
- * Readiness probe for the configured library bucket. Rejects when MinIO is
- * unreachable or the bucket is missing, so a failed probeDependency marks
- * the check unhealthy. Callers must gate on minioConfigured() first.
+ * Readiness probe for the configured library bucket. Ensures the bucket
+ * rather than merely asserting it: nothing else creates MINIO_BUCKET at
+ * startup (getMinioBucket creates it lazily on first library use), so a pure
+ * existence check would 503 /health/ready forever on a fresh deployment and
+ * wedge every depends_on: service_healthy consumer. Still hits MinIO on
+ * every call, so an unreachable server keeps failing readiness. Callers must
+ * gate on minioConfigured() first.
  */
-export async function assertLibraryBucket(): Promise<void> {
+export async function ensureLibraryBucket(): Promise<void> {
   const minio = await getMinioClient();
   if (!minio) throw new Error('minio is not configured');
   const { config } = await import('../config.js');
-  if (!(await minio.bucketExists(config.MINIO_BUCKET))) {
-    throw new Error(`minio bucket '${config.MINIO_BUCKET}' missing`);
-  }
+  await ensureBucket(minio, config.MINIO_BUCKET);
 }
 
 /** Configured client + ensured bucket, or null when MinIO env vars are unset. */
@@ -80,9 +89,7 @@ export async function getMinioBucket(bucket: string): Promise<{ client: Client }
   const minio = await getMinioClient();
   if (!minio) return null;
   if (!readyBuckets.has(bucket)) {
-    if (!(await minio.bucketExists(bucket))) {
-      await minio.makeBucket(bucket);
-    }
+    await ensureBucket(minio, bucket);
     if (bucket === DEVICE_ARTIFACTS_BUCKET) {
       await applyArtifactLifecycle(minio, bucket);
     }

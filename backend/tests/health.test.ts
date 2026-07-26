@@ -5,8 +5,9 @@ import { registerHealthRoutes, type HealthDeps } from '../src/routes/health.js';
 
 // Readiness contract: /health stays a dependency-free liveness probe while
 // /health/ready verifies Postgres (SELECT 1), Redis (PING) and — when MinIO
-// is configured — the library bucket (bucketExists), answering 503 with
-// per-check results when any dependency is down or too slow to answer.
+// is configured — the library bucket (ensured via bucketExists/makeBucket),
+// answering 503 with per-check results when any dependency is down or too
+// slow to answer.
 // minio is tri-state in the payload: null means "not configured" and does
 // not affect readiness.
 

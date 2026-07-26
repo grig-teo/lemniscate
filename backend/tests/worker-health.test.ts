@@ -99,7 +99,7 @@ describe('startWorkerHealthServer /health/ready', () => {
     } finally {
       server.close();
     }
- });
+  });
 
   it('answers 503 when the Redis ping rejects (queue stall)', async () => {
     const server = await listenWithDeps({
@@ -115,7 +115,7 @@ describe('startWorkerHealthServer /health/ready', () => {
     } finally {
       server.close();
     }
- });
+  });
 
   it('answers 503 when the consumer is not running', async () => {
     const server = await listenWithDeps({ ...readyDeps, isRunning: () => false });
@@ -126,7 +126,7 @@ describe('startWorkerHealthServer /health/ready', () => {
     } finally {
       server.close();
     }
- });
+  });
 
   it('answers 503 when the Redis ping hangs past the probe timeout', async () => {
     const server = await listenWithDeps({
