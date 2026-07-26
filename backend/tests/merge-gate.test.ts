@@ -16,6 +16,13 @@ vi.mock('../src/lib/proposal-scheduler.js', () => ({}));
 vi.mock('../src/lib/deploy/deploy-service.js', () => ({}));
 vi.mock('../src/lib/pull-requests.js', () => ({}));
 vi.mock('../src/lib/task-events.js', () => ({}));
+// merge-gate notifies on merged/gave-up; the emitters pull in lib/crypto
+// (ENCRYPTION_KEY absent from the partial config mock above). Notification
+// fan-out is covered in notification-delivery.test.ts.
+vi.mock('../src/lib/notifications.js', () => ({
+  notify: vi.fn().mockResolvedValue(undefined),
+  notifyOncePerTask: vi.fn().mockResolvedValue(undefined),
+}));
 
 import {
   MAX_CI_FIX_ATTEMPTS,

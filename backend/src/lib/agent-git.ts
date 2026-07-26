@@ -8,7 +8,6 @@ import { generateCommitMessage } from './agent-prompts.js';
 import type { LlmRuntime, TokenSplit } from './agent-runtime.js';
 import { prisma } from './prisma.js';
 import { errorKind, logJobFailure } from './job-failure-log.js';
-import { notifyTaskFailure } from './notifications.js';
 import { publishTaskEvent } from './task-events.js';
 import { errorMessage, redactSecrets } from './utils.js';
 import { archiveWorkdirToMinio } from './workdir-archive.js';
@@ -253,7 +252,12 @@ export function explainGitFailure(message: string): string {
 
 // Logs a job failure as one structured JSON line (and to the task's event
 // stream, both best-effort scrubbed). Returns the sanitized message for
-// status updates.
+// status updates. The user-facing notification goes through logJobFailure
+// only — the single failure funnel (AGENTS.md §6) — and is awaited so the
+// notification row exists before callers rethrow: the worker 'failed' hook
+// funnels the same throw through logJobFailure again, and the sequential
+// unread dedupe (notifyOncePerTask) then prevents a duplicate instead of
+// racing a concurrent fire-and-forget flow.
 export async function recordJobFailure(
   jobKind: string,
   taskId: string,
@@ -261,11 +265,8 @@ export async function recordJobFailure(
   secrets: string[],
 ): Promise<string> {
   const message = explainGitFailure(redactSecrets(errorMessage(err), secrets)).slice(0, 1_000);
-  logJobFailure({ jobName: jobKind, taskId, errorKind: errorKind(err), message });
+  await logJobFailure({ jobName: jobKind, taskId, errorKind: errorKind(err), message });
   await logEvent(taskId, `error: ${message}`).catch(() => {});
-  // User-facing notification (deduped per task+kind inside, so BullMQ
-  // retries of review/merge jobs cannot spam); never blocks the failure path.
-  await notifyTaskFailure(taskId, errorKind(err), message).catch(() => {});
   return message;
 }
 

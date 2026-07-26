@@ -1,15 +1,19 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 // Unit tests for lib/notifications.ts: row creation, failure-kind mapping,
-// unread dedupe against BullMQ retry spam, and webhook delivery (HMAC
-// signature, best-effort failures). prisma and fetch are mocked; url-safety
-// is stubbed so no DNS is touched.
+// unread dedupe against BullMQ retry spam, and the webhook signing helper.
+// Outbound channel fan-out is covered in notification-delivery.test.ts;
+// here the channel query simply returns no settings. prisma is mocked.
 
 const mocks = vi.hoisted(() => ({
   notificationCreate: vi.fn(),
   notificationFindFirst: vi.fn(),
+  settingFindMany: vi.fn(),
+  deliveryCreate: vi.fn(),
   taskFindUnique: vi.fn(),
-  userFindUnique: vi.fn(),
+  llmConfigFindMany: vi.fn(),
+  repositoryFindUnique: vi.fn(),
+  queueAdd: vi.fn(),
   fetch: vi.fn(),
 }));
 
@@ -19,19 +23,27 @@ vi.mock('../src/lib/prisma.js', () => ({
       create: mocks.notificationCreate,
       findFirst: mocks.notificationFindFirst,
     },
+    notificationSetting: { findMany: mocks.settingFindMany },
+    notificationDelivery: { create: mocks.deliveryCreate },
     task: { findUnique: mocks.taskFindUnique },
-    user: { findUnique: mocks.userFindUnique },
+    llmConfig: { findMany: mocks.llmConfigFindMany },
+    repository: { findUnique: mocks.repositoryFindUnique },
   },
 }));
-vi.mock('../src/lib/url-safety.js', () => ({ assertPublicHttpUrl: vi.fn() }));
+vi.mock('../src/lib/queue.js', () => ({
+  getAgentTasksQueue: () => ({ add: mocks.queueAdd }),
+}));
 vi.stubGlobal('fetch', mocks.fetch);
 
 import {
+  generateWebhookSecret,
+  NOTIFICATION_KINDS,
   notify,
+  notifyJobFailure,
   notifyTaskFailure,
   signWebhookBody,
-  WEBHOOK_SIGNATURE_HEADER,
 } from '../src/lib/notifications.js';
+import { encrypt } from '../src/lib/crypto.js';
 
 const TASK = {
   title: 'Fix the thing',
@@ -46,9 +58,10 @@ beforeEach(() => {
     ...data,
   }));
   mocks.notificationFindFirst.mockResolvedValue(null);
+  mocks.settingFindMany.mockResolvedValue([]);
   mocks.taskFindUnique.mockResolvedValue(TASK);
-  mocks.userFindUnique.mockResolvedValue({ webhookUrl: null, webhookSecretEnc: null });
-  mocks.fetch.mockResolvedValue({ ok: true, status: 200 });
+  mocks.llmConfigFindMany.mockResolvedValue([]);
+  mocks.repositoryFindUnique.mockResolvedValue(null);
 });
 
 describe('signWebhookBody', () => {
@@ -57,6 +70,30 @@ describe('signWebhookBody', () => {
     expect(signature).toMatch(/^sha256=[0-9a-f]{64}$/);
     expect(signWebhookBody('secret', '{"a":1}')).toBe(signature);
     expect(signWebhookBody('other', '{"a":1}')).not.toBe(signature);
+  });
+});
+
+describe('generateWebhookSecret', () => {
+  it('mints 32 bytes of hex', () => {
+    expect(generateWebhookSecret()).toMatch(/^[0-9a-f]{64}$/);
+    expect(generateWebhookSecret()).not.toBe(generateWebhookSecret());
+  });
+});
+
+describe('NOTIFICATION_KINDS', () => {
+  it('covers every wired producer event', () => {
+    for (const kind of [
+      'pr_opened',
+      'pr_merged',
+      'pr_closed',
+      'run_failed',
+      'budget_exceeded',
+      'task_completed',
+      'merge_gate_failed',
+      'job_failed',
+    ]) {
+      expect(NOTIFICATION_KINDS).toContain(kind);
+    }
   });
 });
 
@@ -80,44 +117,13 @@ describe('notify', () => {
     });
   });
 
-  it('delivers an HMAC-signed webhook when the user configured one', async () => {
-    // encrypt() round-trips through the test ENCRYPTION_KEY (vitest env).
-    const { encrypt } = await import('../src/lib/crypto.js');
-    mocks.userFindUnique.mockResolvedValue({
-      webhookUrl: 'https://hooks.example.com/bridge',
-      webhookSecretEnc: encrypt('whsec'),
-    });
-
-    await notify('user-1', 'pr_merged', { title: 't', body: 'b', taskId: 't1' });
-
-    expect(mocks.fetch).toHaveBeenCalledTimes(1);
-    const [url, init] = mocks.fetch.mock.calls[0] as unknown as [
-      string,
-      { method: string; headers: Record<string, string>; body: string },
-    ];
-    expect(url).toBe('https://hooks.example.com/bridge');
-    expect(init.method).toBe('POST');
-    expect(init.headers[WEBHOOK_SIGNATURE_HEADER]).toBe(signWebhookBody('whsec', init.body));
-    expect(JSON.parse(init.body)).toMatchObject({ kind: 'pr_merged', taskId: 't1' });
-  });
-
-  it('skips the webhook when none is configured', async () => {
-    await notify('user-1', 'pr_closed', { title: 't', body: 'b' });
-    expect(mocks.fetch).not.toHaveBeenCalled();
-  });
-
-  it('swallows webhook delivery failures (never fails the producer)', async () => {
-    const { encrypt } = await import('../src/lib/crypto.js');
-    mocks.userFindUnique.mockResolvedValue({
-      webhookUrl: 'https://hooks.example.com/bridge',
-      webhookSecretEnc: encrypt('whsec'),
-    });
-    mocks.fetch.mockRejectedValue(new Error('socket hang up'));
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+  it('swallows dispatch failures (never fails the producer)', async () => {
+    mocks.settingFindMany.mockRejectedValue(new Error('db down'));
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
 
     await expect(notify('user-1', 'run_failed', { title: 't', body: 'b' })).resolves.toBeUndefined();
     expect(mocks.notificationCreate).toHaveBeenCalledTimes(1);
-    warn.mockRestore();
+    error.mockRestore();
   });
 });
 
@@ -158,5 +164,89 @@ describe('notifyTaskFailure', () => {
     mocks.taskFindUnique.mockResolvedValue(null);
     await notifyTaskFailure('ghost', 'Error', 'boom');
     expect(mocks.notificationCreate).not.toHaveBeenCalled();
+  });
+});
+
+// Worker-level failures (worker.ts 'failed' hook) reach notifyJobFailure with
+// a raw err.message that never passed recordJobFailure's redactSecrets scrub.
+// The notification layer is the last line of defense: messages must be
+// scrubbed against the owning connection's tokens, the user's LLM keys, and
+// config-level MONITORED_SECRETS before they hit the in-app bell or a signed
+// webhook payload.
+describe('failure message scrubbing', () => {
+  function lastNotificationBody(): string {
+    return mocks.notificationCreate.mock.calls.at(-1)?.[0].data.body as string;
+  }
+
+  it('notifyTaskFailure redacts connection tokens and LLM keys from the message', async () => {
+    mocks.taskFindUnique.mockResolvedValue({
+      ...TASK,
+      repository: {
+        ...TASK.repository,
+        connection: {
+          userId: 'user-1',
+          accessTokenEnc: encrypt('ghp_live_token'),
+          refreshTokenEnc: encrypt('refresh_token_value'),
+        },
+      },
+    });
+    mocks.llmConfigFindMany.mockResolvedValue([{ apiKeyEnc: encrypt('sk-llm-key') }]);
+
+    await notifyTaskFailure(
+      't1',
+      'Error',
+      'push failed: ghp_live_token / sk-llm-key / refresh_token_value',
+    );
+
+    const body = lastNotificationBody();
+    expect(body).not.toContain('ghp_live_token');
+    expect(body).not.toContain('sk-llm-key');
+    expect(body).not.toContain('refresh_token_value');
+    expect(body).toContain('[redacted]');
+  });
+
+  it('notifyTaskFailure redacts config-level MONITORED_SECRETS from the message', async () => {
+    await notifyTaskFailure('t1', 'Error', 'queue connect redis://localhost:6379 failed');
+
+    expect(lastNotificationBody()).not.toContain('redis://localhost:6379');
+  });
+
+  it('skips undecryptable secret rows instead of failing the notification', async () => {
+    mocks.taskFindUnique.mockResolvedValue({
+      ...TASK,
+      repository: {
+        ...TASK.repository,
+        connection: { userId: 'user-1', accessTokenEnc: 'garbage', refreshTokenEnc: null },
+      },
+    });
+    mocks.llmConfigFindMany.mockResolvedValue([{ apiKeyEnc: 'also-garbage' }]);
+
+    await notifyTaskFailure('t1', 'Error', 'boom');
+
+    expect(mocks.notificationCreate).toHaveBeenCalledTimes(1);
+    expect(lastNotificationBody()).toContain('boom');
+  });
+
+  it('notifyJobFailure redacts secrets from repository-scoped job failures', async () => {
+    mocks.repositoryFindUnique.mockResolvedValue({
+      fullName: 'org/demo',
+      connection: {
+        userId: 'user-1',
+        accessTokenEnc: encrypt('ghp_live_token'),
+        refreshTokenEnc: null,
+      },
+    });
+
+    await notifyJobFailure({
+      jobName: 'generate-proposals',
+      repositoryId: 'r1',
+      errorKind: 'Error',
+      message: 'clone failed for ghp_live_token',
+    });
+
+    const body = lastNotificationBody();
+    expect(mocks.notificationCreate).toHaveBeenCalledTimes(1);
+    expect(body).not.toContain('ghp_live_token');
+    expect(body).toContain('org/demo');
   });
 });
