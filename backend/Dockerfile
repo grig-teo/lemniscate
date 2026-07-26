@@ -22,7 +22,9 @@ ENV NODE_ENV=production
 # git: the worker clones repositories; openssl: required by Prisma engines on alpine.
 # bash/curl/xz/ripgrep: prerequisites of the Hermes Agent CLI installer below.
 # tar: cleanupWorkdir snapshots workdirs into MinIO tarballs before removal.
-RUN apk add --no-cache git openssl bash curl xz ripgrep tar \
+# docker-cli: the deploy-service job builds/starts user service containers
+# via the mounted host docker socket (compose mounts /var/run/docker.sock).
+RUN apk add --no-cache git openssl bash curl xz ripgrep tar docker-cli \
   && addgroup -S app && adduser -S app -G app
 # Hermes Agent CLI: the worker runs `hermes chat -q ...` inside cloned repos.
 # Installed as root, so the script uses its FHS layout: code at

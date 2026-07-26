@@ -59,6 +59,14 @@ services:
       MINIO_PORT: "9000"
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-lemniscate}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-lemniscate-minio}
+      MINIO_BUCKET: ${MINIO_BUCKET:-lemniscate-library}
+      TRAEFIK_PROVIDER_TOKEN: ${TRAEFIK_PROVIDER_TOKEN:-}
+    # docker.sock: service stop/delete and live container logs run docker
+    # from the API (same trust level as the worker; see the note there).
+    group_add:
+      - "${DOCKER_GID:-990}"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
     ports:
       - "${BACKEND_BIND:-127.0.0.1:3000}:3000"
     depends_on:
@@ -89,11 +97,21 @@ services:
       MINIO_PORT: "9000"
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-lemniscate}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-lemniscate-minio}
+      MINIO_BUCKET: ${MINIO_BUCKET:-lemniscate-library}
       WORKER_HEALTH_PORT: "3100"
+      TRAEFIK_PROVIDER_TOKEN: ${TRAEFIK_PROVIDER_TOKEN:-}
+    # docker.sock: the deploy-service job builds/starts user service
+    # containers. group_add grants the app user the host docker group
+    # (getent group docker on the host). Sock access = root-equivalent on
+    # the host; acceptable on this single-tenant VPS, and user containers
+    # are isolated on the apps network (no platform services reachable).
+    group_add:
+      - "${DOCKER_GID:-990}"
     ports:
       - "${WORKER_HEALTH_BIND:-127.0.0.1:3100}:3100"
     volumes:
       - agent-workdir:/tmp/lemniscate-repos
+      - /var/run/docker.sock:/var/run/docker.sock
     depends_on:
       postgres:
         condition: service_healthy
@@ -116,6 +134,38 @@ services:
     depends_on:
       backend:
         condition: service_healthy
+
+  # Edge router for user service containers (Lemniscate Apps). The dynamic
+  # config comes from the backend's HTTP-provider endpoint (polls every 5s);
+  # host nginx proxies apps.grig-teo.space → 127.0.0.1:8088. Traefik is the
+  # ONLY bridge between the platform network and the isolated apps network.
+  traefik:
+    image: traefik:v3.1
+    restart: unless-stopped
+    command:
+      - --entrypoints.web.address=:8088
+      - --providers.http.endpoint=http://backend:3000/api/internal/traefik/dynamic
+      - --providers.http.pollInterval=5s
+      - --providers.http.headers.x-traefik-token=${TRAEFIK_PROVIDER_TOKEN:-}
+      - --providers.docker=false
+      - --api=false
+      - --log.level=WARN
+    ports:
+      - "${TRAEFIK_BIND:-127.0.0.1:8088}:8088"
+    networks:
+      - default
+      - apps-net
+    depends_on:
+      backend:
+        condition: service_healthy
+
+networks:
+  # Service containers live here ONLY: no Postgres/Redis/MinIO/backend, so a
+  # compromised user app cannot reach platform internals. The name is pinned
+  # (no project prefix) so the worker's APPS_NETWORK default matches.
+  apps-net:
+    name: lemniscate-apps
+    driver: bridge
 
 volumes:
   pgdata:

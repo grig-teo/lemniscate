@@ -179,6 +179,23 @@ export async function enqueueGenerateProposalsNow(repositoryId: string): Promise
   );
 }
 
+// Enqueues a 'deploy-service' job (docker build → start → health → flip).
+// Low priority: builds are CPU-heavy and must not starve agent tasks.
+export async function enqueueDeployService(deploymentId: string): Promise<void> {
+  await getAgentTasksQueue().add(
+    'deploy-service',
+    { deploymentId },
+    {
+      jobId: `deploy-${deploymentId}`,
+      removeOnComplete: true,
+      removeOnFail: true,
+      priority: JOB_PRIORITY.background,
+      attempts: 2,
+      backoff: { type: 'exponential', delay: 30_000 },
+    },
+  );
+}
+
 // Enqueues a 'merge-gate' job: the CI-gated auto-merge owner for a reviewed
 // PR. Re-enqueues itself (delayed) while checks are pending, after a CI fix
 // push, and after a conflict-resolution push; `attempt`/`ciFixes` bound the

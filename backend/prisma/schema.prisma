@@ -151,6 +151,7 @@ model Repository {
   llmConfig     LlmConfig?    @relation("RepositoryLlm", fields: [llmConfigId], references: [id], onDelete: SetNull)
   reviewLlmConfig LlmConfig?  @relation("RepositoryReviewLlm", fields: [reviewLlmConfigId], references: [id], onDelete: SetNull)
   tasks         Task[]
+  service       Service?
 
   @@unique([connectionId, externalId])
   @@index([llmConfigId])
@@ -309,4 +310,62 @@ model DeviceCommand {
 
   @@index([deviceId])
   @@index([taskId])
+}
+
+enum ServiceStatus {
+  stopped
+  deploying
+  online
+  failed
+}
+
+enum DeployStatus {
+  queued
+  building
+  starting
+  checking
+  online
+  failed
+}
+
+// One deployable service per repository (v1), reachable at
+// https://apps.grig-teo.space/<connection.username>/<name>. Deployed by the
+// worker's 'deploy-service' job into a container on the isolated apps
+// network; Traefik routes via the backend's dynamic-config endpoint.
+model Service {
+  id           String        @id @default(cuid())
+  repositoryId String        @unique
+  // URL slug segment (lowercase [a-z0-9-]); unique per connection username,
+  // enforced in the route (the pair forms the public path).
+  name         String
+  // Container port the app listens on (Traefik target port).
+  port         Int           @default(80)
+  // Per-service env vars, AES-256-GCM encrypted JSON {KEY: value}; decrypted
+  // only into `docker run --env` at deploy time, never logged.
+  envEnc       String?
+  autoDeploy   Boolean       @default(true)
+  status       ServiceStatus @default(stopped)
+  // Currently routed container name (blue/green flip target); null when
+  // nothing is deployed.
+  activeContainer String?
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+  repository   Repository    @relation(fields: [repositoryId], references: [id], onDelete: Cascade)
+  deployments  Deployment[]
+}
+
+model Deployment {
+  id         String       @id @default(cuid())
+  serviceId  String
+  // Merge that triggered this deploy; null for manual redeploys.
+  taskId     String?
+  commitSha  String
+  status     DeployStatus @default(queued)
+  // Capped log tail (build/run/health output), ~50KB.
+  log        String       @default("")
+  createdAt  DateTime     @default(now())
+  finishedAt DateTime?
+  service    Service      @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+
+  @@index([serviceId])
 }

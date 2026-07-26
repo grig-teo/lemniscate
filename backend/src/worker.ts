@@ -7,6 +7,7 @@ import { config } from './config.js';
 import { planWorkdirSweep } from './lib/agent-git.js';
 import { generateProposals, reviewTask, runTask } from './lib/agent-loop.js';
 import { mergeGateTask } from './lib/merge-gate.js';
+import { deployService } from './lib/deploy/deploy-service.js';
 import { prisma } from './lib/prisma.js';
 import {
   AGENT_QUEUE_NAME,
@@ -33,6 +34,7 @@ const mergeGateDataSchema = z.object({
   attempt: z.number().int().min(0).default(0),
   ciFixes: z.number().int().min(0).default(0),
 });
+const deployServiceDataSchema = z.object({ deploymentId: z.string().min(1) });
 const generateProposalsDataSchema = z.object({ repositoryId: z.string().min(1) });
 const proposalsTopUpDataSchema = z.object({}).strict();
 
@@ -84,6 +86,11 @@ const worker = new Worker(
       case 'merge-gate': {
         const { taskId, attempt, ciFixes } = mergeGateDataSchema.parse(job.data);
         await mergeGateTask(taskId, attempt, ciFixes);
+        return;
+      }
+      case 'deploy-service': {
+        const { deploymentId } = deployServiceDataSchema.parse(job.data);
+        await deployService(deploymentId);
         return;
       }
       case 'generate-proposals': {

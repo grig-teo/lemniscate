@@ -841,3 +841,105 @@ export function useCreateDeviceCommand() {
     },
   });
 }
+
+// ---------------------------------------------------------------------------
+// Services (Lemniscate Apps)
+// ---------------------------------------------------------------------------
+
+import type { AppService, ServiceDeployment } from '@/lib/services';
+
+function useInvalidateServices() {
+  const queryClient = useQueryClient();
+  return () => {
+    void queryClient.invalidateQueries({ queryKey: ['services'] });
+  };
+}
+
+/** GET /api/services — polled: statuses flip while deploys run. */
+export function useServices() {
+  return useQuery({
+    queryKey: ['services'],
+    queryFn: () => api.get<{ services: AppService[] }>('/api/services').then((res) => res.services),
+    refetchInterval: 5_000,
+  });
+}
+
+export function useCreateService() {
+  const invalidate = useInvalidateServices();
+  return useMutation({
+    mutationFn: (input: { repositoryId: string; name?: string; port?: number; autoDeploy?: boolean }) =>
+      api.post<{ service: AppService }>('/api/services', input).then((res) => res.service),
+    onSuccess: invalidate,
+  });
+}
+
+export function useUpdateService(serviceId: string) {
+  const invalidate = useInvalidateServices();
+  return useMutation({
+    mutationFn: (patch: { name?: string; port?: number; autoDeploy?: boolean }) =>
+      api.patch<{ service: AppService }>(`/api/services/${serviceId}`, patch),
+    onSuccess: invalidate,
+  });
+}
+
+export function useDeleteService() {
+  const invalidate = useInvalidateServices();
+  return useMutation({
+    mutationFn: (serviceId: string) => api.del(`/api/services/${serviceId}`),
+    onSuccess: invalidate,
+  });
+}
+
+export function useDeployService() {
+  const invalidate = useInvalidateServices();
+  return useMutation({
+    mutationFn: (serviceId: string) =>
+      api.post<{ deployment: ServiceDeployment }>(`/api/services/${serviceId}/deploy`),
+    onSuccess: invalidate,
+  });
+}
+
+export function useStopService() {
+  const invalidate = useInvalidateServices();
+  return useMutation({
+    mutationFn: (serviceId: string) => api.post(`/api/services/${serviceId}/stop`),
+    onSuccess: invalidate,
+  });
+}
+
+/** GET /api/services/:id/deployments — last 20, polled while any is active. */
+export function useServiceDeployments(serviceId: string | null) {
+  return useQuery({
+    queryKey: ['service-deployments', serviceId],
+    enabled: serviceId !== null,
+    queryFn: () =>
+      api
+        .get<{ deployments: ServiceDeployment[] }>(`/api/services/${serviceId}/deployments`)
+        .then((res) => res.deployments),
+    refetchInterval: 5_000,
+  });
+}
+
+/** POST body for the env merge endpoint: set adds/replaces, remove deletes. */
+export interface ServiceEnvPatch {
+  set: Record<string, string>;
+  remove: string[];
+}
+
+export function useSaveServiceEnv(serviceId: string) {
+  const invalidate = useInvalidateServices();
+  return useMutation({
+    mutationFn: (patch: ServiceEnvPatch) =>
+      api.put<{ keys: string[] }>(`/api/services/${serviceId}/env`, { ...patch }),
+    onSuccess: invalidate,
+  });
+}
+
+/** Live container logs, fetched on demand (enabled flag). */
+export function useServiceLogs(serviceId: string | null, enabled: boolean) {
+  return useQuery({
+    queryKey: ['service-logs', serviceId],
+    enabled: enabled && serviceId !== null,
+    queryFn: () => api.get<{ log: string }>(`/api/services/${serviceId}/logs`).then((res) => res.log),
+  });
+}

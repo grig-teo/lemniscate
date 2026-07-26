@@ -94,6 +94,19 @@ const envSchema = z.object({
   // Hard kill for one `hermes chat` run; the job then fails the task.
   AGENT_HERMES_TIMEOUT_MINUTES: z.coerce.number().int().positive().default(45),
 
+  // --- Service deployments (Lemniscate Apps) ---
+  // Shared secret between Traefik (HTTP provider) and the backend's
+  // /api/internal/traefik/dynamic endpoint. Empty = endpoint disabled (503).
+  TRAEFIK_PROVIDER_TOKEN: z.string().default(''),
+  // Docker bridge network service containers join (isolated from platform
+  // internals; Traefik is the only member shared with the platform).
+  APPS_NETWORK: z.string().min(1).default('lemniscate-apps'),
+  // Public base URL of the apps domain, for display in the UI.
+  APPS_BASE_URL: z.string().default('https://apps.grig-teo.space'),
+  // Resource limits applied to every service container.
+  APPS_CONTAINER_MEMORY: z.string().min(1).default('512m'),
+  APPS_CONTAINER_CPUS: z.string().min(1).default('1'),
+
   // --- API limits ---
   // Queued+running tasks a single user may have at once; the 6th concurrent
   // create is rejected with 429.

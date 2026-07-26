@@ -12,6 +12,7 @@ import mcpServersRoutes from './routes/mcp-servers.js';
 import libraryRoutes from './routes/library.js';
 import tasksRoutes from './routes/tasks.js';
 import devicesRoutes from './routes/devices.js';
+import servicesRoutes, { servicesInternalRoutes } from './routes/services.js';
 
 async function registerPlugins(app: FastifyInstance) {
   await app.register(cookie);
@@ -37,6 +38,9 @@ async function registerRoutes(app: FastifyInstance) {
   // tasks.ts declares its routes as `/tasks...` (same convention as
   // repositories.ts), so it mounts under /api, not /api/tasks.
   await app.register(tasksRoutes, { prefix: '/api' });
+  await app.register(servicesRoutes, { prefix: '/api' });
+  // Traefik's HTTP provider endpoint; token-guarded, no session auth.
+  await app.register(servicesInternalRoutes, { prefix: '/api' });
   // Liveness (/health) + readiness (/health/ready), unprefixed.
   await app.register(healthRoutes);
 }

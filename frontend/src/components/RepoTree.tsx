@@ -10,6 +10,7 @@ import { ConnectionGroup } from '@/components/repo-tree/ConnectionGroup';
 import { CreateRepoDialog } from '@/components/repo-tree/CreateRepoDialog';
 import { useExpandedMap } from '@/components/repo-tree/useExpandedMap';
 import { DeviceBar } from '@/components/devices/DeviceBar';
+import { ServicesSection } from '@/components/services/ServicesSection';
 
 type ReposQuery = ReturnType<typeof useRepositories>;
 
@@ -121,6 +122,10 @@ export function RepoTree({ width }: { width: number }) {
           onToggleRepo={toggle}
         />
       </ScrollArea>
+
+      {/* Services (deployed apps): fixed block between the scrolling repo
+          list and the pinned device bar. */}
+      <ServicesSection />
 
       {/* Paired devices: a constant, non-scrolling strip pinned to the
           bottom of the sidebar while the repo list scrolls above it. */}

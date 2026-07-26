@@ -9,6 +9,7 @@ import { readPersisted, writePersisted } from '@/lib/persist';
 
 const SELECTED_TASK_STORAGE_KEY = 'lemniscate.selected-task';
 const SELECTED_REPO_STORAGE_KEY = 'lemniscate.selected-repo';
+const SELECTED_SERVICE_STORAGE_KEY = 'lemniscate.selected-service';
 
 export interface SelectedTask {
   id: string;
@@ -31,6 +32,9 @@ interface WorkspaceSelectionValue {
   archivedRepoId: string | null;
   openArchived: (repoId: string) => void;
   closeArchived: () => void;
+  /** Service whose detail pane is open in the center pane. */
+  selectedServiceId: string | null;
+  selectService: (id: string | null) => void;
   /** Live status from SSE `status` events; overrides selectedTask.status. */
   liveStatus: string | null;
   setLiveStatus: (status: string | null) => void;
@@ -48,12 +52,17 @@ export function WorkspaceSelectionProvider({ children }: { children: React.React
     readPersisted<string | null>(SELECTED_REPO_STORAGE_KEY, null),
   );
   const [archivedRepoId, setArchivedRepoId] = React.useState<string | null>(null);
+  const [selectedServiceId, setSelectedServiceId] = React.useState<string | null>(() =>
+    readPersisted<string | null>(SELECTED_SERVICE_STORAGE_KEY, null),
+  );
 
   const selectTask = React.useCallback((task: SelectedTask | null) => {
     setSelectedTask(task);
     writePersisted(SELECTED_TASK_STORAGE_KEY, task);
     setLiveStatus(null);
     setArchivedRepoId(null);
+    setSelectedServiceId(null);
+    writePersisted(SELECTED_SERVICE_STORAGE_KEY, null);
   }, []);
 
   const selectRepository = React.useCallback((id: string | null) => {
@@ -64,6 +73,18 @@ export function WorkspaceSelectionProvider({ children }: { children: React.React
   const openArchived = React.useCallback((repoId: string) => setArchivedRepoId(repoId), []);
   const closeArchived = React.useCallback(() => setArchivedRepoId(null), []);
 
+  const selectService = React.useCallback((id: string | null) => {
+    setSelectedServiceId(id);
+    writePersisted(SELECTED_SERVICE_STORAGE_KEY, id);
+    if (id !== null) {
+      // The service detail replaces the console — clear task/archived views.
+      setSelectedTask(null);
+      writePersisted(SELECTED_TASK_STORAGE_KEY, null);
+      setArchivedRepoId(null);
+      setLiveStatus(null);
+    }
+  }, []);
+
   const value = React.useMemo<WorkspaceSelectionValue>(
     () => ({
       selectedTask,
@@ -73,6 +94,8 @@ export function WorkspaceSelectionProvider({ children }: { children: React.React
       archivedRepoId,
       openArchived,
       closeArchived,
+      selectedServiceId,
+      selectService,
       liveStatus,
       setLiveStatus,
     }),
@@ -84,6 +107,8 @@ export function WorkspaceSelectionProvider({ children }: { children: React.React
       archivedRepoId,
       openArchived,
       closeArchived,
+      selectedServiceId,
+      selectService,
       liveStatus,
     ],
   );

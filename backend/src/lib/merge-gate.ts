@@ -23,6 +23,8 @@ import {
 } from './agent-runtime.js';
 import { runHermesTask } from './hermes-runner.js';
 import { enqueueMergeGate } from './proposal-scheduler.js';
+import { queueDeployment } from './deploy/deploy-service.js';
+import { prisma } from './prisma.js';
 import { mergePullRequest, pullRequestChecksStatus, type PrChecksStatus } from './pull-requests.js';
 import {
   buildConflictResolutionMessages,
@@ -32,6 +34,7 @@ import {
   parseResolvedFile,
 } from './pr-review.js';
 import { publishTaskEvent, setTaskStatus } from './task-events.js';
+import { errorMessage } from './utils.js';
 
 // Job: merge-gate — owns the PR after the review passes on an auto-merge
 // repository. The PR merges ONLY when provider CI checks are green:
@@ -238,6 +241,23 @@ async function resolveMergeConflictsViaHermes(
   await git(['push', 'origin', `HEAD:${headBranch}`], { cwd: workdir, secrets, auth });
 }
 
+// Auto-deploy: a merged PR redeploys the repository's service when it has
+// one with autoDeploy on. Failures here must never block the merge result.
+async function maybeQueueServiceDeploy(task: TaskWithRepo): Promise<void> {
+  try {
+    const service = await prisma.service.findUnique({
+      where: { repositoryId: task.repositoryId },
+    });
+    if (!service?.autoDeploy) return;
+    await queueDeployment(service.id, task.id);
+    await logEvent(task.id, `queued deploy of service '${service.name}'`);
+  } catch (err) {
+    await logEvent(task.id, `could not queue the service deploy: ${errorMessage(err)}`).catch(
+      () => {},
+    );
+  }
+}
+
 // One merge attempt. On conflict the branch is resolved and pushed, then the
 // gate re-enqueues — CI must pass on the resolution commit before the next
 // merge attempt (this is how a broken resolution never reaches main).
@@ -263,6 +283,7 @@ async function mergeWithConflictResolution(
     // The task's run workdir was kept for the review window — merged means
     // it is no longer needed.
     await cleanupWorkdir(path.join(config.AGENT_WORKDIR, task.id), task.id);
+    await maybeQueueServiceDeploy(task);
     return;
   }
   if (!result.conflict || attempt >= MERGE_GATE_MAX_ATTEMPTS) {
