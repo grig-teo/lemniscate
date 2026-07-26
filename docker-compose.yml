@@ -1,108 +1,142 @@
 services:
   postgres:
     image: postgres:16-alpine
-    restart: unless-stopped
     environment:
-      POSTGRES_USER: lemniscate
-      POSTGRES_PASSWORD: lemniscate
-      POSTGRES_DB: lemniscate
+      POSTGRES_USER: ${POSTGRES_USER:-lemniscate}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-lemniscate}
+      POSTGRES_DB: ${POSTGRES_DB:-lemniscate}
     volumes:
-      - postgres-data:/var/lib/postgresql/data
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "${POSTGRES_BIND:-127.0.0.1:5432}:5432"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U lemniscate -d lemniscate"]
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 10s
       timeout: 5s
       retries: 5
+    restart: unless-stopped
 
   redis:
     image: redis:7-alpine
-    restart: unless-stopped
     volumes:
-      - redis-data:/data
+      - redisdata:/data
+    ports:
+      - "${REDIS_BIND:-127.0.0.1:6379}:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
       timeout: 5s
       retries: 5
+    restart: unless-stopped
 
   minio:
-    image: minio/minio:latest
-    restart: unless-stopped
+    # Pinned release — never :latest (reproducibility / supply chain).
+    image: minio/minio:RELEASE.2025-09-07T16-13-09Z
     command: server /data --console-address ":9001"
     environment:
-      MINIO_ROOT_USER: lemniscate
-      MINIO_ROOT_PASSWORD: lemniscate-minio
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-lemniscate}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-lemniscate-minio}
     volumes:
-      - minio-data:/data
+      - miniodata:/data
+    ports:
+      - "${MINIO_BIND:-127.0.0.1:9000}:9000"
+      - "${MINIO_BIND:-127.0.0.1:9001}:9001"
     healthcheck:
-      test: ["CMD-SHELL", "mc ready local || exit 1"]
+      test: ["CMD", "mc", "ready", "local"]
       interval: 10s
       timeout: 5s
       retries: 5
+    restart: unless-stopped
 
   backend:
     build: ./backend
-    restart: unless-stopped
-    env_file: ./backend/.env
     environment:
-      DATABASE_URL: postgresql://lemniscate:lemniscate@postgres:5432/lemniscate
+      DATABASE_URL: postgresql://${POSTGRES_USER:-lemniscate}:${POSTGRES_PASSWORD:-lemniscate}@postgres:5432/${POSTGRES_DB:-lemniscate}
       REDIS_URL: redis://redis:6379
       MINIO_ENDPOINT: minio
       MINIO_PORT: "9000"
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-lemniscate}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-lemniscate-minio}
+      MINIO_BUCKET: ${MINIO_BUCKET:-lemniscate-library}
+      JWT_SECRET: ${JWT_SECRET:-change-me-to-a-long-random-string}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:-change-me-to-64-hex-chars}
+      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:8080}
+      BACKEND_URL: ${BACKEND_URL:-http://localhost:3000}
+      OAUTH_CALLBACK_URL: ${OAUTH_CALLBACK_URL:-http://localhost:3000/api/auth}
+      GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID:-}
+      GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET:-}
+      GITLAB_CLIENT_ID: ${GITLAB_CLIENT_ID:-}
+      GITLAB_CLIENT_SECRET: ${GITLAB_CLIENT_SECRET:-}
+      GITVERSE_CLIENT_ID: ${GITVERSE_CLIENT_ID:-}
+      GITVERSE_CLIENT_SECRET: ${GITVERSE_CLIENT_SECRET:-}
+      GITVERSE_BASE_URL: ${GITVERSE_BASE_URL:-https://gitverse.ru}
+      GITEE_CLIENT_ID: ${GITEE_CLIENT_ID:-}
+      GITEE_CLIENT_SECRET: ${GITEE_CLIENT_SECRET:-}
+      ALLOW_PRIVATE_URLS: ${ALLOW_PRIVATE_URLS:-false}
     ports:
-      - "3000:3000"
+      - "${BACKEND_BIND:-127.0.0.1:3000}:3000"
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
+      minio:
+        condition: service_healthy
     healthcheck:
       # Deep readiness probe: Postgres SELECT 1 + Redis PING, 503 on failure.
-      # Uses Node's built-in fetch (guaranteed in the runtime image) instead of
-      # curl, which is only an incidental apk dependency of the image.
-      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/health/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      test: ["CMD-SHELL", "curl -fsS http://localhost:3000/health/ready || exit 1"]
       interval: 15s
       timeout: 5s
       retries: 3
       start_period: 40s
+    restart: unless-stopped
 
   worker:
     build: ./backend
     command: ["node", "dist/worker.js"]
-    restart: unless-stopped
-    env_file: ./backend/.env
     environment:
-      DATABASE_URL: postgresql://lemniscate:lemniscate@postgres:5432/lemniscate
+      DATABASE_URL: postgresql://${POSTGRES_USER:-lemniscate}:${POSTGRES_PASSWORD:-lemniscate}@postgres:5432/${POSTGRES_DB:-lemniscate}
       REDIS_URL: redis://redis:6379
       MINIO_ENDPOINT: minio
       MINIO_PORT: "9000"
-      AGENT_WORKDIR: /tmp/lemniscate-repos
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-lemniscate}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-lemniscate-minio}
+      MINIO_BUCKET: ${MINIO_BUCKET:-lemniscate-library}
+      JWT_SECRET: ${JWT_SECRET:-change-me-to-a-long-random-string}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:-change-me-to-64-hex-chars}
+      AGENT_WORKDIR: ${AGENT_WORKDIR:-/tmp/lemniscate-repos}
+      AGENT_BRANCH_PREFIX: ${AGENT_BRANCH_PREFIX:-lemniscate/}
+      AGENT_WORKER_CONCURRENCY: ${AGENT_WORKER_CONCURRENCY:-4}
+      ALLOW_PRIVATE_URLS: ${ALLOW_PRIVATE_URLS:-false}
     volumes:
-      - agent-workdir:/tmp/lemniscate-repos
+      - agentworkdir:/tmp/lemniscate-repos
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
+      minio:
+        condition: service_healthy
     healthcheck:
-      # Worker liveness: HTTP heartbeat with BullMQ job counts on :3100.
-      # Node's built-in fetch — no curl dependency in the image required.
-      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3100/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      # Worker liveness server (queue counts) listens on :3100 inside the
+      # container; probed from within, so no host port publishing is needed.
+      test: ["CMD-SHELL", "curl -fsS http://localhost:3100/health || exit 1"]
       interval: 15s
       timeout: 5s
       retries: 3
-      start_period: 30s
+      start_period: 20s
+    restart: unless-stopped
 
   frontend:
     build: ./frontend
-    restart: unless-stopped
     ports:
       - "8080:80"
     depends_on:
       - backend
+    restart: unless-stopped
 
 volumes:
-  postgres-data:
-  redis-data:
-  minio-data:
-  agent-workdir:
+  pgdata:
+  redisdata:
+  miniodata:
+  agentworkdir:
