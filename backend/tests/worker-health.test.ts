@@ -1,7 +1,7 @@
 import type { Server } from 'node:http';
 import type { Queue } from 'bullmq';
 import { describe, expect, it, vi } from 'vitest';
-import { queueSnapshot, startWorkerHealthServer } from '../src/lib/worker-health.js';
+import { queueSnapshot, startWorkerHealthServer, type WorkerHealthDeps } from '../src/lib/worker-health.js';
 
 // Worker liveness: a tiny HTTP endpoint exposing BullMQ job counts so
 // compose/orchestrators can probe the otherwise headless worker process and
@@ -70,6 +70,84 @@ describe('startWorkerHealthServer', () => {
     try {
       const { status } = await fetchJson(server, '/nope');
       expect(status).toBe(404);
+    } finally {
+      server.close();
+    }
+  });
+});
+
+// /health/ready is the worker's readiness probe: it proves the queue's Redis
+// is reachable (bounded PING) and the BullMQ consumer is running, so a queue
+// stall flips the container to unhealthy within one healthcheck interval.
+describe('startWorkerHealthServer /health/ready', () => {
+  const readyDeps = {
+    checkRedis: async () => 'PONG',
+    isRunning: () => true,
+  };
+
+  function listenWithDeps(deps: WorkerHealthDeps): Promise<Server> {
+    const server = startWorkerHealthServer(fakeQueue({}), 0, deps);
+    return new Promise((resolve) => server.on('listening', () => resolve(server)));
+  }
+
+  it('answers 200 when Redis answers and the consumer is running', async () => {
+    const server = await listenWithDeps(readyDeps);
+    try {
+      const { status, body } = await fetchJson(server, '/health/ready');
+      expect(status).toBe(200);
+      expect(body).toMatchObject({ ok: true, redis: true, worker: true });
+    } finally {
+      server.close();
+    }
+  });
+
+  it('answers 503 when the Redis ping rejects (queue stall)', async () => {
+    const server = await listenWithDeps({
+      ...readyDeps,
+      checkRedis: async () => {
+        throw new Error('Connection is closed');
+      },
+    });
+    try {
+      const { status, body } = await fetchJson(server, '/health/ready');
+      expect(status).toBe(503);
+      expect(body).toMatchObject({ ok: false, redis: false, worker: true });
+    } finally {
+      server.close();
+    }
+  });
+
+  it('answers 503 when the consumer is not running', async () => {
+    const server = await listenWithDeps({ ...readyDeps, isRunning: () => false });
+    try {
+      const { status, body } = await fetchJson(server, '/health/ready');
+      expect(status).toBe(503);
+      expect(body).toMatchObject({ ok: false, redis: true, worker: false });
+    } finally {
+      server.close();
+    }
+  });
+
+  it('answers 503 when the Redis ping hangs past the probe timeout', async () => {
+    const server = await listenWithDeps({
+      ...readyDeps,
+      checkRedis: () => new Promise(() => {}),
+    });
+    try {
+      const { status, body } = await fetchJson(server, '/health/ready');
+      expect(status).toBe(503);
+      expect(body).toMatchObject({ ok: false, redis: false });
+    } finally {
+      server.close();
+    }
+  });
+
+  it('reports nulls for checks no dependency was supplied for', async () => {
+    const server = await listenWithDeps({});
+    try {
+      const { status, body } = await fetchJson(server, '/health/ready');
+      expect(status).toBe(200);
+      expect(body).toMatchObject({ ok: true, redis: null, worker: null });
     } finally {
       server.close();
     }

@@ -22,6 +22,8 @@ import {
 import { registerPrStateSyncSchedule, recoverStuckReviews, syncMergedPullRequests } from './lib/pr-state-sync.js';
 import { startHeartbeat } from './lib/worker-heartbeat.js';
 import { jobFailureFromError, logJobFailure } from './lib/job-failure-log.js';
+import { getRedisClient } from './lib/redis.js';
+import { redisEndpointForLog } from './lib/utils.js';
 import { startWorkerHealthServer } from './lib/worker-health.js';
 
 const runTaskDataSchema = z.object({ taskId: z.string().min(1) });
@@ -136,11 +138,17 @@ worker.on('failed', (job, err) => {
 });
 
 await worker.waitUntilReady();
-console.log(`worker ready, consuming queue '${AGENT_QUEUE_NAME}' via ${config.REDIS_URL}`);
+// Never log config.REDIS_URL itself: it can embed a password
+// (redis://:secret@host) which would end up in container logs.
+console.log(
+  `worker ready, consuming queue '${AGENT_QUEUE_NAME}' via ${redisEndpointForLog(config.REDIS_URL)}`,
+);
 
-// Liveness signal for the container healthcheck: rewritten on a timer, so a
-// wedged worker (blocked event loop, dead consumer) goes stale and Docker
-// restarts it. An idle worker with an empty queue keeps ticking.
+// Process-level tripwire: rewritten on a timer, so a wedged worker (blocked
+// event loop, dead consumer) leaves a stale file an external watchdog can
+// detect. The compose healthcheck probes the HTTP health server below; this
+// file is only a fallback signal. An idle worker with an empty queue keeps
+// ticking.
 const stopHeartbeat = startHeartbeat();
 
 // Register the single global repeatable 'proposals-topup' job (every 6h).
@@ -160,9 +168,14 @@ await recoverInterruptedTasks();
 // (or before job retries existed) — otherwise they never reach auto-merge.
 await recoverStuckReviews();
 
-// Liveness endpoint: compose's healthcheck probes this; the queue counts it
-// serves (waiting/active/failed) make a stalled pipeline visible.
-const healthServer = startWorkerHealthServer(getAgentTasksQueue(), config.WORKER_HEALTH_PORT);
+// Liveness + readiness endpoints: compose's healthcheck probes these; the
+// queue counts /health serves (waiting/active/failed) make a stalled
+// pipeline visible, and /health/ready 503s when Redis is unreachable or the
+// consumer stopped.
+const healthServer = startWorkerHealthServer(getAgentTasksQueue(), config.WORKER_HEALTH_PORT, {
+  checkRedis: () => getRedisClient().ping(),
+  isRunning: () => worker.isRunning(),
+});
 console.log(`worker health endpoint listening on :${config.WORKER_HEALTH_PORT}`);
 
 for (const signal of ['SIGINT', 'SIGTERM'] as const) {
