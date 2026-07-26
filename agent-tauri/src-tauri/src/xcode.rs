@@ -114,7 +114,7 @@ fn available_iphone_in(devices: &[Value]) -> Option<(String, String)> {
 }
 
 /// The `devices` object from `xcrun simctl list devices -j` JSON.
-fn simctl_devices(json_text: &str) -> Option<Map<String, Value>> {
+pub(crate) fn simctl_devices(json_text: &str) -> Option<Map<String, Value>> {
     let data: Value = serde_json::from_str(json_text).ok()?;
     data.get("devices").and_then(Value::as_object).cloned()
 }

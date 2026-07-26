@@ -5,7 +5,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
-pub const AGENT_VERSION: &str = "0.1.0";
+use crate::capabilities::Capabilities;
+
+pub const AGENT_VERSION: &str = "0.2.0";
 
 /// Server close code meaning "device token rejected — pair again".
 pub const CLOSE_CODE_RE_PAIR: u16 = 4001;
@@ -39,6 +41,8 @@ pub enum ClientMessage {
     Hello { meta: Meta },
     #[serde(rename = "heartbeat")]
     Heartbeat,
+    #[serde(rename = "capabilities")]
+    Capabilities { capabilities: Capabilities },
     #[serde(rename = "command_result")]
     CommandResult {
         id: String,
@@ -259,8 +263,31 @@ mod tests {
     }
 
     #[test]
-    fn command_result_includes_result_only_when_defined() {
-        let running = serde_json::to_value(command_result_message("c1", "running", None)).unwrap();
+    fn capabilities_frame_serializes_with_camel_case_keys() {
+        let capabilities = Capabilities {
+            docker_available: true,
+            android_devices: vec![crate::capabilities::AndroidDevice {
+                serial: "0a1b".into(),
+                model: Some("Pixel_8".into()),
+                transport: "usb".into(),
+            }],
+            ..Capabilities::default()
+        };
+        let frame = serde_json::to_value(ClientMessage::Capabilities { capabilities }).unwrap();
+        assert_eq!(
+            frame,
+            json!({"type": "capabilities", "capabilities": {
+                "dockerAvailable": true,
+                "androidDevices": [{"serial": "0a1b", "model": "Pixel_8", "transport": "usb"}],
+                "iosDevices": [],
+                "simulators": [],
+                "emulators": [],
+            }})
+        );
+    }
+
+    #[test]
+    fn command_result_includes_result_only_when_defined() {        let running = serde_json::to_value(command_result_message("c1", "running", None)).unwrap();
         assert_eq!(running, json!({"type": "command_result", "id": "c1", "status": "running"}));
         let done = serde_json::to_value(command_result_message(
             "c1",

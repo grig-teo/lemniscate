@@ -45,7 +45,7 @@ async fn attempt(ctx: &mut CommandContext, config: &Config, payload: &Value) -> 
 // --- adb ----------------------------------------------------------------------
 
 /// First adb binary that answers, or None when adb is not installed.
-async fn find_adb() -> Option<String> {
+pub(crate) async fn find_adb() -> Option<String> {
     for candidate in adb_candidates() {
         let probe = exec::run_capture(&candidate, &["version"], None, PROBE_TIMEOUT).await;
         if probe.ok {

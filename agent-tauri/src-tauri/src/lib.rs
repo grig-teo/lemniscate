@@ -3,6 +3,7 @@
 //! tunnel/commands modules.
 
 mod build_android;
+mod capabilities;
 mod commands;
 mod config;
 mod exec;

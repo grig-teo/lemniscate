@@ -16,6 +16,7 @@ use crate::config::{self, Config};
 use crate::protocol::{self, ClientMessage, Meta, ServerMessage};
 
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(25);
+const CAPABILITIES_INTERVAL: Duration = Duration::from_secs(60);
 const BACKOFF_BASE_MS: u64 = 1_000;
 const BACKOFF_CAP_MS: u64 = 30_000;
 
@@ -75,11 +76,26 @@ async fn connect_once(app: &AppHandle, config: &Config, meta: &Meta) -> CloseRea
     });
     let _ = tx.send(ClientMessage::Hello { meta: meta.clone() }).await;
     let heartbeat = spawn_heartbeat(tx.clone());
+    let capabilities = spawn_capabilities(tx.clone());
     let reason = read_loop(app, config, tx, &mut read).await;
     heartbeat.abort();
+    capabilities.abort();
     writer.abort();
     crate::set_status(app, "disconnected", None);
     reason
+}
+
+/// Capabilities report right after hello, then once a minute.
+fn spawn_capabilities(tx: mpsc::Sender<ClientMessage>) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
+        loop {
+            let capabilities = crate::capabilities::collect().await;
+            if tx.send(ClientMessage::Capabilities { capabilities }).await.is_err() {
+                return;
+            }
+            tokio::time::sleep(CAPABILITIES_INTERVAL).await;
+        }
+    })
 }
 
 fn spawn_heartbeat(tx: mpsc::Sender<ClientMessage>) -> tokio::task::JoinHandle<()> {
