@@ -78,7 +78,9 @@ export async function startNextProposal(repositoryId: string): Promise<boolean> 
 // pg_advisory_xact_lock, so concurrent ticks cannot both pass the "no active
 // proposal" check. Returns the claimed task id, or null when there is
 // nothing (safe) to start. The lock is released at transaction end.
-async function claimNextProposal(repositoryId: string): Promise<string | null> {
+// Exported for the real-Postgres race test
+// (tests/proposal-claim.integration.test.ts, INTEGRATION=1).
+export async function claimNextProposal(repositoryId: string): Promise<string | null> {
   return prisma.$transaction(async (tx) => {
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${repositoryId}))`;
     if (await hasActiveProposal(tx, repositoryId)) return null;
