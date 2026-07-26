@@ -101,7 +101,7 @@ jobs:
               - '.github/workflows/ci.yml'
 
   android:
-    name: Android — assembleDebug
+    name: Android — test, lint & assembleDebug
     needs: changes
     if: needs.changes.outputs.android == 'true'
     runs-on: ubuntu-latest
@@ -115,14 +115,19 @@ jobs:
 
       - uses: gradle/actions/setup-gradle@v4
 
+      - name: Unit tests
+        working-directory: android
+        run: ./gradlew testDebugUnitTest
+
+      # Blocking since 2026-07: pre-existing findings are captured in
+      # android/app/lint-baseline.xml; any NEW finding fails the job.
+      - name: Lint
+        working-directory: android
+        run: ./gradlew lint
+
       - name: Build debug APK
         working-directory: android
         run: ./gradlew assembleDebug
-
-      - name: Lint (non-blocking for now)
-        working-directory: android
-        continue-on-error: true
-        run: ./gradlew lint
 
   e2e:
     name: E2E — smoke suite on the real compose stack
@@ -166,9 +171,17 @@ jobs:
         working-directory: ios
         run: xcodegen
 
-      - name: Build for iOS Simulator (no signing)
+      # `test` needs a concrete simulator (generic destinations only build).
+      # Pick the first available iPhone from -showdestinations so the job
+      # keeps working as runner images change simulator lineups.
+      - name: Build & test on iOS Simulator (no signing)
         working-directory: ios
-        run: >-
-          xcodebuild -project Lemniscate.xcodeproj -scheme Lemniscate
-          -destination 'generic/platform=iOS Simulator'
-          CODE_SIGNING_ALLOWED=NO build
+        run: |
+          SIM_NAME=$(xcodebuild -project Lemniscate.xcodeproj -scheme Lemniscate -showdestinations \
+            | awk -F'name:' '/platform:iOS Simulator/ && /iPhone/ {
+                n=$2; sub(/[},].*$/, "", n); gsub(/^[ \t]+|[ \t]+$/, "", n); print n; exit
+              }')
+          echo "Using simulator: $SIM_NAME"
+          xcodebuild -project Lemniscate.xcodeproj -scheme Lemniscate \
+            -destination "platform=iOS Simulator,name=$SIM_NAME" \
+            CODE_SIGNING_ALLOWED=NO test

@@ -13,13 +13,15 @@ final class MainViewModel: ObservableObject {
     @Published var showSettings = false
 
     private let speech = SpeechRecognizer()
+    private let api: any APIClienting
     private static let selectionKey = "selectedRepository"
 
     var micEnabled: Bool {
         selectedRepo != nil && !isSending
     }
 
-    init() {
+    init(api: any APIClienting = APIClient.shared) {
+        self.api = api
         selectedRepo = Self.loadSelection()
         speech.onTranscript = { [weak self] text in
             self?.transcript = text
@@ -60,12 +62,13 @@ final class MainViewModel: ObservableObject {
         await submit(prompt: prompt, repositoryId: repo.id)
     }
 
-    private func submit(prompt: String, repositoryId: String) async {
+    // Internal (not private) so unit tests can drive the submit path directly.
+    func submit(prompt: String, repositoryId: String) async {
         isSending = true
         defer { isSending = false }
         do {
             let body = CreateTaskBody(repositoryId: repositoryId, prompt: prompt)
-            let _: TaskResponse = try await APIClient.shared.request("POST", "api/tasks", body: body)
+            let _: TaskResponse = try await api.request("POST", "api/tasks", body: body)
             transcript = ""
         } catch {
             alertMessage = error.localizedDescription

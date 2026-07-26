@@ -9,14 +9,20 @@ final class RepoPickerViewModel: ObservableObject {
     @Published private(set) var isLoading = false
     @Published var errorMessage: String?
 
+    private let api: any APIClienting
+
+    init(api: any APIClienting = APIClient.shared) {
+        self.api = api
+    }
+
     func load() async {
         isLoading = true
         defer { isLoading = false }
         do {
             async let connectionsRequest: ConnectionsResponse =
-                APIClient.shared.request("GET", "api/connections")
+                api.request("GET", "api/connections")
             async let repositoriesRequest: RepositoriesResponse =
-                APIClient.shared.request("GET", "api/repositories")
+                api.request("GET", "api/repositories")
             let (connections, repositories) = try await (
                 connectionsRequest.connections,
                 repositoriesRequest.repositories
@@ -42,7 +48,7 @@ final class RepoPickerViewModel: ObservableObject {
         defer { loadingTasks.remove(repo.id) }
         do {
             let query = [URLQueryItem(name: "repositoryId", value: repo.id)]
-            let response: TasksResponse = try await APIClient.shared.request(
+            let response: TasksResponse = try await api.request(
                 "GET", "api/tasks", query: query
             )
             runningTasks[repo.id] = response.tasks.filter(\.isRunning)

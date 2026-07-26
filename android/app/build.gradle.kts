@@ -40,6 +40,15 @@ android {
         buildConfig = true
     }
 
+    // Lint is a blocking gate in CI. Pre-existing findings are baselined in
+    // lint-baseline.xml (created 2026-07); any NEW finding fails the build —
+    // fix it or add an explicit, justified suppression, don't regenerate the
+    // baseline to sweep findings under the rug.
+    lint {
+        baseline = file("lint-baseline.xml")
+        abortOnError = true
+    }
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
@@ -72,4 +81,7 @@ dependencies {
     implementation(libs.kotlinx.serialization.json)
 
     implementation(libs.androidx.datastore.preferences)
+
+    testImplementation(libs.junit)
+    testImplementation(libs.kotlinx.coroutines.test)
 }
