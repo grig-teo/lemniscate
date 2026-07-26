@@ -9,6 +9,7 @@ import {
   artifactOwnerDeviceId,
   artifactQuotaAllowed,
   artifactQuotaKey,
+  contentTypeForFilename,
   safeArtifactFilename,
 } from '../src/lib/device-artifacts.js';
 
@@ -26,9 +27,9 @@ describe('safeArtifactFilename', () => {
     expect(safeArtifactFilename('my app (v2) [debug].apk')).toBe('my-app-v2-debug-.apk');
   });
 
-  it('falls back to app.apk when nothing safe remains', () => {
-    expect(safeArtifactFilename('')).toBe('app.apk');
-    expect(safeArtifactFilename('///')).toBe('app.apk');
+  it('falls back to artifact.bin when nothing safe remains', () => {
+    expect(safeArtifactFilename('')).toBe('artifact.bin');
+    expect(safeArtifactFilename('///')).toBe('artifact.bin');
   });
 });
 
@@ -78,5 +79,27 @@ describe('artifactQuotaAllowed', () => {
 
   it('rejects the upload beyond the daily max', () => {
     expect(artifactQuotaAllowed(21, 20)).toBe(false);
+  });
+});
+
+describe('contentTypeForFilename', () => {
+  it('returns the APK mime for .apk files', () => {
+    expect(contentTypeForFilename('app-debug.apk')).toBe('application/vnd.android.package-archive');
+  });
+
+  it('returns text/plain for .log files', () => {
+    expect(contentTypeForFilename('cmd-123.log')).toBe('text/plain; charset=utf-8');
+  });
+
+  it('infers from the extension inside an artifact key', () => {
+    expect(contentTypeForFilename('dev-1/uuid-cmd.log')).toBe('text/plain; charset=utf-8');
+    expect(contentTypeForFilename('dev-1/uuid-app.apk')).toBe(
+      'application/vnd.android.package-archive',
+    );
+  });
+
+  it('falls back to octet-stream for unknown extensions', () => {
+    expect(contentTypeForFilename('data.bin')).toBe('application/octet-stream');
+    expect(contentTypeForFilename('archive.zip')).toBe('application/octet-stream');
   });
 });

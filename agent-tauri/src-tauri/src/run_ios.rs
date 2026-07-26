@@ -7,6 +7,7 @@ use serde_json::{json, Value};
 use std::path::Path;
 use std::time::Duration;
 
+use crate::config::Config;
 use crate::exec::{self, CommandContext, ResultSender};
 use crate::xcode::{self, IosDestination, XcodeProject};
 
@@ -14,12 +15,12 @@ const XCODE_BUILD_TIMEOUT: Duration = Duration::from_secs(30 * 60);
 const SIMCTL_LIST_TIMEOUT: Duration = Duration::from_secs(30);
 const XCODEGEN_PROBE_TIMEOUT: Duration = Duration::from_secs(10);
 
-pub async fn execute(tx: ResultSender, id: String, payload: Value) {
+pub async fn execute(tx: ResultSender, config: Config, id: String, payload: Value) {
     let mut ctx = CommandContext::new(tx, id);
     ctx.running().await;
     match attempt(&mut ctx, &payload).await {
         Ok(result) => ctx.done(result).await,
-        Err(error) => ctx.fail(error).await,
+        Err(error) => ctx.fail_with_log(error, &config.server, &config.device_token).await,
     }
 }
 

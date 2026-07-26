@@ -7,6 +7,7 @@ use std::path::Path;
 use std::process::{Child, Stdio};
 use std::time::{Duration, Instant};
 
+use crate::config::Config;
 use crate::exec::{self, CommandContext, ResultSender};
 
 const NPM_INSTALL_TIMEOUT: Duration = Duration::from_secs(15 * 60);
@@ -17,12 +18,12 @@ const ALIVE_POLL: Duration = Duration::from_millis(500);
 /// package.json scripts tried as the desktop entry point, in priority order.
 const DESKTOP_SCRIPT_CANDIDATES: [&str; 4] = ["tauri", "electron", "dev", "start"];
 
-pub async fn execute(tx: ResultSender, id: String, payload: Value) {
+pub async fn execute(tx: ResultSender, config: Config, id: String, payload: Value) {
     let mut ctx = CommandContext::new(tx, id);
     ctx.running().await;
     match attempt(&mut ctx, &payload).await {
         Ok(result) => ctx.done(result).await,
-        Err(error) => ctx.fail(error).await,
+        Err(error) => ctx.fail_with_log(error, &config.server, &config.device_token).await,
     }
 }
 

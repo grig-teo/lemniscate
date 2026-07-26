@@ -22,11 +22,11 @@ pub async fn execute(
     payload: Value,
 ) {
     match command_type.as_str() {
-        "run_web" => run_web::execute(tx, id, payload).await,
+        "run_web" => run_web::execute(tx, config, id, payload).await,
         "install_apk" => install_apk::execute(tx, config, id, payload).await,
         "build_android" => build_android::execute(tx, config, id, payload).await,
-        "run_desktop" => run_desktop::execute(tx, id, payload).await,
-        "run_ios" => run_ios::execute(tx, id, payload).await,
+        "run_desktop" => run_desktop::execute(tx, config, id, payload).await,
+        "run_ios" => run_ios::execute(tx, config, id, payload).await,
         // protocol.rs already rejects unknown types; this is defense in depth.
         other => CommandContext::new(tx, id).fail(format!("'{other}' is not supported by this agent")).await,
     }
