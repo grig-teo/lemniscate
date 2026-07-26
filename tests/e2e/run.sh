@@ -1,6 +1,12 @@
 #!/usr/bin/env bash
-# E2E smoke suite: boots the real compose stack (plus the gitstub edge
-# fakes), seeds one user, and drives one full task lifecycle through the API.
+# E2E smoke suite: boots the real compose stack plus a throwaway Gitea git
+# server and a deterministic mock LLM, seeds one user/connection/repository,
+# and drives the product's core value chain through the real API:
+#
+#   PAT connect (login) -> repository sync -> LLM config -> task run ->
+#   branch push -> asserted pull-request creation on Gitea, plus token-usage,
+#   notification and metrics assertions.
+#
 # Idempotent: always starts from throwaway volumes and always tears them
 # down again.
 #
@@ -125,15 +131,46 @@ wait_http_ok() { # name url curl-extra-args...
 wait_http_ok "backend /health/ready" "http://backend:3000/health/ready" || fail
 wait_http_ok "worker /health/ready"  "http://worker:3100/health/ready"  || fail
 wait_http_ok "frontend /"            "http://frontend:80/"              || fail
-# gitstub serves a self-signed cert by design (-k).
-wait_http_ok "gitstub https"         "https://gitstub/e2e-repo.git/info/refs?service=git-upload-pack" -k || fail
+# gitstub is the TLS edge in front of Gitea, which serves a self-signed cert
+# by design (-k). /api/healthz proves the git vhost proxy; /version (through
+# api.gitstub -> /api/v1 rewrite) proves the REST API path the backend's
+# GitVerse client will use.
+wait_http_ok "gitea via gitstub edge"  "https://gitstub/api/healthz"  -k || fail
+wait_http_ok "gitea api via api vhost" "https://api.gitstub/version"  -k || fail
+
+log "seeding Gitea: user + access token + repository"
+GITEA_CID="$("${COMPOSE[@]}" ps -q gitea)"
+[ -n "$GITEA_CID" ] || fail
+docker exec -u git "$GITEA_CID" gitea admin user create \
+  --username e2e-user --password 'e2e-password-not-used' \
+  --email e2e@example.com --must-change-password=false > /dev/null || fail
+E2E_PAT="$(docker exec -u git "$GITEA_CID" gitea admin user generate-access-token \
+  --username e2e-user --token-name e2e --scopes all --raw | tail -n 1)" || fail
+[ -n "$E2E_PAT" ] || fail
+
+# Repository + the src/ fixture file, via Gitea's real REST API (reachable
+# in-network as plain HTTP; the TLS edge is only for the stack under test).
+SRC_FIXTURE_B64="$(printf '%s' 'console.log("hello from the e2e fixture");' | base64 | tr -d '\n')"
+in_network sh -c "
+  set -e
+  curl -sf -X POST -H 'Authorization: Bearer $E2E_PAT' \
+    -H 'content-type: application/json' \
+    -d '{\"name\":\"e2e-repo\",\"auto_init\":true,\"default_branch\":\"main\",\"private\":false}' \
+    http://gitea:3000/api/v1/user/repos > /dev/null
+  curl -sf -X PUT -H 'Authorization: Bearer $E2E_PAT' \
+    -H 'content-type: application/json' \
+    -d '{\"message\":\"add src fixture\",\"content\":\"$SRC_FIXTURE_B64\",\"branch\":\"main\"}' \
+    http://gitea:3000/api/v1/repos/e2e-user/e2e-repo/contents/src/index.js > /dev/null
+" || fail
 
 log "seeding user + git connection inside the backend container"
 # docker cp instead of a bind mount: works even when the daemon cannot see
-# the client's filesystem (remote/sandboxed daemons).
+# the client's filesystem (remote/sandboxed daemons). The connection stores
+# the REAL Gitea token so PAT connect and every provider call authenticate
+# against Gitea exactly as in production.
 BACKEND_CID="$("${COMPOSE[@]}" ps -q backend)"
 docker cp tests/e2e/seed.mjs "$BACKEND_CID:/tmp/e2e-seed.mjs" || fail
-E2E_SEED="$("${COMPOSE[@]}" exec -T backend node /tmp/e2e-seed.mjs | tail -n 1)" || fail
+E2E_SEED="$("${COMPOSE[@]}" exec -T -e E2E_SEED_TOKEN="$E2E_PAT" backend node /tmp/e2e-seed.mjs | tail -n 1)" || fail
 log "seed: $E2E_SEED"
 
 log "running smoke tests (inside the compose network)"
@@ -143,6 +180,10 @@ if ! docker run --rm \
   -e E2E_WORKER_HEALTH_URL="http://worker:3100" \
   -e E2E_FRONTEND_URL="http://frontend:80" \
   -e E2E_GITSTUB_URL="https://gitstub" \
+  -e E2E_GITSTUB_API_URL="https://api.gitstub" \
+  -e E2E_PAT="$E2E_PAT" \
+  -e E2E_METRICS_TOKEN="${E2E_METRICS_TOKEN:-e2e-metrics-token}" \
+  -e NODE_TLS_REJECT_UNAUTHORIZED=0 \
   -e E2E_SEED="$E2E_SEED" \
   -e E2E_TASK_TIMEOUT_SECONDS="${E2E_TASK_TIMEOUT_SECONDS:-300}" \
   "$RUNNER_IMAGE"; then

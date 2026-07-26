@@ -123,35 +123,37 @@ account, so the first GitVerse connection also creates your user session —
 you can use the app with GitVerse alone, no OAuth provider required.
 GitHub/GitLab connections can also be added by PAT the same way.
 
-## Manual end-to-end test checklist
+## End-to-end test (CI) + manual checklist
 
-The automated verification covers build, migrations, and unauthenticated API
-responses. The full agent flow needs real credentials and must be exercised
-by hand:
+The CI `e2e` job (`.github/workflows/ci.yml`, `tests/e2e/run.sh`) boots the
+full compose stack plus a throwaway **Gitea** git server and a deterministic
+**mock OpenAI-compatible LLM**, then drives the product's core value chain
+through the real API on every PR touching `backend/**`:
+
+- PAT connect (login) and repository sync against the real Gitea API,
+- LLM config creation and a full task run (clone → LLM propose/apply →
+  commit → branch push),
+- asserted **pull-request creation on Gitea** (branch, PR API state, and the
+  recorded `prUrl` web page), with the task ending `awaiting_review`,
+- token usage on the task DTO and in `GET /api/usage`, the "PR opened"
+  notification, and Prometheus series (`lemniscate_llm_*`,
+  `lemniscate_job_duration_seconds`, queue gauges on the worker's `/metrics`,
+  plus the backend's `METRICS_TOKEN`-guarded `/metrics`: 401 without the
+  token, 200 with it).
+
+Run it locally with `./tests/e2e/run.sh` (Docker required; everything is
+throwaway). On failure the job uploads all service logs as a CI artifact.
+
+Only the OAuth-specific paths still need manual verification with real
+credentials, since the e2e suite logs in via PAT by design:
 
 1. Create the OAuth apps above and fill in `backend/.env` (also set
    `JWT_SECRET` and a 64-hex-char `ENCRYPTION_KEY`).
 2. `docker compose up --build` — backend applies Prisma migrations on start.
-3. Open http://localhost:8080 and log in with GitHub or GitLab.
-4. Sync repositories from the connections page.
-5. Add an LLM config (base URL, API key, model) and click **Test connection**.
-6. Pick a repository and submit a new prompt/task.
-7. Watch the live console (SSE) and the proposed diff.
-8. Approve/let the worker finish, then confirm the branch and pull request
-   appear on the git host.
-9. `curl -s localhost:3101/metrics | grep lemniscate` — after one run the
-   queue gauges, `lemniscate_jobs_total`, `lemniscate_job_duration_seconds`,
-   and `lemniscate_llm_*` series should be present; token totals should
-   roughly match the run's token usage shown in the live console. With
-   `METRICS_TOKEN` set, `curl -s -H "Authorization: Bearer $METRICS_TOKEN"
-   localhost:3000/metrics` answers 200 (and 401 without it).
-10. Confirm the TopNav bell shows an unread "PR opened" notification within
-    30s of the PR being created, and that clicking it opens the PR; merge the
-    PR on the git host and confirm a "PR merged" notification appears within
-    one pr-state-sync interval (5 min). Optionally set a webhook URL via
-    `PUT /api/notifications/settings` and verify the HMAC-signed POST
-    (`x-lemniscate-signature: sha256=…`) reaches the bridge.
-
-> Note: the live OAuth login, LLM calls, and branch/PR creation paths could
-> not be exercised without real provider and LLM credentials — verify them
-> with the checklist above.
+3. Open http://localhost:8080 and log in with GitHub **and** GitLab OAuth
+   (the token-refresh flow for GitLab OAuth is exercised only on real
+   provider tokens).
+4. Optional: merge the PR the agent opens and confirm a "PR merged"
+   notification appears within one pr-state-sync interval (5 min), and set a
+   webhook URL via `PUT /api/notifications/settings` to verify the
+   HMAC-signed POST (`x-lemniscate-signature: sha256=…`) reaches your bridge.
