@@ -38,6 +38,23 @@ describe('queueSnapshot', () => {
     expect(snapshot.counts).toEqual(counts);
     expect(typeof snapshot.ts).toBe('string');
   });
+
+  it("folds BullMQ's 'wait' alias into the documented 'waiting' state", async () => {
+    // The gauges read counts['waiting']; if getJobCounts ever returns the
+    // raw Redis list name ('wait'), the backlog signal must not read 0.
+    const snapshot = await queueSnapshot(fakeQueue({ wait: 5, active: 1 }));
+
+    expect(snapshot.counts.waiting).toBe(5);
+    expect(snapshot.counts.wait).toBeUndefined();
+    expect(snapshot.counts.active).toBe(1);
+  });
+
+  it('sums both keys when a snapshot carries wait alongside waiting', async () => {
+    const snapshot = await queueSnapshot(fakeQueue({ wait: 2, waiting: 3 }));
+
+    expect(snapshot.counts.waiting).toBe(5);
+    expect(snapshot.counts.wait).toBeUndefined();
+  });
 });
 
 describe('startWorkerHealthServer', () => {
@@ -70,6 +87,21 @@ describe('startWorkerHealthServer', () => {
     try {
       const { status } = await fetchJson(server, '/nope');
       expect(status).toBe(404);
+    } finally {
+      server.close();
+    }
+  });
+
+  it('serves the Prometheus exposition on /metrics', async () => {
+    const server = await listenOnRandomPort(fakeQueue({}));
+    try {
+      const address = server.address();
+      const port = typeof address === 'object' && address !== null ? address.port : 0;
+      const response = await fetch(`http://127.0.0.1:${port}/metrics`);
+
+      expect(response.status).toBe(200);
+      expect(response.headers.get('content-type')).toContain('text/plain');
+      expect(await response.text()).toContain('# HELP');
     } finally {
       server.close();
     }

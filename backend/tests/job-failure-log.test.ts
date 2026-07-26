@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { errorKind, jobFailureFromError, logJobFailure } from '../src/lib/job-failure-log.js';
+import { metricsRegistry } from '../src/lib/metrics.js';
 
 // Structured failure logging: job failures must be single grep-able JSON
 // lines carrying job name, taskId, and error kind — the minimum for
@@ -31,6 +32,19 @@ describe('logJobFailure', () => {
       message: 'boom',
     });
     spy.mockRestore();
+  });
+
+  it('increments the labeled failure counter so alerts need no log parsing', async () => {
+    metricsRegistry.resetMetrics();
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    logJobFailure({ jobName: 'merge-gate', errorKind: 'MergeConflictError', message: 'x' });
+
+    spy.mockRestore();
+    const text = await metricsRegistry.metrics();
+    expect(text).toContain(
+      'lemniscate_job_failures_total{job_name="merge-gate",error_kind="MergeConflictError"} 1',
+    );
   });
 });
 
