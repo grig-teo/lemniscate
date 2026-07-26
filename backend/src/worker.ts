@@ -17,6 +17,7 @@ import {
   registerProposalTopUpSchedule,
 } from './lib/proposal-scheduler.js';
 import { registerPrStateSyncSchedule, syncMergedPullRequests } from './lib/pr-state-sync.js';
+import { startHeartbeat } from './lib/worker-heartbeat.js';
 
 const runTaskDataSchema = z.object({ taskId: z.string().min(1) });
 const reviewPrDataSchema = z.object({
@@ -105,6 +106,11 @@ worker.on('failed', (job, err) => {
 await worker.waitUntilReady();
 console.log(`worker ready, consuming queue '${AGENT_QUEUE_NAME}' via ${config.REDIS_URL}`);
 
+// Liveness signal for the container healthcheck: rewritten on a timer, so a
+// wedged worker (blocked event loop, dead consumer) goes stale and Docker
+// restarts it. An idle worker with an empty queue keeps ticking.
+const stopHeartbeat = startHeartbeat();
+
 // Register the single global repeatable 'proposals-topup' job (every 6h).
 await registerProposalTopUpSchedule();
 await registerProposalAutoRunSchedule();
@@ -120,6 +126,7 @@ await recoverInterruptedTasks();
 
 for (const signal of ['SIGINT', 'SIGTERM'] as const) {
   process.once(signal, () => {
+    stopHeartbeat();
     void worker.close().then(
       () => connection.quit(),
       () => connection.disconnect(),

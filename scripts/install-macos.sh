@@ -6,7 +6,7 @@ set -euo pipefail
 
 REPO_URL="https://github.com/grig-teo/lemniscate.git"
 TARGET_DIR="./lemniscate"
-HEALTH_URL="http://localhost:3000/health"
+HEALTH_URL="http://localhost:3000/health/ready"
 
 step() { printf '\n\033[1m==> %s\033[0m\n' "$1"; }
 note() { printf '    %s\n' "$1"; }

@@ -11,6 +11,7 @@ import mcpServersRoutes from './routes/mcp-servers.js';
 import libraryRoutes from './routes/library.js';
 import tasksRoutes from './routes/tasks.js';
 import devicesRoutes from './routes/devices.js';
+import { registerProductionHealthRoutes } from './routes/health.js';
 
 async function registerPlugins(app: FastifyInstance) {
   await app.register(cookie);
@@ -50,6 +51,6 @@ export async function buildApp(): Promise<FastifyInstance> {
   });
   await registerPlugins(app);
   await registerRoutes(app);
-  app.get('/health', async () => ({ ok: true }));
+  registerProductionHealthRoutes(app);
   return app;
 }
