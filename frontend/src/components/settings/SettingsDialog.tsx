@@ -14,10 +14,11 @@ import { cn } from '@/lib/utils';
 
 import { ConnectionsSection } from '@/components/settings/ConnectionsSection';
 import { LlmConfigsSection } from '@/components/settings/LlmConfigsSection';
+import { NotificationsSection } from '@/components/settings/NotificationsSection';
 import { RepoFlagsSection } from '@/components/settings/RepoFlagsSection';
 import { UsageSection } from '@/components/settings/UsageSection';
 
-type SettingsTab = 'llm' | 'git' | 'repos' | 'usage';
+type SettingsTab = 'llm' | 'git' | 'repos' | 'notifications' | 'usage';
 
 /**
  * Settings dialog: LLM configurations, git host connections, and repository
@@ -52,6 +53,9 @@ export function SettingsDialog() {
           <TabButton active={tab === 'repos'} onClick={() => setTab('repos')}>
             Repositories
           </TabButton>
+          <TabButton active={tab === 'notifications'} onClick={() => setTab('notifications')}>
+            Notifications
+          </TabButton>
           <TabButton active={tab === 'usage'} onClick={() => setTab('usage')}>
             Usage
           </TabButton>
@@ -61,6 +65,7 @@ export function SettingsDialog() {
           {tab === 'llm' && <LlmConfigsSection />}
           {tab === 'git' && <ConnectionsSection />}
           {tab === 'repos' && <RepoFlagsSection />}
+          {tab === 'notifications' && <NotificationsSection />}
           {tab === 'usage' && <UsageSection />}
         </div>
       </DialogContent>

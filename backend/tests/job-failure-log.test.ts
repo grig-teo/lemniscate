@@ -7,12 +7,14 @@ vi.mock('../src/lib/notifications.js', () => ({
 }));
 
 import { errorKind, jobFailureFromError, logJobFailure } from '../src/lib/job-failure-log.js';
-import { metricsRegistry } from '../src/lib/metrics.js';
+import { metrics } from '../src/lib/metrics.js';
 
 // Structured failure logging: job failures must be single grep-able JSON
 // lines carrying job name, taskId, and error kind — the minimum for
-// log-based alerting — instead of multi-line stack dumps. Every entry is
-// also fanned out to the user-notification hook (fire-and-forget).
+// log-based alerting — instead of multi-line stack dumps. The Prometheus
+// counter is fed through the recorder lib/metrics.ts injects via
+// setJobFailureRecorder (wired at import time on the singleton). Every
+// entry is also fanned out to the user-notification hook (fire-and-forget).
 
 describe('logJobFailure', () => {
   it('emits one single-line JSON entry with job name, taskId, and error kind', () => {
@@ -43,16 +45,28 @@ describe('logJobFailure', () => {
   });
 
   it('increments the labeled failure counter so alerts need no log parsing', async () => {
-    metricsRegistry.resetMetrics();
     const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
 
     logJobFailure({ jobName: 'merge-gate', errorKind: 'MergeConflictError', message: 'x' });
 
     spy.mockRestore();
-    const text = await metricsRegistry.metrics();
+    const text = await metrics.render();
     expect(text).toContain(
       'lemniscate_job_failures_total{job_name="merge-gate",error_kind="MergeConflictError"} 1',
     );
+  });
+
+  it('skips the counter with recordMetric: false (the throw was already counted)', async () => {
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    logJobFailure(
+      { jobName: 'review-pr', errorKind: 'TimeoutError', message: 'x' },
+      { recordMetric: false },
+    );
+
+    spy.mockRestore();
+    const text = await metrics.render();
+    expect(text).not.toContain('job_name="review-pr"');
   });
 
   it('fans the failure out to the user-notification hook', () => {

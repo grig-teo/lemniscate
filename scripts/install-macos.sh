@@ -168,4 +168,9 @@ cat <<EOF
     Useful commands (run inside $TARGET_DIR):
       docker compose logs -f        # follow logs
       docker compose down           # stop everything
+
+    Backups (see docs/backups.md):
+      ./scripts/backup.sh                        # one-shot: pg dump + MinIO mirror + .env tarball
+      docker compose --profile backup up -d      # daily automated backups
+      ./scripts/restore.sh latest                # restore (tested drill in docs/backups.md)
 EOF

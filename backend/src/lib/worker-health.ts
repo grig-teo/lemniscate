@@ -1,7 +1,6 @@
 import { createServer, type Server, type ServerResponse } from 'node:http';
 import type { Queue } from 'bullmq';
 import { probeDependency, READINESS_TIMEOUT_MS } from './health.js';
-import { METRICS_CONTENT_TYPE, renderMetrics } from './metrics.js';
 
 export interface WorkerQueueSnapshot {
   ok: true;
@@ -17,6 +16,10 @@ export interface WorkerHealthDeps {
   checkRedis?: () => Promise<unknown>;
   // BullMQ worker.isRunning() — false when the consumer stopped.
   isRunning?: () => boolean;
+  // Prometheus exposition for the worker process (job durations/failures,
+  // LLM outcomes, queue gauges). When omitted, /metrics 404s like any
+  // unknown path.
+  renderMetrics?: () => Promise<string>;
 }
 
 // BullMQ keys getJobCounts' result by the requested state names ('waiting',
@@ -71,19 +74,6 @@ async function handleReady(deps: WorkerHealthDeps, res: ServerResponse): Promise
   sendJson(res, ok ? 200 : 503, { ok, redis, worker: running, ts: new Date().toISOString() });
 }
 
-async function handleMetrics(res: ServerResponse): Promise<void> {
-  try {
-    res.writeHead(200, { 'content-type': METRICS_CONTENT_TYPE });
-    res.end(await renderMetrics());
-    return;
-  } catch (err) {
-    sendJson(res, 500, {
-      ok: false,
-      error: err instanceof Error ? err.message : String(err),
-    });
-  }
-}
-
 // Unauthenticated /metrics alongside /health and /health/ready: this port is
 // only reachable on the internal compose network, and the exposition is
 // aggregate-only (queue counts, durations, token totals — no per-user data).
@@ -93,16 +83,19 @@ export function startWorkerHealthServer(
   deps: WorkerHealthDeps = {},
 ): Server {
   const server = createServer((req, res) => {
-    if (req.url === '/metrics') {
-      void handleMetrics(res);
-      return;
-    }
     if (req.url === '/health') {
       void handleHealth(queue, res);
       return;
     }
     if (req.url === '/health/ready') {
       void handleReady(deps, res);
+      return;
+    }
+    if (req.url === '/metrics' && deps.renderMetrics) {
+      void deps.renderMetrics().then((text) => {
+        res.writeHead(200, { 'content-type': 'text/plain; version=0.0.4; charset=utf-8' });
+        res.end(text);
+      });
       return;
     }
     sendJson(res, 404, { ok: false, error: 'not found' });

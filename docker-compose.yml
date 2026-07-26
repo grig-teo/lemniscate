@@ -61,7 +61,11 @@ services:
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-lemniscate-minio}
       MINIO_BUCKET: ${MINIO_BUCKET:-lemniscate-library}
       TRAEFIK_PROVIDER_TOKEN: ${TRAEFIK_PROVIDER_TOKEN:-}
+      # Observability (see docs/observability.md). METRICS_TOKEN guards the
+      # backend's /metrics (unset = endpoint 404s); SENTRY_DSN is opt-in
+      # error reporting (unset = SDK never loaded, reporting is a no-op).
       METRICS_TOKEN: ${METRICS_TOKEN:-}
+      SENTRY_DSN: ${SENTRY_DSN:-}
     # docker.sock: service stop/delete and live container logs run docker
     # from the API (same trust level as the worker; see the note there).
     group_add:
@@ -101,6 +105,11 @@ services:
       MINIO_BUCKET: ${MINIO_BUCKET:-lemniscate-library}
       WORKER_HEALTH_PORT: "3100"
       TRAEFIK_PROVIDER_TOKEN: ${TRAEFIK_PROVIDER_TOKEN:-}
+      # Opt-in Sentry error reporting for failed jobs (no-op when unset).
+      # The worker serves its own /metrics (job durations/failures, LLM
+      # outcomes, queue gauges) on the health port below — scrape it via
+      # 127.0.0.1:3101 (see docs/observability.md).
+      SENTRY_DSN: ${SENTRY_DSN:-}
     # docker.sock: the deploy-service job builds/starts user service
     # containers. group_add grants the app user the host docker group
     # (getent group docker on the host). Sock access = root-equivalent on
@@ -162,6 +171,47 @@ services:
     depends_on:
       backend:
         condition: service_healthy
+
+  # Opt-in scheduled backups (see docs/backups.md). Runs scripts/backup.sh
+  # once at startup and then every BACKUP_INTERVAL_SECONDS (default: daily).
+  # Uses the host docker socket to exec pg_dump in the postgres container and
+  # to spawn a throwaway minio/mc mirror container — same trust level as
+  # backend/worker, which already mount the socket. Enable with:
+  #   docker compose --profile backup up -d
+  # Note: the sidecar cannot see the checkout's .env files; run
+  # scripts/backup.sh on the host (cron) to also capture ENCRYPTION_KEY & co.
+  backup:
+    # Pinned major (never :latest); CLI only, matches the socket's API.
+    image: docker:27-cli
+    restart: unless-stopped
+    profiles: [backup]
+    environment:
+      BACKUP_DIR: /backups
+      BACKUP_INTERVAL_SECONDS: ${BACKUP_INTERVAL_SECONDS:-86400}
+      RETENTION_DAILY: ${RETENTION_DAILY:-14}
+      RETENTION_WEEKLY: ${RETENTION_WEEKLY:-4}
+      MINIO_EXCLUDE: ${MINIO_EXCLUDE:-}
+      POSTGRES_USER: ${POSTGRES_USER:-lemniscate}
+      POSTGRES_DB: ${POSTGRES_DB:-lemniscate}
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-lemniscate}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-lemniscate-minio}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./scripts:/lemniscate/scripts:ro
+      - ./backups:/backups
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_started
+    command:
+      - sh
+      - -c
+      - |
+        while :; do
+          /lemniscate/scripts/backup.sh run || echo "backup run failed" >&2
+          sleep "$${BACKUP_INTERVAL_SECONDS:-86400}"
+        done
 
 networks:
   # Service containers live here ONLY: no Postgres/Redis/MinIO/backend, so a

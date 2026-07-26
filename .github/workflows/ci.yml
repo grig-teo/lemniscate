@@ -67,12 +67,17 @@ jobs:
         working-directory: frontend
         run: npm test
 
+      - name: Module size guard (max 300 lines per AGENTS.md)
+        working-directory: frontend
+        run: npm run check:max-lines
+
   changes:
     name: Detect changed paths
     runs-on: ubuntu-latest
     outputs:
       android: ${{ steps.filter.outputs.android }}
       ios: ${{ steps.filter.outputs.ios }}
+      e2e: ${{ steps.filter.outputs.e2e }}
     steps:
       - uses: actions/checkout@v4
 
@@ -87,6 +92,12 @@ jobs:
               - '.github/workflows/ci.yml'
             ios:
               - 'ios/**'
+              - '.github/workflows/ci.yml'
+            e2e:
+              - 'backend/**'
+              - 'frontend/**'
+              - 'docker-compose.yml'
+              - 'tests/e2e/**'
               - '.github/workflows/ci.yml'
 
   android:
@@ -112,6 +123,33 @@ jobs:
         working-directory: android
         continue-on-error: true
         run: ./gradlew lint
+
+  e2e:
+    name: E2E — smoke suite on the real compose stack
+    needs: changes
+    if: needs.changes.outputs.e2e == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      # run.sh boots docker-compose.yml + tests/e2e/docker-compose.e2e.yml,
+      # waits on /health/ready for backend and worker, seeds one user, and
+      # drives one full task lifecycle (queued -> running -> done, branch
+      # pushed to the gitstub remote) against the real Postgres/Redis.
+      - name: Run e2e smoke suite
+        run: ./tests/e2e/run.sh
+
+      # run.sh dumps backend/worker/gitstub (and all other service) logs to
+      # tests/e2e/artifacts/ on failure — keep them for debugging.
+      - name: Upload service logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-service-logs
+          path: tests/e2e/artifacts/
+          if-no-files-found: warn
+          retention-days: 14
 
   ios:
     name: iOS — xcodebuild (simulator)

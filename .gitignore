@@ -25,3 +25,6 @@ logs/
 data/
 tmp/
 .rust/
+
+# Local backups (scripts/backup.sh; contain secrets — never commit)
+backups/
