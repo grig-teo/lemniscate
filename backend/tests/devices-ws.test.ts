@@ -49,6 +49,56 @@ describe('parseAgentMessage', () => {
     expect(parseAgentMessage('{"type":"command_result","id":"c1","status":"queued"}')).toBeNull();
     expect(parseAgentMessage('{"type":"command_result","status":"done"}')).toBeNull();
   });
+
+  it('parses a full capabilities message', () => {
+    const raw = JSON.stringify({
+      type: 'capabilities',
+      capabilities: {
+        dockerAvailable: true,
+        androidDevices: [{ serial: '0a1b', model: 'Pixel_8', transport: 'usb' }],
+        iosDevices: [{ name: 'iPhone 15', udid: '00008030-X', available: true }],
+        simulators: [{ name: 'iPhone 16', runtime: 'iOS-18-0', state: 'Shutdown' }],
+        emulators: [{ name: 'Pixel_API_35' }],
+      },
+    });
+    expect(parseAgentMessage(raw)).toEqual({
+      type: 'capabilities',
+      capabilities: {
+        dockerAvailable: true,
+        androidDevices: [{ serial: '0a1b', model: 'Pixel_8', transport: 'usb' }],
+        iosDevices: [{ name: 'iPhone 15', udid: '00008030-X', available: true }],
+        simulators: [{ name: 'iPhone 16', runtime: 'iOS-18-0', state: 'Shutdown' }],
+        emulators: [{ name: 'Pixel_API_35' }],
+      },
+    });
+  });
+
+  it('capabilities defaults the lists and strips unknown fields', () => {
+    const raw = JSON.stringify({
+      type: 'capabilities',
+      capabilities: { dockerAvailable: false, futureField: 42 },
+    });
+    expect(parseAgentMessage(raw)).toEqual({
+      type: 'capabilities',
+      capabilities: {
+        dockerAvailable: false,
+        androidDevices: [],
+        iosDevices: [],
+        simulators: [],
+        emulators: [],
+      },
+    });
+  });
+
+  it('rejects malformed capabilities', () => {
+    expect(parseAgentMessage('{"type":"capabilities"}')).toBeNull();
+    expect(parseAgentMessage('{"type":"capabilities","capabilities":"nope"}')).toBeNull();
+    const badDevice = JSON.stringify({
+      type: 'capabilities',
+      capabilities: { androidDevices: [{ serial: 'x', transport: 'carrier-pigeon' }] },
+    });
+    expect(parseAgentMessage(badDevice)).toBeNull();
+  });
 });
 
 describe('handleAgentMessage', () => {
@@ -76,6 +126,43 @@ describe('handleAgentMessage', () => {
     await handleAgentMessage('dev-1', { type: 'hello' }, touch);
     expect(mocks.deviceFindUnique).not.toHaveBeenCalled();
     expect(touch).toHaveBeenCalledOnce();
+  });
+
+  it('capabilities merges into meta under the environment key', async () => {
+    mocks.deviceFindUnique.mockResolvedValue({ meta: { os: 'darwin' } });
+    const touch = vi.fn().mockResolvedValue(undefined);
+    const capabilities = {
+      dockerAvailable: true,
+      androidDevices: [{ serial: '0a1b', transport: 'usb' as const }],
+      iosDevices: [],
+      simulators: [],
+      emulators: [],
+    };
+    await handleAgentMessage('dev-1', { type: 'capabilities', capabilities }, touch);
+    expect(mocks.deviceUpdate).toHaveBeenCalledWith({
+      where: { id: 'dev-1' },
+      data: { meta: { os: 'darwin', environment: capabilities } },
+    });
+    expect(touch).toHaveBeenCalledOnce();
+  });
+
+  it('capabilities replaces a previous environment report', async () => {
+    mocks.deviceFindUnique.mockResolvedValue({
+      meta: { environment: { dockerAvailable: false, androidDevices: [], iosDevices: [], simulators: [], emulators: [] } },
+    });
+    const touch = vi.fn().mockResolvedValue(undefined);
+    const capabilities = {
+      dockerAvailable: true,
+      androidDevices: [],
+      iosDevices: [],
+      simulators: [],
+      emulators: [{ name: 'Pixel_API_35' }],
+    };
+    await handleAgentMessage('dev-1', { type: 'capabilities', capabilities }, touch);
+    expect(mocks.deviceUpdate).toHaveBeenCalledWith({
+      where: { id: 'dev-1' },
+      data: { meta: { environment: capabilities } },
+    });
   });
 
   it('command_result updates only a command of this device', async () => {

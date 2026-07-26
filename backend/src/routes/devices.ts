@@ -296,9 +296,48 @@ async function downloadArtifact(request: FastifyRequest, reply: FastifyReply) {
 
 // --- WebSocket gateway ----------------------------------------------------
 
+// Live environment report from the agent: docker plus the run targets it can
+// see (adb devices, iOS devices/simulators, Android emulators). Lists default
+// empty so a minimal report still parses; unknown fields are stripped.
+const capabilitiesSchema = z.object({
+  dockerAvailable: z.boolean().default(false),
+  androidDevices: z
+    .array(
+      z.object({
+        serial: z.string().min(1).max(200),
+        model: z.string().max(200).optional(),
+        transport: z.enum(['usb', 'wifi']),
+      }),
+    )
+    .max(50)
+    .default([]),
+  iosDevices: z
+    .array(
+      z.object({
+        name: z.string().min(1).max(200),
+        udid: z.string().min(1).max(200),
+        available: z.boolean(),
+      }),
+    )
+    .max(50)
+    .default([]),
+  simulators: z
+    .array(
+      z.object({
+        name: z.string().min(1).max(200),
+        runtime: z.string().max(200).optional(),
+        state: z.string().max(50).optional(),
+      }),
+    )
+    .max(100)
+    .default([]),
+  emulators: z.array(z.object({ name: z.string().min(1).max(200) })).max(100).default([]),
+});
+
 const agentMessageSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('hello'), meta: z.record(z.unknown()).optional() }),
   z.object({ type: z.literal('heartbeat') }),
+  z.object({ type: z.literal('capabilities'), capabilities: capabilitiesSchema }),
   z.object({
     type: z.literal('command_result'),
     id: z.string().min(1).max(100),
@@ -373,6 +412,13 @@ export async function handleAgentMessage(
   }
   if (message.type === 'hello') {
     if (message.meta) await mergeDeviceMeta(deviceId, message.meta);
+    await touch();
+    return;
+  }
+  if (message.type === 'capabilities') {
+    // Latest report replaces the old one wholesale — a disappeared device
+    // must not linger in meta.environment.
+    await mergeDeviceMeta(deviceId, { environment: message.capabilities });
     await touch();
     return;
   }
