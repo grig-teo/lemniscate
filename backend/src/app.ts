@@ -6,12 +6,14 @@ import websocket from '@fastify/websocket';
 import { config } from './config.js';
 import apiRoutes from './routes/index.js';
 import healthRoutes from './routes/health.js';
+import metricsRoutes from './routes/metrics.js';
 import llmConfigRoutes from './routes/llm-configs.js';
 import skillsRoutes from './routes/skills.js';
 import mcpServersRoutes from './routes/mcp-servers.js';
 import libraryRoutes from './routes/library.js';
 import tasksRoutes from './routes/tasks.js';
 import usageRoutes from './routes/usage.js';
+import notificationsRoutes from './routes/notifications.js';
 import devicesRoutes from './routes/devices.js';
 import servicesRoutes, { servicesInternalRoutes, appsIndexRoute } from './routes/services.js';
 
@@ -40,6 +42,7 @@ async function registerRoutes(app: FastifyInstance) {
   // repositories.ts), so it mounts under /api, not /api/tasks.
   await app.register(tasksRoutes, { prefix: '/api' });
   await app.register(usageRoutes, { prefix: '/api' });
+  await app.register(notificationsRoutes, { prefix: '/api/notifications' });
   await app.register(servicesRoutes, { prefix: '/api' });
   // Traefik's HTTP provider endpoint; token-guarded, no session auth.
   await app.register(servicesInternalRoutes, { prefix: '/api' });
@@ -47,6 +50,8 @@ async function registerRoutes(app: FastifyInstance) {
   await app.register(appsIndexRoute, { prefix: '/api' });
   // Liveness (/health) + readiness (/health/ready), unprefixed.
   await app.register(healthRoutes);
+  // Prometheus exposition (GET /metrics), unprefixed, shared-secret guarded.
+  await app.register(metricsRoutes);
 }
 
 export async function buildApp(): Promise<FastifyInstance> {

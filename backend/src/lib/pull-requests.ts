@@ -4,6 +4,7 @@ import { gitlabPrApi } from './pr-gitlab.js';
 import { gitversePrApi } from './pr-gitverse.js';
 import { giteePrApi } from './pr-gitee.js';
 import type {
+  ListedPullRequest,
   MergePullRequestResult,
   OpenPullRequestInput,
   OpenPullRequestResult,
@@ -29,6 +30,7 @@ import type {
 export type {
   CreateOrFindExistingPrOptions,
   GitverseDiffFile,
+  ListedPullRequest,
   MergePullRequestResult,
   OpenPullRequestInput,
   OpenPullRequestResult,
@@ -111,5 +113,18 @@ export async function pullRequestState(
 ): Promise<PrState> {
   return withGitlabRefreshRetry(connection, (token) =>
     providerPrApi(connection, token).state(input),
+  );
+}
+
+// Batched listing of all PRs of a repo (open + recently closed), for the
+// pr-state-sync job: one list call replaces one state call per task. The
+// result is capped at a few pages — callers fall back to pullRequestState
+// for branches the listing did not cover.
+export async function listPullRequests(
+  connection: PrConnectionInput,
+  repoFullName: string,
+): Promise<ListedPullRequest[]> {
+  return withGitlabRefreshRetry(connection, (token) =>
+    providerPrApi(connection, token).list(repoFullName),
   );
 }

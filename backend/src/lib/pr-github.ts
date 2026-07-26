@@ -6,7 +6,10 @@ import {
   conflictOrThrow,
   createOrFindExistingPr,
   encodeRepoPath,
+  fetchAllPages,
+  PR_LIST_PAGE_SIZE,
   prStateFromOpenMerged,
+  type ListedPullRequest,
   type MergePullRequestResult,
   type OpenPullRequestInput,
   type OpenPullRequestResult,
@@ -236,12 +239,41 @@ async function githubPullRequestState(
   return prStateFromOpenMerged(pull.state, pull.merged);
 }
 
+const githubListedPullSchema = z.array(
+  z.object({
+    state: z.string(),
+    merged_at: z.string().nullable().optional(),
+    head: z.object({ ref: z.string() }),
+    base: z.object({ ref: z.string() }),
+  }),
+);
+
+// Batched per-repo listing for the state-sync job: the state=all pages
+// carry merged_at, so the merged flag needs no per-PR detail request.
+async function githubListPullRequests(
+  token: string,
+  repoFullName: string,
+): Promise<ListedPullRequest[]> {
+  const pulls = await fetchAllPages(async (page) => {
+    const url =
+      `${githubPullsUrl(repoFullName)}?state=all&per_page=${PR_LIST_PAGE_SIZE}&page=${page}`;
+    const { body } = await apiRequest('github', 'GET', url, githubHeaders(token), token);
+    return githubListedPullSchema.parse(body);
+  });
+  return pulls.map((pull) => ({
+    headBranch: pull.head.ref,
+    baseBranch: pull.base.ref,
+    state: prStateFromOpenMerged(pull.state, pull.merged_at != null),
+  }));
+}
+
 export function githubPrApi(token: string): ProviderPrApi {
   return {
     open: (input) => githubOpenPullRequest(token, input),
     merge: (input) => githubMergePullRequest(token, input),
     diff: (input) => githubPullRequestDiff(token, input),
     state: (input) => githubPullRequestState(token, input),
+    list: (repoFullName) => githubListPullRequests(token, repoFullName),
     checks: (input) => githubChecksStatus(token, input),
   };
 }

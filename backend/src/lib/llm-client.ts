@@ -5,6 +5,7 @@
 // logged, never included in thrown errors (upstream error bodies are scrubbed
 // of it), and never present in the returned result.
 
+import { recordLlmCall } from './metrics.js';
 import { errorMessage, redactSecrets, sleep } from './utils.js';
 
 export type ThinkingLevel = 'low' | 'medium' | 'high' | 'max';
@@ -314,6 +315,28 @@ export async function chatCompletions(
   params: ChatCompletionsParams,
 ): Promise<ChatCompletionsResult> {
   const state = makeRequestState(params);
+  try {
+    const result = await runAttempts(state);
+    recordLlmCall({
+      model: result.model,
+      status: 'ok',
+      latencyMs: result.latencyMs,
+      ...(result.usage ? { usage: result.usage } : {}),
+    });
+    return result;
+  } catch (err) {
+    recordLlmCall({
+      model: state.model,
+      status: err instanceof LlmError ? err.kind : 'error',
+      latencyMs: Date.now() - state.startedAt,
+    });
+    throw err;
+  }
+}
+
+// The retry loop; metrics are recorded once per call by the wrapper above,
+// not per attempt, so counters reflect logical requests (and their cost).
+async function runAttempts(state: RequestState): Promise<ChatCompletionsResult> {
   for (let attempt = 0; ; attempt++) {
     const outcome = await attemptFetch(state, buildRequestBody(state), attempt);
     if (!outcome.response) {
