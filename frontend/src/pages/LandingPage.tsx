@@ -1,27 +1,23 @@
 import { InstallSection } from '@/components/landing/InstallSection';
 import { LandingHeader } from '@/components/landing/LandingHeader';
 import { LoggedInSections } from '@/components/landing/LoggedInSections';
+import { LemniscateSwarm } from '@/components/LemniscateSwarm';
 import { useMe } from '@/lib/hooks';
+
+/** Hero lemniscate: same mark as the nav logo, hand-tuned for 72×40. */
+const HERO_PATH = 'M36 20 C36 8 14 4 8 14 C2 24 20 36 36 20 C52 4 70 16 64 26 C58 36 36 32 36 20 Z';
 
 function Hero() {
   return (
     <div>
-      <svg
-        className="mx-auto mb-6 block"
-        width="72"
-        height="40"
+      <LemniscateSwarm
+        className="mx-auto mb-6 block h-10 w-[72px] text-foreground"
+        path={HERO_PATH}
         viewBox="0 0 72 40"
-        fill="none"
-        role="img"
-        aria-label="Lemniscate logo"
-      >
-        <path
-          d="M36 20 C36 8 14 4 8 14 C2 24 20 36 36 20 C52 4 70 16 64 26 C58 36 36 32 36 20 Z"
-          stroke="currentColor"
-          strokeWidth="2.5"
-          strokeLinecap="round"
-        />
-      </svg>
+        strokeWidth={2.5}
+        particleScale={3}
+        label="Lemniscate logo"
+      />
       <h1 className="text-center text-4xl font-bold tracking-tight">Lemniscate</h1>
       <p className="mt-2 text-center font-mono text-sm text-muted-foreground">
         {'// a self-improving codebase'}
