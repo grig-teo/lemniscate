@@ -43,10 +43,15 @@ const CANCEL_POLL_MS = 5_000;
 // The cancel endpoint marks the task failed; the runner notices on the next
 // poll and kills the agent — a real stop, not just a status flip.
 async function taskIsCancelled(taskId: string): Promise<boolean> {
-  const task = await prisma.task
-    .findUnique({ where: { id: taskId }, select: { status: true } })
-    .catch(() => null);
-  return task?.status === 'failed';
+  try {
+    const task = await prisma.task.findUnique({
+      where: { id: taskId },
+      select: { status: true },
+    });
+    return task?.status === 'failed';
+  } catch {
+    return false;
+  }
 }
 
 // Strips ANSI escape sequences (SGR colors, cursor moves, OSC titles).
