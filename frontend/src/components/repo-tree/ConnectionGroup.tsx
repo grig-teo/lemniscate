@@ -38,12 +38,15 @@ function usePersistedCollapsed(connectionId: string): [boolean, () => void] {
 export function ConnectionGroup({
   group,
   syncing,
+  syncError,
   onSync,
   expanded,
   onToggleRepo,
 }: {
   group: ConnectionGroupData;
   syncing: boolean;
+  /** Human-readable failure of the last Sync click for this connection. */
+  syncError: string | null;
   onSync: (connectionId: string) => void;
   expanded: Record<string, boolean>;
   onToggleRepo: (repoId: string) => void;
@@ -83,6 +86,14 @@ export function ConnectionGroup({
           <RefreshCw className={cn('h-3.5 w-3.5', syncing && 'animate-spin')} />
         </Button>
       </div>
+
+      {/* Transient toasts also report this failure; keep an inline copy next
+          to the Sync button so it survives after the toast disappears. */}
+      {syncError && (
+        <p role="alert" className="px-3 pb-2 text-[11px] text-destructive">
+          Sync failed: {syncError}
+        </p>
+      )}
 
       {!collapsed &&
         group.repos.map((repo) => (
