@@ -103,6 +103,9 @@ const envSchema = z.object({
   APPS_NETWORK: z.string().min(1).default('lemniscate-apps'),
   // Public base URL of the apps domain, for display in the UI.
   APPS_BASE_URL: z.string().default('https://apps.grig-teo.space'),
+  // How Traefik reaches the backend (compose service name) — target of the
+  // per-owner apps-index routers.
+  TRAEFIK_BACKEND_URL: z.string().default('http://backend:3000'),
   // Resource limits applied to every service container.
   APPS_CONTAINER_MEMORY: z.string().min(1).default('512m'),
   APPS_CONTAINER_CPUS: z.string().min(1).default('1'),
