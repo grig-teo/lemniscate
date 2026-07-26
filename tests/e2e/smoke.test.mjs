@@ -41,7 +41,6 @@ assert.ok(SEED.userId && SEED.connectionId, 'E2E_SEED must carry userId and conn
 let authCookie = null;
 let repository = null;
 let task = null;
-const seenStatuses = new Set();
 
 async function api(method, pathName, { body, cookie } = {}) {
   const response = await fetch(`${BACKEND_URL}/api${pathName}`, {
@@ -75,7 +74,6 @@ async function waitForTaskTerminal() {
   for (;;) {
     const { status, json } = await api('GET', `/tasks/${task.id}`, { cookie: true });
     assert.equal(status, 200, `GET /tasks/:id -> ${status}`);
-    seenStatuses.add(json.task.status);
     if (terminal.has(json.task.status)) return json.task;
     assert.ok(Date.now() < deadline, `task did not reach a terminal state within ${TASK_TIMEOUT_MS}ms (last: ${json.task.status})`);
     await new Promise((resolve) => setTimeout(resolve, 1000));
@@ -166,17 +164,26 @@ test('full task lifecycle: queued -> running -> done with a pushed branch', asyn
   assert.equal(created.status, 201, `task create failed: ${created.text}`);
   task = created.json.task;
   assert.equal(task.status, 'queued');
-  seenStatuses.add('queued');
 
   const final = await waitForTaskTerminal();
   assert.equal(final.status, 'done', `task ended as ${final.status}: ${final.error ?? ''}`);
-  assert.ok(seenStatuses.has('running'), `never observed 'running' (saw: ${[...seenStatuses].join(', ')})`);
   assert.equal(final.branchName, EXPECTED_BRANCH);
 
+  const eventsResponse = await api('GET', `/tasks/${task.id}/events`, { cookie: true });
+  assert.equal(eventsResponse.status, 200);
+  const events = eventsResponse.json;
+
+  // The stub run's 'running' phase is shorter than any sane poll interval,
+  // so verify the queued -> running -> done transition from the persisted
+  // status events (setTaskStatus appends one per transition) instead of
+  // live polling. 'queued' is the create-time status, asserted above.
+  const transitions = events
+    .filter((event) => event.kind === 'status')
+    .map((event) => event.payload.status);
+  assert.deepEqual(transitions, ['running', 'done'], `status events: ${transitions.join(', ')}`);
+
   await t.test('task console shows the stub LLM output', async () => {
-    const events = await api('GET', `/tasks/${task.id}/events`, { cookie: true });
-    assert.equal(events.status, 200);
-    const lines = events.json
+    const lines = events
       .filter((event) => event.kind === 'log')
       .map((event) => event.payload.line);
     assert.ok(

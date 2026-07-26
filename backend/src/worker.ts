@@ -22,9 +22,10 @@ import {
 import { registerPrStateSyncSchedule, recoverStuckReviews, syncMergedPullRequests } from './lib/pr-state-sync.js';
 import { startHeartbeat } from './lib/worker-heartbeat.js';
 import { jobFailureFromError, logJobFailure } from './lib/job-failure-log.js';
+import { measureJob, startQueueMetricsPoller } from './lib/metrics.js';
 import { getRedisClient } from './lib/redis.js';
 import { redisEndpointForLog } from './lib/utils.js';
-import { startWorkerHealthServer } from './lib/worker-health.js';
+import { queueSnapshot, startWorkerHealthServer } from './lib/worker-health.js';
 
 const runTaskDataSchema = z.object({ taskId: z.string().min(1) });
 const reviewPrDataSchema = z.object({
@@ -71,54 +72,77 @@ async function sweepOrphanedWorkdirs(): Promise<void> {
 
 await sweepOrphanedWorkdirs();
 
+// Job names the worker dispatches on (kept in sync with the switch in
+// dispatchJob). Used to bound the job_name metric label: anything else —
+// e.g. foreign jobs in the queue — folds into 'unknown' instead of growing
+// cardinality.
+const KNOWN_JOB_NAMES = new Set([
+  'run-task',
+  'review-pr',
+  'merge-gate',
+  'deploy-service',
+  'generate-proposals',
+  'proposals-topup',
+  'proposals-autorun',
+  'pr-state-sync',
+]);
+
+function jobMetricName(name: string): string {
+  return KNOWN_JOB_NAMES.has(name) ? name : 'unknown';
+}
+
+async function dispatchJob(job: Job): Promise<void> {
+  switch (job.name) {
+    case 'run-task': {
+      const { taskId } = runTaskDataSchema.parse(job.data);
+      await runTask(taskId);
+      return;
+    }
+    case 'review-pr': {
+      const { taskId, attempt } = reviewPrDataSchema.parse(job.data);
+      await reviewTask(taskId, attempt);
+      return;
+    }
+    case 'merge-gate': {
+      const { taskId, attempt, ciFixes } = mergeGateDataSchema.parse(job.data);
+      await mergeGateTask(taskId, attempt, ciFixes);
+      return;
+    }
+    case 'deploy-service': {
+      const { deploymentId } = deployServiceDataSchema.parse(job.data);
+      await deployService(deploymentId);
+      return;
+    }
+    case 'generate-proposals': {
+      const { repositoryId } = generateProposalsDataSchema.parse(job.data);
+      await generateProposals(repositoryId);
+      return;
+    }
+    case 'proposals-topup': {
+      proposalsTopUpDataSchema.parse(job.data);
+      await enqueueProposalTopUps();
+      return;
+    }
+    case 'proposals-autorun': {
+      proposalsTopUpDataSchema.parse(job.data);
+      await enqueueProposalAutoRuns();
+      return;
+    }
+    case 'pr-state-sync': {
+      proposalsTopUpDataSchema.parse(job.data);
+      await syncMergedPullRequests();
+      return;
+    }
+    default:
+      throw new Error(`unknown job name: ${job.name}`);
+  }
+}
+
+// measureJob wraps dispatch with the duration histogram + outcome counter;
+// failures rethrow so BullMQ retry semantics are untouched.
 const worker = new Worker(
   AGENT_QUEUE_NAME,
-  async (job: Job) => {
-    switch (job.name) {
-      case 'run-task': {
-        const { taskId } = runTaskDataSchema.parse(job.data);
-        await runTask(taskId);
-        return;
-      }
-      case 'review-pr': {
-        const { taskId, attempt } = reviewPrDataSchema.parse(job.data);
-        await reviewTask(taskId, attempt);
-        return;
-      }
-      case 'merge-gate': {
-        const { taskId, attempt, ciFixes } = mergeGateDataSchema.parse(job.data);
-        await mergeGateTask(taskId, attempt, ciFixes);
-        return;
-      }
-      case 'deploy-service': {
-        const { deploymentId } = deployServiceDataSchema.parse(job.data);
-        await deployService(deploymentId);
-        return;
-      }
-      case 'generate-proposals': {
-        const { repositoryId } = generateProposalsDataSchema.parse(job.data);
-        await generateProposals(repositoryId);
-        return;
-      }
-      case 'proposals-topup': {
-        proposalsTopUpDataSchema.parse(job.data);
-        await enqueueProposalTopUps();
-        return;
-      }
-      case 'proposals-autorun': {
-        proposalsTopUpDataSchema.parse(job.data);
-        await enqueueProposalAutoRuns();
-        return;
-      }
-      case 'pr-state-sync': {
-        proposalsTopUpDataSchema.parse(job.data);
-        await syncMergedPullRequests();
-        return;
-      }
-      default:
-        throw new Error(`unknown job name: ${job.name}`);
-    }
-  },
+  (job: Job) => measureJob(jobMetricName(job.name), () => dispatchJob(job)),
   { connection, concurrency: config.AGENT_WORKER_CONCURRENCY },
 );
 
@@ -171,16 +195,21 @@ await recoverStuckReviews();
 // Liveness + readiness endpoints: compose's healthcheck probes these; the
 // queue counts /health serves (waiting/active/failed) make a stalled
 // pipeline visible, and /health/ready 503s when Redis is unreachable or the
-// consumer stopped.
+// consumer stopped. /metrics is served on the same internal port.
 const healthServer = startWorkerHealthServer(getAgentTasksQueue(), config.WORKER_HEALTH_PORT, {
   checkRedis: () => getRedisClient().ping(),
   isRunning: () => worker.isRunning(),
 });
 console.log(`worker health endpoint listening on :${config.WORKER_HEALTH_PORT}`);
 
+// Queue depth gauges for Prometheus: same getJobCounts source as /health,
+// polled on an interval so scrapes never hammer Redis. Serves :PORT/metrics.
+const stopQueueMetrics = startQueueMetricsPoller(() => queueSnapshot(getAgentTasksQueue()));
+
 for (const signal of ['SIGINT', 'SIGTERM'] as const) {
   process.once(signal, () => {
     stopHeartbeat();
+    stopQueueMetrics();
     healthServer.close();
     void worker.close().then(
       () => connection.quit(),

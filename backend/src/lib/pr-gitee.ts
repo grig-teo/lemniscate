@@ -6,9 +6,12 @@ import {
   conflictOrThrow,
   createOrFindExistingPr,
   encodeRepoPath,
+  fetchAllPages,
   gitverseDiffFileSchema,
   matchesHeadBaseRef,
+  PR_LIST_PAGE_SIZE,
   prStateFromString,
+  type ListedPullRequest,
   type MergePullRequestResult,
   type OpenPullRequestInput,
   type OpenPullRequestResult,
@@ -153,11 +156,31 @@ async function giteePullRequestState(token: string, input: PullRequestRefInput):
   return prStateFromString(match.state);
 }
 
+// Batched per-repo listing for the state-sync job: the list payload carries
+// head/base refs and the state, so one call resolves every awaiting branch.
+async function giteeListPullRequests(
+  token: string,
+  repoFullName: string,
+): Promise<ListedPullRequest[]> {
+  const pulls = await fetchAllPages(async (page) => {
+    const url =
+      `${giteePullsUrl(repoFullName)}?state=all&per_page=${PR_LIST_PAGE_SIZE}&page=${page}`;
+    const { body } = await apiRequest('gitee', 'GET', url, giteeHeaders(token), token);
+    return giteePullStateListSchema.parse(body);
+  });
+  return pulls.map((pull) => ({
+    headBranch: pull.head.ref,
+    baseBranch: pull.base.ref,
+    state: prStateFromString(pull.state),
+  }));
+}
+
 export function giteePrApi(token: string): ProviderPrApi {
   return {
     open: (input) => giteeOpenPullRequest(token, input),
     merge: (input) => giteeMergePullRequest(token, input),
     diff: (input) => giteePullRequestDiff(token, input),
     state: (input) => giteePullRequestState(token, input),
+    list: (repoFullName) => giteeListPullRequests(token, repoFullName),
   };
 }

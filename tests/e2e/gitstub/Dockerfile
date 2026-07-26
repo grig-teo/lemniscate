@@ -7,7 +7,9 @@
 #   - an OpenAI-compatible LLM endpoint (http://gitstub:8081/v1, plain HTTP)
 FROM alpine:3.21
 
-RUN apk add --no-cache git nginx fcgiwrap openssl nodejs
+# git-daemon: Alpine splits git-http-backend (the smart-HTTP CGI) out of the
+# git package into git-daemon — without it nginx 403s every git request.
+RUN apk add --no-cache git git-daemon nginx fcgiwrap openssl nodejs
 
 # TLS edge: one self-signed cert covering both virtual hosts.
 RUN mkdir -p /etc/ssl/gitstub \

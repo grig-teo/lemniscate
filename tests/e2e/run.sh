@@ -54,6 +54,11 @@ fi
 
 FAILED=0
 
+# Any failure path must flip FAILED so cleanup() dumps service logs to
+# $ARTIFACTS (CI uploads them) before tearing down — boot/seed failures are
+# exactly the regression class this suite exists to catch.
+fail() { FAILED=1; exit 1; }
+
 dump_logs() {
   mkdir -p "$ARTIFACTS"
   for svc in backend worker gitstub frontend; do
@@ -117,18 +122,18 @@ wait_http_ok() { # name url curl-extra-args...
   log "$name is up"
 }
 
-wait_http_ok "backend /health/ready" "http://backend:3000/health/ready" || exit 1
-wait_http_ok "worker /health/ready"  "http://worker:3100/health/ready"  || exit 1
-wait_http_ok "frontend /"            "http://frontend:80/"              || exit 1
+wait_http_ok "backend /health/ready" "http://backend:3000/health/ready" || fail
+wait_http_ok "worker /health/ready"  "http://worker:3100/health/ready"  || fail
+wait_http_ok "frontend /"            "http://frontend:80/"              || fail
 # gitstub serves a self-signed cert by design (-k).
-wait_http_ok "gitstub https"         "https://gitstub/e2e-repo.git/info/refs?service=git-upload-pack" -k || exit 1
+wait_http_ok "gitstub https"         "https://gitstub/e2e-repo.git/info/refs?service=git-upload-pack" -k || fail
 
 log "seeding user + git connection inside the backend container"
 # docker cp instead of a bind mount: works even when the daemon cannot see
 # the client's filesystem (remote/sandboxed daemons).
 BACKEND_CID="$("${COMPOSE[@]}" ps -q backend)"
-docker cp tests/e2e/seed.mjs "$BACKEND_CID:/tmp/e2e-seed.mjs"
-E2E_SEED="$("${COMPOSE[@]}" exec -T backend node /tmp/e2e-seed.mjs | tail -n 1)"
+docker cp tests/e2e/seed.mjs "$BACKEND_CID:/tmp/e2e-seed.mjs" || fail
+E2E_SEED="$("${COMPOSE[@]}" exec -T backend node /tmp/e2e-seed.mjs | tail -n 1)" || fail
 log "seed: $E2E_SEED"
 
 log "running smoke tests (inside the compose network)"

@@ -2,18 +2,33 @@ import path from 'node:path';
 import type { Prisma } from '@prisma/client';
 import { config } from '../config.js';
 import { cleanupWorkdir, logEvent } from './agent-git.js';
-import { pullRequestState, type PrState } from './pull-requests.js';
+import {
+  listPullRequests,
+  pullRequestState,
+  type ListedPullRequest,
+  type PrState,
+} from './pull-requests.js';
 import { enqueueReviewTask, getAgentTasksQueue } from './proposal-scheduler.js';
 import { prisma } from './prisma.js';
 import { setTaskStatus } from './task-events.js';
-import { errorMessage } from './utils.js';
+import { errorMessage, sleep } from './utils.js';
 
 // Repeatable 'pr-state-sync' job. A task whose PR is merged manually on the
 // git host (or merged while the worker was down) would sit in awaiting_review
 // forever — this polls the provider and marks those tasks done.
+//
+// Polling is batched per repository: one listPullRequests call resolves all
+// of a repo's awaiting branches instead of one state call per task, so the
+// provider API burn scales with repos, not with open PRs.
 
 const PR_STATE_SYNC_INTERVAL_MS = 5 * 60 * 1000; // every 5 minutes
 const PR_STATE_SYNC_SCHEDULER_ID = 'pr-state-sync';
+// One hung provider must not stall the whole sweep — a repo whose list call
+// times out falls back to per-branch checks.
+const REPO_LIST_TIMEOUT_MS = 30 * 1000;
+// Small random gap between repos so a burst of list calls does not land in
+// the same second (provider rate-limit friendliness).
+const INTER_REPO_JITTER_MS = 250;
 
 type TaskWithConnection = Prisma.TaskGetPayload<{
   include: { repository: { include: { connection: true } } };
@@ -36,29 +51,106 @@ export function taskStatusForPrState(state: PrState): 'done' | 'closed' | null {
   return null;
 }
 
-// Polls one task's PR; returns true when the task left awaiting_review.
-// Provider failures are logged and skipped — the next run retries.
+// Applies a polled PR state to the task: flips the status, logs, and drops
+// the kept run workdir (the PR is finished either way). Returns true when
+// the task left awaiting_review.
+async function applyPrState(task: TaskWithConnection, state: PrState): Promise<boolean> {
+  const status = taskStatusForPrState(state);
+  if (status === null) return false;
+  await setTaskStatus(task.id, status);
+  const what = status === 'done' ? 'merged' : 'closed without merge';
+  await logEvent(task.id, `pull request ${what} on the git host — task marked ${status}`);
+  await cleanupWorkdir(path.join(config.AGENT_WORKDIR, task.id), task.id);
+  return true;
+}
+
+// DB/event failures are logged and skipped — the next run retries.
+async function applyPrStateSafe(task: TaskWithConnection, state: PrState): Promise<boolean> {
+  try {
+    return await applyPrState(task, state);
+  } catch (err) {
+    console.warn(`pr-state-sync: update failed for task ${task.id}: ${errorMessage(err)}`);
+    return false;
+  }
+}
+
+// Per-branch fallback: one provider lookup for this task's PR. Provider
+// failures are logged and skipped — the next run retries.
 async function syncTaskPrState(task: TaskWithConnection): Promise<boolean> {
   if (!task.branchName) return false;
+  let state: PrState;
   try {
-    const state = await pullRequestState(task.repository.connection, {
+    state = await pullRequestState(task.repository.connection, {
       repoFullName: task.repository.fullName,
       headBranch: task.branchName,
       baseBranch: task.repository.defaultBranch,
     });
-    const status = taskStatusForPrState(state);
-    if (status === null) return false;
-    await setTaskStatus(task.id, status);
-    const what = status === 'done' ? 'merged' : 'closed without merge';
-    await logEvent(task.id, `pull request ${what} on the git host — task marked ${status}`);
-    // The run workdir was kept for the review window — the PR is finished
-    // either way, so the clone can go.
-    await cleanupWorkdir(path.join(config.AGENT_WORKDIR, task.id), task.id);
-    return true;
   } catch (err) {
     console.warn(`pr-state-sync: check failed for task ${task.id}: ${errorMessage(err)}`);
     return false;
   }
+  return applyPrStateSafe(task, state);
+}
+
+// Batched listing with a timeout guard so one hung provider cannot stall
+// the whole sweep — the caller falls back to per-branch checks on failure.
+async function listRepoPullRequests(task: TaskWithConnection): Promise<ListedPullRequest[]> {
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    return await Promise.race([
+      listPullRequests(task.repository.connection, task.repository.fullName),
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(
+          () => reject(new Error(`listing timed out after ${REPO_LIST_TIMEOUT_MS}ms`)),
+          REPO_LIST_TIMEOUT_MS,
+        );
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function findPrForTask(
+  pulls: ListedPullRequest[],
+  task: TaskWithConnection,
+): ListedPullRequest | undefined {
+  return pulls.find(
+    (pr) => pr.headBranch === task.branchName && pr.baseBranch === task.repository.defaultBranch,
+  );
+}
+
+// Resolves all awaiting-review tasks of one repository with a single list
+// call. Branches missing from the list (listing failed, paginated past the
+// cap, or the PR is too old) fall back to the per-branch check.
+async function syncRepositoryTasks(tasks: TaskWithConnection[]): Promise<number> {
+  const first = tasks[0];
+  if (!first) return 0;
+  let pulls: ListedPullRequest[] | null = null;
+  try {
+    pulls = await listRepoPullRequests(first);
+  } catch (err) {
+    console.warn(
+      `pr-state-sync: list failed for repo ${first.repository.fullName}: ${errorMessage(err)}`,
+    );
+  }
+  let marked = 0;
+  for (const task of tasks) {
+    const pr = pulls ? findPrForTask(pulls, task) : undefined;
+    const resolved = pr ? await applyPrStateSafe(task, pr.state) : await syncTaskPrState(task);
+    if (resolved) marked += 1;
+  }
+  return marked;
+}
+
+function groupByRepository(tasks: TaskWithConnection[]): TaskWithConnection[][] {
+  const groups = new Map<string, TaskWithConnection[]>();
+  for (const task of tasks) {
+    const group = groups.get(task.repositoryId) ?? [];
+    group.push(task);
+    groups.set(task.repositoryId, group);
+  }
+  return [...groups.values()];
 }
 
 // Job: pr-state-sync — moves awaiting_review tasks to done when their PR was
@@ -76,8 +168,11 @@ export async function syncMergedPullRequests(): Promise<void> {
     include: { repository: { include: { connection: true } } },
   });
   let marked = 0;
-  for (const task of tasks) {
-    if (await syncTaskPrState(task)) marked += 1;
+  let repoIndex = 0;
+  for (const repoTasks of groupByRepository(tasks)) {
+    if (repoIndex > 0) await sleep(Math.random() * INTER_REPO_JITTER_MS);
+    repoIndex += 1;
+    marked += await syncRepositoryTasks(repoTasks);
   }
   if (tasks.length > 0) {
     console.log(`pr-state-sync: resolved ${marked}/${tasks.length} awaiting-review task(s)`);

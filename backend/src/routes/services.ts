@@ -7,6 +7,7 @@ import { stopRemoveContainer, tailContainerLogs } from '../lib/deploy/docker-app
 import { servicePath, slugify } from '../lib/deploy/slug.js';
 import { buildTraefikConfig } from '../lib/deploy/traefik-config.js';
 import { prisma } from '../lib/prisma.js';
+import { safeEqualSecret } from '../lib/secret-compare.js';
 import { authenticatedUserId, requireAuth } from '../plugins/auth.js';
 import { parseOrReply } from './helpers.js';
 
@@ -282,7 +283,7 @@ export const servicesInternalRoutes: FastifyPluginAsync = async (app) => {
     if (!config.TRAEFIK_PROVIDER_TOKEN) {
       return reply.code(503).send({ error: 'traefik provider is not configured' });
     }
-    if (request.headers['x-traefik-token'] !== config.TRAEFIK_PROVIDER_TOKEN) {
+    if (!safeEqualSecret(request.headers['x-traefik-token'], config.TRAEFIK_PROVIDER_TOKEN)) {
       return reply.code(401).send({ error: 'invalid traefik token' });
     }
     const services = await prisma.service.findMany({
