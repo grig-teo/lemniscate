@@ -20,6 +20,8 @@ import { WebSocket } from 'ws';
 import * as lib from './lib.js';
 
 const HEARTBEAT_MS = 25_000;
+const CAPABILITIES_INTERVAL_MS = 60_000;
+const CAPABILITY_PROBE_TIMEOUT_MS = 5_000;
 const BACKOFF_BASE_MS = 1_000;
 const BACKOFF_CAP_MS = 30_000;
 const HTTP_READY_TIMEOUT_MS = 30_000;
@@ -81,6 +83,53 @@ async function step(log, command, args, options) {
 
 async function dockerAvailable() {
   return (await run('docker', ['info'], { timeout: 5_000 })).ok;
+}
+
+// --- capabilities probes (all best-effort: a missing tool → an empty list) -------
+
+async function probeAdbDevices() {
+  const adb = await findAdb();
+  if (!adb) return [];
+  const result = await run(adb, ['devices', '-l'], { timeout: CAPABILITY_PROBE_TIMEOUT_MS });
+  return result.ok ? lib.parseAdbDevices(result.output) : [];
+}
+
+async function probeEmulators() {
+  for (const candidate of lib.emulatorCandidates()) {
+    const result = await run(candidate, ['-list-avds'], { timeout: CAPABILITY_PROBE_TIMEOUT_MS });
+    if (result.ok) return lib.parseEmulatorList(result.output);
+  }
+  return [];
+}
+
+async function probeSimulators() {
+  const result = await run('xcrun', ['simctl', 'list', 'devices', '-j', 'available'], {
+    timeout: CAPABILITY_PROBE_TIMEOUT_MS,
+  });
+  return result.ok ? lib.parseSimctlDevices(result.output) : [];
+}
+
+/** devicectl writes its JSON to a file; read it back and clean up. */
+async function probeIosDevices() {
+  const jsonPath = path.join(os.tmpdir(), `lemniscate-devicectl-${process.pid}.json`);
+  const result = await run('xcrun', ['devicectl', 'list', 'devices', '--json-output', jsonPath], {
+    timeout: CAPABILITY_PROBE_TIMEOUT_MS,
+  });
+  const json = fs.existsSync(jsonPath) ? fs.readFileSync(jsonPath, 'utf8') : '';
+  await fs.promises.rm(jsonPath, { force: true });
+  return result.ok ? lib.parseDevicectlDevices(json) : [];
+}
+
+/** Live run-target report for the capabilities frame. */
+async function collectCapabilities() {
+  const [docker, androidDevices, iosDevices, simulators, emulators] = await Promise.all([
+    dockerAvailable(),
+    probeAdbDevices(),
+    probeIosDevices(),
+    probeSimulators(),
+    probeEmulators(),
+  ]);
+  return { dockerAvailable: docker, androidDevices, iosDevices, simulators, emulators };
 }
 
 // --- Pairing ----------------------------------------------------------------
@@ -218,7 +267,7 @@ async function firstAdbDevice(log, adb) {
   const result = await run(adb, ['devices', '-l'], { timeout: 15_000 });
   log.text += `$ ${adb} devices -l\n${result.output}`;
   if (!result.ok) return null;
-  return lib.parseAdbDevices(result.output)[0] ?? null;
+  return lib.parseAdbDevices(result.output)[0]?.serial ?? null;
 }
 
 /** Local path of the APK to install: the chained build output when given. */
@@ -495,13 +544,17 @@ function connect(config, meta, attempt = 0) {
   const wsUrl = lib.buildWsUrl(config.server, config.deviceToken);
   const ws = new WebSocket(wsUrl);
   let heartbeat = null;
+  let capabilitiesTimer = null;
   const send = (message) => ws.readyState === WebSocket.OPEN && ws.send(JSON.stringify(message));
+  const sendCapabilities = () => collectCapabilities().then((c) => send(lib.capabilitiesMessage(c)));
   const enqueue = createCommandQueue(send, config);
 
   ws.on('open', () => {
     console.log(`Connected to ${config.server} as "${config.name}".`);
     send(lib.helloMessage(meta));
+    sendCapabilities().catch(() => {});
     heartbeat = setInterval(() => send(lib.heartbeatMessage()), HEARTBEAT_MS);
+    capabilitiesTimer = setInterval(() => sendCapabilities().catch(() => {}), CAPABILITIES_INTERVAL_MS);
   });
   ws.on('message', (raw) => {
     const message = lib.parseServerMessage(raw);
@@ -511,6 +564,7 @@ function connect(config, meta, attempt = 0) {
   ws.on('error', (error) => console.error(`Tunnel error: ${error.message}`));
   ws.on('close', (code) => {
     clearInterval(heartbeat);
+    clearInterval(capabilitiesTimer);
     if (code === 4001) {
       console.error('Server rejected the device token. Re-pair with: --pair <new-code>');
       process.exit(1);

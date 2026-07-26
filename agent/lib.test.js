@@ -382,27 +382,104 @@ test('adbCandidates skips ANDROID_HOME when unset', () => {
   assert.equal(candidates.length, 2);
 });
 
-test('parseAdbDevices returns serials in state device only', () => {
+test('parseAdbDevices returns online devices only, with model and transport', () => {
   const output = [
     'List of devices attached',
     'emulator-5554\tdevice',
     '0a1b2c3d\toffline',
+    '9x8y7z\tunauthorized',
     '',
   ].join('\n');
-  assert.deepEqual(lib.parseAdbDevices(output), ['emulator-5554']);
+  assert.deepEqual(lib.parseAdbDevices(output), [{ serial: 'emulator-5554', transport: 'usb' }]);
 });
 
-test('parseAdbDevices parses adb devices -l output', () => {
+test('parseAdbDevices parses adb devices -l model and wifi serials', () => {
   const output = [
     'List of devices attached',
-    'emulator-5554          device product:sdk_gphone64_arm64 model:sdk_gphone64_arm64 device:emu64a transport_id:1',
+    '0a1b2c3d               device usb:1-2 product:a model:Pixel_8 device:b transport_id:1',
+    '192.168.1.5:5555       device product:x model:Pixel_7 device:y transport_id:2',
+    'adb-abc123-XYZ._adb-tls-connect._tcp. device product:x model:Pixel_6 device:y transport_id:3',
     '',
   ].join('\n');
-  assert.deepEqual(lib.parseAdbDevices(output), ['emulator-5554']);
+  assert.deepEqual(lib.parseAdbDevices(output), [
+    { serial: '0a1b2c3d', model: 'Pixel_8', transport: 'usb' },
+    { serial: '192.168.1.5:5555', model: 'Pixel_7', transport: 'wifi' },
+    { serial: 'adb-abc123-XYZ._adb-tls-connect._tcp.', model: 'Pixel_6', transport: 'wifi' },
+  ]);
 });
 
 test('parseAdbDevices returns [] when nothing is attached', () => {
   assert.deepEqual(lib.parseAdbDevices('List of devices attached\n\n'), []);
+});
+
+// --- capabilities probes ---------------------------------------------------------
+
+test('capabilitiesMessage wraps the report in the capabilities envelope', () => {
+  const capabilities = { dockerAvailable: true, androidDevices: [], iosDevices: [], simulators: [], emulators: [] };
+  assert.deepEqual(lib.capabilitiesMessage(capabilities), { type: 'capabilities', capabilities });
+});
+
+test('parseSimctlDevices lists available simulators with runtime and state', () => {
+  const simulators = lib.parseSimctlDevices(SIMCTL_JSON);
+  assert.deepEqual(simulators, [
+    { name: 'iPhone 15', runtime: 'iOS 17.5', state: 'Booted' },
+    { name: 'iPhone SE', runtime: 'iOS 17.5', state: 'Shutdown' },
+    { name: 'Apple Watch', runtime: 'watchOS 10.5', state: 'Shutdown' },
+  ]);
+});
+
+test('parseSimctlDevices returns [] for garbage or empty JSON', () => {
+  assert.deepEqual(lib.parseSimctlDevices('garbage'), []);
+  assert.deepEqual(lib.parseSimctlDevices('{"devices":{}}'), []);
+});
+
+test('parseEmulatorList returns AVD names, skipping noise lines', () => {
+  const output = 'INFO    | Storing crashdata\nPixel_API_35\n\nMedium_Phone_API_36\n';
+  assert.deepEqual(lib.parseEmulatorList(output), [
+    { name: 'Pixel_API_35' },
+    { name: 'Medium_Phone_API_36' },
+  ]);
+  assert.deepEqual(lib.parseEmulatorList(''), []);
+});
+
+const DEVICECTL_JSON = JSON.stringify({
+  result: {
+    devices: [
+      {
+        identifier: '73BBE0E0-0142',
+        hardwareProperties: {
+          platform: 'iOS',
+          reality: 'physical',
+          marketingName: 'iPhone 14 Pro Max',
+          udid: '00008120-00025C643A70201E',
+        },
+        deviceProperties: { name: 'iPhone' },
+        connectionProperties: { tunnelState: 'disconnected', pairingState: 'paired' },
+      },
+      {
+        identifier: 'D3FAB70D-1D5C',
+        hardwareProperties: { platform: 'iOS', reality: 'physical', marketingName: 'iPhone 13', udid: 'UDID-2' },
+        connectionProperties: { tunnelState: 'unavailable' },
+      },
+      {
+        identifier: 'SIM-1',
+        hardwareProperties: { platform: 'iOS', reality: 'virtual', marketingName: 'iPhone 17' },
+        connectionProperties: { tunnelState: 'connected' },
+      },
+    ],
+  },
+});
+
+test('parseDevicectlDevices lists physical iOS devices with availability', () => {
+  assert.deepEqual(lib.parseDevicectlDevices(DEVICECTL_JSON), [
+    { name: 'iPhone 14 Pro Max', udid: '00008120-00025C643A70201E', available: true },
+    { name: 'iPhone 13', udid: 'UDID-2', available: false },
+  ]);
+});
+
+test('parseDevicectlDevices returns [] for garbage or missing result', () => {
+  assert.deepEqual(lib.parseDevicectlDevices('garbage'), []);
+  assert.deepEqual(lib.parseDevicectlDevices('{"result":{}}'), []);
 });
 
 // --- run_ios helpers --------------------------------------------------------------

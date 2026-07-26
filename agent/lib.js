@@ -9,7 +9,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 
-export const AGENT_VERSION = '0.4.0';
+export const AGENT_VERSION = '0.4.1';
 
 /** install_apk downloads are refused beyond this size. */
 export const APK_MAX_BYTES = 100 * 1024 * 1024;
@@ -158,16 +158,107 @@ export function adbCandidates(env = process.env, home = os.homedir()) {
 }
 
 /**
- * Serials of devices in state `device` from `adb devices` / `adb devices -l`
- * output (the header line is skipped, offline/unauthorized entries excluded).
+ * Devices in state `device` from `adb devices` / `adb devices -l` output (the
+ * header line is skipped, offline/unauthorized entries excluded). Each entry
+ * is {serial, model?, transport} — wifi serials are host:5555 or mDNS
+ * `._adb-tls-connect` names, everything else is usb.
  */
 export function parseAdbDevices(output) {
   const devices = [];
   for (const line of output.split('\n').slice(1)) {
     const fields = line.trim().split(/\s+/);
-    if (fields.length >= 2 && fields[1] === 'device') devices.push(fields[0]);
+    if (fields.length < 2 || fields[1] !== 'device') continue;
+    const device = { serial: fields[0], transport: adbTransport(fields[0]) };
+    const model = fields.find((field) => field.startsWith('model:'));
+    if (model) device.model = model.slice('model:'.length);
+    devices.push(device);
   }
   return devices;
+}
+
+function adbTransport(serial) {
+  return serial.includes(':5555') || serial.includes('._adb-tls-connect') ? 'wifi' : 'usb';
+}
+
+// --- capabilities probes ---------------------------------------------------------
+
+/** capabilities envelope reporting the device's live run targets. */
+export function capabilitiesMessage(capabilities) {
+  return { type: 'capabilities', capabilities };
+}
+
+/**
+ * Available simulators ({name, runtime, state}) from
+ * `xcrun simctl list devices -j available` JSON.
+ */
+export function parseSimctlDevices(jsonText) {
+  let data;
+  try {
+    data = JSON.parse(jsonText);
+  } catch {
+    return [];
+  }
+  const simulators = [];
+  for (const [runtime, devices] of Object.entries(data.devices ?? {})) {
+    for (const device of devices) {
+      if (device.isAvailable === false || !device.name) continue;
+      simulators.push({ name: device.name, runtime: simRuntimeLabel(runtime), state: device.state });
+    }
+  }
+  return simulators;
+}
+
+/** 'com.apple.CoreSimulator.SimRuntime.iOS-17-5' → 'iOS 17.5'. */
+function simRuntimeLabel(runtime) {
+  return runtime
+    .replace('com.apple.CoreSimulator.SimRuntime.', '')
+    .replace(/-/g, '.')
+    .replace(/^([A-Za-z]+)\./, '$1 ');
+}
+
+/** AVD names ({name}) from `emulator -list-avds` output; noise lines skipped. */
+export function parseEmulatorList(output) {
+  return output
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line !== '' && !/^(INFO|WARNING|ERROR)\b/.test(line))
+    .map((name) => ({ name }));
+}
+
+/**
+ * Physical iOS devices ({name, udid, available}) from
+ * `xcrun devicectl list devices --json-output` JSON.
+ */
+export function parseDevicectlDevices(jsonText) {
+  let data;
+  try {
+    data = JSON.parse(jsonText);
+  } catch {
+    return [];
+  }
+  const devices = data?.result?.devices;
+  if (!Array.isArray(devices)) return [];
+  return devices
+    .filter((entry) => isPhysicalIosDevice(entry))
+    .map((entry) => ({
+      name: entry.hardwareProperties.marketingName ?? entry.deviceProperties?.name ?? 'iOS device',
+      udid: entry.hardwareProperties.udid ?? entry.identifier,
+      available: entry.connectionProperties?.tunnelState !== 'unavailable',
+    }))
+    .filter((device) => Boolean(device.udid));
+}
+
+function isPhysicalIosDevice(entry) {
+  const hardware = entry?.hardwareProperties;
+  return hardware?.platform === 'iOS' && hardware?.reality === 'physical';
+}
+
+/** Candidate emulator binaries: PATH first, then the standard SDK locations. */
+export function emulatorCandidates(env = process.env, home = os.homedir()) {
+  const candidates = ['emulator'];
+  if (env.ANDROID_HOME) candidates.push(path.join(env.ANDROID_HOME, 'emulator', 'emulator'));
+  candidates.push(path.join(home, 'Library', 'Android', 'sdk', 'emulator', 'emulator'));
+  return candidates;
 }
 
 // --- build_android helpers ----------------------------------------------------
