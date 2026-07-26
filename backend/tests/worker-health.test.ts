@@ -91,6 +91,21 @@ describe('startWorkerHealthServer', () => {
       server.close();
     }
   });
+
+  it('serves the Prometheus exposition on /metrics', async () => {
+    const server = await listenOnRandomPort(fakeQueue({}));
+    try {
+      const address = server.address();
+      const port = typeof address === 'object' && address !== null ? address.port : 0;
+      const response = await fetch(`http://127.0.0.1:${port}/metrics`);
+
+      expect(response.status).toBe(200);
+      expect(response.headers.get('content-type')).toContain('text/plain');
+      expect(await response.text()).toContain('# HELP');
+    } finally {
+      server.close();
+    }
+  });
 });
 
 // /health/ready is the worker's readiness probe: it proves the queue's Redis
