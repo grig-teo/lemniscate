@@ -1,48 +1,68 @@
 import type { FastifyInstance } from 'fastify';
-import { Redis } from 'ioredis';
+import Redis from 'ioredis';
 import { config } from '../config.js';
-import { checkReadiness, type HealthDeps } from '../lib/health.js';
 import { prisma } from '../lib/prisma.js';
 
-// Liveness vs readiness: /health only proves the process answers HTTP (used
-// by nothing dependency-sensitive, kept cheap so it never flaps), while
-// /health/ready proves the API can actually serve — Postgres accepts a query
-// and Redis answers PING. Compose healthchecks and uptime monitors hit
-// /health/ready; a 503 there means "stop routing traffic/jobs to me".
+const PROBE_TIMEOUT_MS = 2000;
 
-let redis: Redis | null = null;
-
-// Lazy singleton so importing this module (tests, worker) never opens a
-// connection; only the first readiness probe does.
-function getRedis(): Redis {
-  if (!redis) {
-    redis = new Redis(config.REDIS_URL, { lazyConnect: false });
-  }
-  return redis;
+export interface HealthDeps {
+  checkPostgres: () => Promise<unknown>;
+  checkRedis: () => Promise<unknown>;
 }
 
-function productionDeps(): HealthDeps {
+let redisClient: Redis | null = null;
+
+function getRedisClient(): Redis {
+  if (redisClient) return redisClient;
+  redisClient = new Redis(config.redisUrl, {
+    // Probe-only client: fail fast instead of retrying/queueing pings during
+    // an outage, so a down Redis surfaces as a quick 503 rather than a burst
+    // of queued commands when it recovers.
+    maxRetriesPerRequest: 1,
+    enableOfflineQueue: false,
+  });
+  // ioredis emits 'error' on connection failure and Node throws on an
+  // 'error' event with no listener — exactly the outage this endpoint exists
+  // to report. Swallow it here; the probe reports redis:false instead.
+  redisClient.on('error', () => {});
+  return redisClient;
+}
+
+async function probeWithTimeout(check: () => Promise<unknown>): Promise<boolean> {
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    const timeout = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error('health probe timed out')), PROBE_TIMEOUT_MS);
+    });
+    await Promise.race([check(), timeout]);
+    return true;
+  } catch {
+    return false;
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+function defaultDeps(): HealthDeps {
   return {
     checkPostgres: () => prisma.$queryRaw`SELECT 1`,
-    checkRedis: () => getRedis().ping(),
+    checkRedis: async () => {
+      await getRedisClient().ping();
+    },
   };
 }
 
-export type { HealthDeps };
-
-export function registerHealthRoutes(app: FastifyInstance, deps: HealthDeps): void {
+export function registerHealthRoutes(app: FastifyInstance, deps: HealthDeps = defaultDeps()): void {
+  // Liveness: cheap and dependency-free so it never flaps on a DB blip.
   app.get('/health', async () => ({ ok: true }));
-  app.get('/health/ready', async (_request, reply) => {
-    const report = await checkReadiness(deps);
-    const ok = report.postgres && report.redis;
-    return reply.status(ok ? 200 : 503).send({ ok, ...report });
-  });
-}
 
-export function registerProductionHealthRoutes(app: FastifyInstance): void {
-  registerHealthRoutes(app, productionDeps());
-  app.addHook('onClose', async () => {
-    await redis?.quit();
-    redis = null;
+  // Readiness: 503 when any dependency check fails or times out.
+  app.get('/health/ready', async (_request, reply) => {
+    const [postgres, redis] = await Promise.all([
+      probeWithTimeout(deps.checkPostgres),
+      probeWithTimeout(deps.checkRedis),
+    ]);
+    const ok = postgres && redis;
+    return reply.status(ok ? 200 : 503).send({ ok, postgres, redis });
   });
 }
