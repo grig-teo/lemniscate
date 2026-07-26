@@ -98,7 +98,7 @@ export async function pullRequestChecksStatus(
 ): Promise<PrChecksStatus> {
   return withGitlabRefreshRetry(connection, (token) => {
     const checks = providerPrApi(connection, token).checks;
-    if (!checks) return Promise.resolve({ supported: false, green: true });
+    if (!checks) return Promise.resolve({ supported: false, green: true, state: 'green' });
     return checks(input);
   });
 }

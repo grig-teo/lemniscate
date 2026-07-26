@@ -169,7 +169,18 @@ async function gitlabChecksStatus(
   const url = `${gitlabMrsUrl(connection, input.repoFullName)}/${iid}`;
   const { body } = await gitlabGet(connection, token, url);
   const pipeline = gitlabMrPipelineSchema.parse(body).head_pipeline;
-  return { supported: true, green: !pipeline || pipeline.status === 'success' };
+  const state: PrChecksStatus['state'] = !pipeline
+    ? 'green'
+    : pipeline.status === 'success'
+      ? 'green'
+      : ['running', 'pending', 'created', 'waiting_for_resource', 'preparing'].includes(
+            pipeline.status,
+          )
+        ? 'pending'
+        : ['failed', 'canceled'].includes(pipeline.status)
+          ? 'failing'
+          : 'green'; // skipped/manual pipelines do not block the merge
+  return { supported: true, green: state === 'green', state };
 }
 
 const gitlabMrStateListSchema = z.array(z.object({ state: z.string() }));

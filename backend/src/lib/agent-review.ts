@@ -4,15 +4,13 @@ import type { Task } from '@prisma/client';
 import { config } from '../config.js';
 import {
   applyChanges,
+  checkoutTaskBranch,
   cleanupWorkdir,
-  cloneRepository,
   commitAndPush,
-  git,
   hasDirtyWorkdir,
   logEvent,
   persistTokenUsage,
   recordJobFailure,
-  sanitizeRelativePath,
   type GitAuth,
 } from './agent-git.js';
 import { buildSkillsSection, requestChanges, type LlmChangesResponse } from './agent-prompts.js';
@@ -24,38 +22,27 @@ import {
   type TaskWithRepo,
 } from './agent-runtime.js';
 import { runHermesTask } from './hermes-runner.js';
-import { enqueueReviewTask } from './proposal-scheduler.js';
+import { enqueueMergeGate, enqueueReviewTask } from './proposal-scheduler.js';
+import { getPullRequestDiff } from './pull-requests.js';
 import {
-  getPullRequestDiff,
-  mergePullRequest,
-  pullRequestChecksStatus,
-} from './pull-requests.js';
-import {
-  buildConflictResolutionMessages,
   buildFixUserPrompt,
-  buildHermesConflictPrompt,
   buildHermesFixPrompt,
   buildHermesReviewPrompt,
   buildReviewMessages,
-  hasConflictMarkers,
   HERMES_REVIEW_FILENAME,
   parsePrReview,
-  parseResolvedFile,
   type PrReview,
 } from './pr-review.js';
 import { buildRepoContext } from './repo-context.js';
-import { publishTaskEvent, setTaskStatus } from './task-events.js';
 import { loadAgentsMdTemplate, loadTaskSkills } from './task-skills.js';
 
-// Job: review-pr — review → fix iterations → optional auto-merge with
-// conflict resolution. Both phases run on the configured executor: 'hermes'
-// uses the same agent CLI as the implementation run (verdict via a JSON
-// file), 'internal' uses direct structured LLM calls. From agent-loop.ts.
+// Job: review-pr — review → fix iterations → hand-off to the merge gate.
+// Both phases run on the configured executor: 'hermes' uses the same agent
+// CLI as the implementation run (verdict via a JSON file), 'internal' uses
+// direct structured LLM calls. Merging lives in merge-gate.ts (CI-gated).
 
 const MAX_REVIEW_FIX_ATTEMPTS = 3;
-const MAX_CONFLICT_RESOLUTIONS = 2;
 const MAX_REVIEW_DIFF_CHARS = 24_000;
-const MAX_CONFLICT_FILE_CHARS = 40_000;
 
 async function requestReview(rt: LlmRuntime, task: Task, diff: string): Promise<PrReview> {
   const content = await llmCall(
@@ -94,19 +81,6 @@ async function logReview(taskId: string, review: PrReview, usedTokens: number): 
 // Review-fix iteration
 // ---------------------------------------------------------------------------
 
-async function checkoutTaskBranch(
-  task: TaskWithRepo,
-  workdir: string,
-  cloneUrl: string,
-  headBranch: string,
-  secrets: string[],
-  auth: GitAuth,
-): Promise<void> {
-  await cloneRepository(workdir, cloneUrl, task.repository.defaultBranch, secrets, { auth });
-  await git(['fetch', '--depth', '1', 'origin', headBranch], { cwd: workdir, secrets, auth });
-  await git(['checkout', '-b', headBranch, 'FETCH_HEAD'], { cwd: workdir });
-}
-
 async function proposeFixes(
   task: TaskWithRepo,
   rt: LlmRuntime,
@@ -142,7 +116,14 @@ async function runReviewFixIteration(
   auth: GitAuth,
 ): Promise<void> {
   await logEvent(task.id, 'applying review fixes');
-  await checkoutTaskBranch(task, workdir, cloneUrl, headBranch, secrets, auth);
+  await checkoutTaskBranch(
+    workdir,
+    cloneUrl,
+    task.repository.defaultBranch,
+    headBranch,
+    secrets,
+    auth,
+  );
   const { summary, changes } = await proposeFixes(task, rt, review, workdir);
   const applied = await applyChanges(task.id, workdir, changes, secrets);
   if (applied === 0 || !(await hasDirtyWorkdir(workdir))) {
@@ -252,209 +233,13 @@ async function runHermesFixIteration(
 }
 
 // ---------------------------------------------------------------------------
-// Merge with LLM conflict resolution
-// ---------------------------------------------------------------------------
-
-// Merges FETCH_HEAD locally; returns the conflicted paths ([] on clean merge).
-async function mergeHeadBranch(workdir: string): Promise<string[]> {
-  try {
-    await git(['merge', '--no-edit', 'FETCH_HEAD'], { cwd: workdir });
-    return [];
-  } catch {
-    const output = await git(['diff', '--name-only', '--diff-filter=U'], { cwd: workdir });
-    return output
-      .split('\n')
-      .map((line) => line.trim())
-      .filter(Boolean);
-  }
-}
-
-async function resolveConflictedFile(
-  task: TaskWithRepo,
-  rt: LlmRuntime,
-  headBranch: string,
-  workdir: string,
-  relPath: string,
-): Promise<void> {
-  const rel = sanitizeRelativePath(relPath);
-  const abs = path.join(workdir, rel);
-  const conflictedContent = await fs.readFile(abs, 'utf8');
-  if (conflictedContent.length > MAX_CONFLICT_FILE_CHARS) {
-    throw new Error(`conflicted file ${rel} is too large for LLM resolution`);
-  }
-  const resolved = parseResolvedFile(
-    await llmCall(
-      rt,
-      buildConflictResolutionMessages({
-        path: rel,
-        conflictedContent,
-        baseBranch: task.repository.defaultBranch,
-        headBranch,
-        systemPromptExtra: rt.cfg.systemPromptExtra,
-      }),
-    ),
-  );
-  await fs.writeFile(abs, resolved, 'utf8');
-  await git(['add', '--', rel], { cwd: workdir });
-  await publishTaskEvent(task.id, 'diff', { path: rel, action: 'conflict-resolved' });
-  await logEvent(task.id, `resolved conflict in ${rel}`);
-}
-
-// One conflict-resolution round: merge the head branch into a local checkout
-// of the base branch, let the LLM rewrite each conflicted file, commit, and
-// push the merge commit to the PR head branch (a fast-forward there, since
-// the old head is the merge commit's second parent).
-async function resolveMergeConflictsOnce(
-  task: TaskWithRepo,
-  rt: LlmRuntime,
-  headBranch: string,
-  workdir: string,
-  cloneUrl: string,
-  secrets: string[],
-  auth: GitAuth,
-): Promise<void> {
-  // Full clone: a shallow one lacks the common ancestor a real merge needs.
-  await cloneRepository(workdir, cloneUrl, task.repository.defaultBranch, secrets, {
-    shallow: false,
-    auth,
-  });
-  await git(['fetch', 'origin', headBranch], { cwd: workdir, secrets, auth });
-  const conflicted = await mergeHeadBranch(workdir);
-  for (const rel of conflicted) {
-    await resolveConflictedFile(task, rt, headBranch, workdir, rel);
-  }
-  if (conflicted.length > 0) {
-    await git(['commit', '-m', 'resolve merge conflicts'], { cwd: workdir });
-  } else {
-    await logEvent(task.id, 'merge applied cleanly locally; publishing the merge');
-  }
-  await git(['push', 'origin', `HEAD:${headBranch}`], { cwd: workdir, secrets, auth });
-}
-
-// Hermes variant: the agent rewrites every conflicted file inside the merge
-// checkout; staging, marker verification, commit, and push stay external.
-async function resolveMergeConflictsViaHermes(
-  task: TaskWithRepo,
-  rt: LlmRuntime,
-  headBranch: string,
-  workdir: string,
-  cloneUrl: string,
-  secrets: string[],
-  auth: GitAuth,
-): Promise<void> {
-  // Full clone: a shallow one lacks the common ancestor a real merge needs.
-  await cloneRepository(workdir, cloneUrl, task.repository.defaultBranch, secrets, {
-    shallow: false,
-    auth,
-  });
-  await git(['fetch', 'origin', headBranch], { cwd: workdir, secrets, auth });
-  const conflicted = await mergeHeadBranch(workdir);
-  if (conflicted.length === 0) {
-    await logEvent(task.id, 'merge applied cleanly locally; publishing the merge');
-  } else {
-    await logEvent(task.id, `resolving ${conflicted.length} conflicted file(s) with the hermes agent`);
-    await runHermesTask({
-      workdir,
-      prompt: buildHermesConflictPrompt({
-        baseBranch: task.repository.defaultBranch,
-        headBranch,
-        conflictedPaths: conflicted,
-        systemPromptExtra: rt.cfg.systemPromptExtra,
-      }),
-      llm: hermesLlm(rt),
-      taskId: task.id,
-      secrets,
-      timeoutMs: config.AGENT_HERMES_TIMEOUT_MINUTES * 60_000,
-    });
-    for (const rel of conflicted) {
-      const content = await fs.readFile(path.join(workdir, sanitizeRelativePath(rel)), 'utf8');
-      if (hasConflictMarkers(content)) {
-        throw new Error(`hermes left conflict markers in ${rel}`);
-      }
-      await git(['add', '--', rel], { cwd: workdir });
-      await publishTaskEvent(task.id, 'diff', { path: rel, action: 'conflict-resolved' });
-      await logEvent(task.id, `resolved conflict in ${rel}`);
-    }
-    await git(['commit', '-m', 'resolve merge conflicts'], { cwd: workdir });
-  }
-  await git(['push', 'origin', `HEAD:${headBranch}`], { cwd: workdir, secrets, auth });
-}
-
-// Tries to merge the PR; on conflict, hands resolution to the LLM and retries
-// (bounded by MAX_CONFLICT_RESOLUTIONS). Status stays 'awaiting_review' when
-// the merge ultimately cannot be completed.
-async function mergeWithConflictResolution(
-  task: TaskWithRepo,
-  rt: LlmRuntime,
-  headBranch: string,
-  workdir: string,
-  cloneUrl: string,
-  secrets: string[],
-  auth: GitAuth,
-): Promise<void> {
-  for (let conflictAttempt = 0; ; conflictAttempt += 1) {
-    const result = await mergePullRequest(task.repository.connection, {
-      repoFullName: task.repository.fullName,
-      headBranch,
-      baseBranch: task.repository.defaultBranch,
-    });
-    if (result.merged) {
-      await logEvent(task.id, `merged pull request: ${result.prUrl}`);
-      await setTaskStatus(task.id, 'done');
-      // The task's run workdir was kept for the review window — merged means
-      // it is no longer needed.
-      await cleanupWorkdir(path.join(config.AGENT_WORKDIR, task.id), task.id);
-      return;
-    }
-    if (!result.conflict || conflictAttempt >= MAX_CONFLICT_RESOLUTIONS) {
-      await logEvent(task.id, 'conflict resolution failed, manual review needed');
-      return;
-    }
-    await logEvent(
-      task.id,
-      `merge conflict — resolving with the ${config.AGENT_EXECUTOR === 'hermes' ? 'hermes agent' : 'LLM'} (attempt ${conflictAttempt + 1}/${MAX_CONFLICT_RESOLUTIONS})`,
-    );
-    if (config.AGENT_EXECUTOR === 'hermes') {
-      await resolveMergeConflictsViaHermes(task, rt, headBranch, workdir, cloneUrl, secrets, auth);
-    } else {
-      await resolveMergeConflictsOnce(task, rt, headBranch, workdir, cloneUrl, secrets, auth);
-    }
-    await logEvent(task.id, 'pushed conflict resolution; retrying merge');
-  }
-}
-
-// ---------------------------------------------------------------------------
 // The job
 // ---------------------------------------------------------------------------
 
-// Auto-merge gate: a single LLM 'approve' is not enough when the provider
-// reports failing checks. Providers without a checks API (e.g. GitVerse)
-// proceed — the merge is logged as unverified instead of blocked.
-async function assertMergeChecksGreen(task: TaskWithRepo, headBranch: string): Promise<boolean> {
-  const checks = await pullRequestChecksStatus(task.repository.connection, {
-    repoFullName: task.repository.fullName,
-    headBranch,
-    baseBranch: task.repository.defaultBranch,
-  });
-  if (!checks.supported) {
-    await logEvent(task.id, 'provider check statuses unavailable; merging on the LLM verdict alone');
-    return true;
-  }
-  if (checks.green) return true;
-  await logEvent(task.id, 'approved by LLM, but provider checks are not green — awaiting manual merge');
-  return false;
-}
-
-async function finishReview(
-  task: TaskWithRepo,
-  rt: LlmRuntime,
-  review: PrReview,
-  headBranch: string,
-  workdir: string,
-  cloneUrl: string,
-  secrets: string[],
-  auth: GitAuth,
-): Promise<void> {
+// Auto-merge is delegated to the merge-gate job: it waits for green CI,
+// sends hermes to fix failing checks, and resolves conflicts (again waiting
+// for CI on the resolution). The review job ends here.
+async function finishReview(task: TaskWithRepo, review: PrReview): Promise<void> {
   if (review.verdict === 'changes_requested') {
     await logEvent(
       task.id,
@@ -470,8 +255,8 @@ async function finishReview(
     );
     return;
   }
-  if (!(await assertMergeChecksGreen(task, headBranch))) return;
-  await mergeWithConflictResolution(task, rt, headBranch, workdir, cloneUrl, secrets, auth);
+  await logEvent(task.id, 'queued the merge gate — auto-merge once CI is green');
+  await enqueueMergeGate(task.id, 0, 0);
 }
 
 // Returns the runtime so the caller can persist cumulative token usage.
@@ -502,14 +287,13 @@ async function executeReviewTask(
     await logEvent(task.id, 'queued re-review of the updated pull request');
     return rt;
   }
-  await finishReview(task, rt, review, headBranch, workdir, cloneUrl, secrets, gitAuth);
+  await finishReview(task, review);
   return rt;
 }
 
 // Hermes review flow: clone + checkout the task branch, let the agent review
-// it, let the same agent fix findings on that checkout, then finish (merge)
-// exactly like the internal path. The merge clone gets its own subdirectory
-// because the review checkout already occupies `workdir`.
+// it, let the same agent fix findings on that checkout, then hand the PR to
+// the merge gate exactly like the internal path.
 async function executeHermesReview(
   task: TaskWithRepo,
   rt: LlmRuntime,
@@ -520,7 +304,14 @@ async function executeHermesReview(
   secrets: string[],
   auth: GitAuth,
 ): Promise<LlmRuntime> {
-  await checkoutTaskBranch(task, workdir, cloneUrl, headBranch, secrets, auth);
+  await checkoutTaskBranch(
+    workdir,
+    cloneUrl,
+    task.repository.defaultBranch,
+    headBranch,
+    secrets,
+    auth,
+  );
   await logEvent(task.id, `reviewing pull request (attempt ${attempt + 1})`);
   let review = await requestReviewViaHermes(task, rt, workdir, headBranch, secrets);
   if (!review) {
@@ -538,8 +329,7 @@ async function executeHermesReview(
     await logEvent(task.id, 'queued re-review of the updated pull request');
     return rt;
   }
-  const mergeWorkdir = path.join(workdir, 'merge');
-  await finishReview(task, rt, review, headBranch, mergeWorkdir, cloneUrl, secrets, auth);
+  await finishReview(task, review);
   return rt;
 }
 

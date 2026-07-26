@@ -6,6 +6,7 @@ import { z } from 'zod';
 import { config } from './config.js';
 import { planWorkdirSweep } from './lib/agent-git.js';
 import { generateProposals, reviewTask, runTask } from './lib/agent-loop.js';
+import { mergeGateTask } from './lib/merge-gate.js';
 import { prisma } from './lib/prisma.js';
 import {
   AGENT_QUEUE_NAME,
@@ -23,6 +24,11 @@ const runTaskDataSchema = z.object({ taskId: z.string().min(1) });
 const reviewPrDataSchema = z.object({
   taskId: z.string().min(1),
   attempt: z.number().int().min(0).default(0),
+});
+const mergeGateDataSchema = z.object({
+  taskId: z.string().min(1),
+  attempt: z.number().int().min(0).default(0),
+  ciFixes: z.number().int().min(0).default(0),
 });
 const generateProposalsDataSchema = z.object({ repositoryId: z.string().min(1) });
 const proposalsTopUpDataSchema = z.object({}).strict();
@@ -70,6 +76,11 @@ const worker = new Worker(
       case 'review-pr': {
         const { taskId, attempt } = reviewPrDataSchema.parse(job.data);
         await reviewTask(taskId, attempt);
+        return;
+      }
+      case 'merge-gate': {
+        const { taskId, attempt, ciFixes } = mergeGateDataSchema.parse(job.data);
+        await mergeGateTask(taskId, attempt, ciFixes);
         return;
       }
       case 'generate-proposals': {

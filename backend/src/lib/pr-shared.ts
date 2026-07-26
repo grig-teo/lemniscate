@@ -53,6 +53,8 @@ export interface PrChecksStatus {
   supported: boolean;
   /** True when every check is green — or none exist to block the merge. */
   green: boolean;
+  /** Three-way gate state: pending re-checks later, failing triggers a CI fix. */
+  state: 'green' | 'pending' | 'failing';
 }
 
 export type PrState = 'open' | 'merged' | 'closed';

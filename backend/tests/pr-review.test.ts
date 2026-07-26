@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   buildConflictResolutionMessages,
   buildFixUserPrompt,
+  buildHermesCiFixPrompt,
   buildHermesConflictPrompt,
   buildHermesFixPrompt,
   buildHermesReviewPrompt,
@@ -192,5 +193,20 @@ describe('hermes prompt builders', () => {
     expect(prompt).toContain('- src/b.ts');
     expect(prompt).toContain('<<<<<<<');
     expect(prompt).toContain('Do NOT git commit, push, or run git add');
+  });
+
+  it('ci-fix prompt names the failing branch and demands local verification', () => {
+    const prompt = buildHermesCiFixPrompt({
+      taskTitle: 'Add tests',
+      baseBranch: 'main',
+      headBranch: 'lemniscate/add-tests',
+      systemPromptExtra: null,
+    });
+    expect(prompt).toContain('Add tests');
+    expect(prompt).toContain("'lemniscate/add-tests'");
+    expect(prompt).toContain('FAILING');
+    expect(prompt).toContain('.github/workflows');
+    expect(prompt).toContain('until they pass locally');
+    expect(prompt).toContain('Do NOT git commit, push, or create branches');
   });
 });

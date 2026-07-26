@@ -179,7 +179,33 @@ export async function enqueueGenerateProposalsNow(repositoryId: string): Promise
   );
 }
 
-// Enqueues a 'review-pr' job (LLM review → fix iterations → optional merge).
+// Enqueues a 'merge-gate' job: the CI-gated auto-merge owner for a reviewed
+// PR. Re-enqueues itself (delayed) while checks are pending, after a CI fix
+// push, and after a conflict-resolution push; `attempt`/`ciFixes` bound the
+// loop and make every jobId unique, so a scheduled re-check is never
+// deduped away by the previous one.
+export async function enqueueMergeGate(
+  taskId: string,
+  attempt = 0,
+  ciFixes = 0,
+  delayMs = 0,
+): Promise<void> {
+  await getAgentTasksQueue().add(
+    'merge-gate',
+    { taskId, attempt, ciFixes },
+    {
+      jobId: `merge-gate-${taskId}-${attempt}-${ciFixes}`,
+      removeOnComplete: true,
+      removeOnFail: true,
+      priority: JOB_PRIORITY.review,
+      attempts: 3,
+      backoff: { type: 'exponential', delay: 60_000 },
+      ...(delayMs > 0 ? { delay: delayMs } : {}),
+    },
+  );
+}
+
+// Enqueues a 'review-pr' job (LLM review → fix iterations → merge gate).
 // jobId includes the attempt so re-reviews after a fix are not deduped away.
 // Finished jobs are removed immediately (same rerun-swallow rule as run-task).
 // BullMQ retries a failed job with backoff — transient LLM/git failures used

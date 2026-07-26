@@ -141,7 +141,13 @@ async function githubChecksStatus(
     `/commits/${encodeURIComponent(input.headBranch)}/status`;
   const { body } = await apiRequest('github', 'GET', url, githubHeaders(token), token);
   const status = githubCombinedStatusSchema.parse(body);
-  return { supported: true, green: status.total_count === 0 || status.state === 'success' };
+  const state: PrChecksStatus['state'] =
+    status.total_count === 0 || status.state === 'success'
+      ? 'green'
+      : status.state === 'pending'
+        ? 'pending'
+        : 'failing';
+  return { supported: true, green: state === 'green', state };
 }
 
 const githubPullStateListSchema = z.array(

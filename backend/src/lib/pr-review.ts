@@ -221,3 +221,26 @@ export function buildHermesConflictPrompt(input: {
       : []),
   ].join('\n');
 }
+
+export function buildHermesCiFixPrompt(input: {
+  taskTitle: string;
+  baseBranch: string;
+  headBranch: string;
+  systemPromptExtra?: string | null;
+}): string {
+  return [
+    `# Task\n${input.taskTitle}`,
+    '',
+    `The CI checks on the pull request branch '${input.headBranch}' (target '${input.baseBranch}') are FAILING. The branch must not merge until they pass.`,
+    '',
+    'The current directory is a clone of the repository with the PR branch checked out.',
+    '1. Find what CI runs: inspect the workflow/pipeline config (.github/workflows, .gitlab-ci.yml, …) and the project scripts.',
+    '2. Reproduce the failure locally: install dependencies if needed, then run the same build/test commands.',
+    '3. Fix the root cause with minimal, focused edits, and re-run the commands until they pass locally.',
+    '',
+    'Do NOT git commit, push, or create branches — git is handled externally.',
+    ...(input.systemPromptExtra
+      ? ['', 'Additional instructions from the repository owner:', input.systemPromptExtra]
+      : []),
+  ].join('\n');
+}

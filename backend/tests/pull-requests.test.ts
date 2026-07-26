@@ -424,19 +424,25 @@ describe('pullRequestChecksStatus', () => {
       return mockResponse(200, { state: 'success', total_count: 2 });
     });
     const status = await pullRequestChecksStatus(ghConnection, gvRef);
-    expect(status).toEqual({ supported: true, green: true });
+    expect(status).toEqual({ supported: true, green: true, state: 'green' });
   });
 
   it('github: green when the commit has no checks at all', async () => {
     stubFetch(() => mockResponse(200, { state: 'pending', total_count: 0 }));
     const status = await pullRequestChecksStatus(ghConnection, gvRef);
-    expect(status).toEqual({ supported: true, green: true });
+    expect(status).toEqual({ supported: true, green: true, state: 'green' });
   });
 
-  it('github: not green when checks are failing or pending', async () => {
+  it('github: failing when checks failed', async () => {
     stubFetch(() => mockResponse(200, { state: 'failure', total_count: 3 }));
     const status = await pullRequestChecksStatus(ghConnection, gvRef);
-    expect(status).toEqual({ supported: true, green: false });
+    expect(status).toEqual({ supported: true, green: false, state: 'failing' });
+  });
+
+  it('github: pending while checks are still running', async () => {
+    stubFetch(() => mockResponse(200, { state: 'pending', total_count: 2 }));
+    const status = await pullRequestChecksStatus(ghConnection, gvRef);
+    expect(status).toEqual({ supported: true, green: false, state: 'pending' });
   });
 
   it('gitlab: green when the MR has no head pipeline', async () => {
@@ -446,7 +452,7 @@ describe('pullRequestChecksStatus', () => {
       return mockResponse(200, { head_pipeline: null });
     });
     const status = await pullRequestChecksStatus(gitlabConnection, gvRef);
-    expect(status).toEqual({ supported: true, green: true });
+    expect(status).toEqual({ supported: true, green: true, state: 'green' });
   });
 
   it('gitlab: not green when the head pipeline failed', async () => {
@@ -455,7 +461,16 @@ describe('pullRequestChecksStatus', () => {
       return mockResponse(200, { head_pipeline: { status: 'failed' } });
     });
     const status = await pullRequestChecksStatus(gitlabConnection, gvRef);
-    expect(status).toEqual({ supported: true, green: false });
+    expect(status).toEqual({ supported: true, green: false, state: 'failing' });
+  });
+
+  it('gitlab: pending while the head pipeline is running', async () => {
+    stubFetch((url) => {
+      if (url.includes('state=opened')) return mockResponse(200, [{ iid: 5, web_url: 'u' }]);
+      return mockResponse(200, { head_pipeline: { status: 'running' } });
+    });
+    const status = await pullRequestChecksStatus(gitlabConnection, gvRef);
+    expect(status).toEqual({ supported: true, green: false, state: 'pending' });
   });
 
   it('reports unsupported for providers without a checks API', async () => {
@@ -463,10 +478,12 @@ describe('pullRequestChecksStatus', () => {
     expect(await pullRequestChecksStatus(gvConnection, gvRef)).toEqual({
       supported: false,
       green: true,
+      state: 'green',
     });
     expect(await pullRequestChecksStatus(giteeConnection, gvRef)).toEqual({
       supported: false,
       green: true,
+      state: 'green',
     });
     expect(fetchMock).not.toHaveBeenCalled();
   });

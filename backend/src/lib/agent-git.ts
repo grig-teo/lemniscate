@@ -164,6 +164,22 @@ export async function hasDirtyWorkdir(workdir: string): Promise<boolean> {
   return (await git(['status', '--porcelain'], { cwd: workdir })).trim() !== '';
 }
 
+// Shallow clone of the default branch plus the task branch fetched and
+// checked out on top — the starting point for reviews, CI fixes, and any
+// other job that works on an existing PR branch.
+export async function checkoutTaskBranch(
+  workdir: string,
+  cloneUrl: string,
+  defaultBranch: string,
+  headBranch: string,
+  secrets: string[],
+  auth: GitAuth,
+): Promise<void> {
+  await cloneRepository(workdir, cloneUrl, defaultBranch, secrets, { auth });
+  await git(['fetch', '--depth', '1', 'origin', headBranch], { cwd: workdir, secrets, auth });
+  await git(['checkout', '-b', headBranch, 'FETCH_HEAD'], { cwd: workdir });
+}
+
 export const logEvent = (taskId: string, line: string): Promise<void> =>
   publishTaskEvent(taskId, 'log', { line });
 
