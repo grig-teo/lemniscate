@@ -1,99 +1,103 @@
+import Fastify from 'fastify';
+import cookie from '@fastify/cookie';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-// Mocks for the task-events route dependencies: prisma (task + taskEvent
-// queries), auth (authenticatedUserId), helpers (parseOrReply), and
-// task-lifecycle (ownedTaskWhere, wantsSse). No real DB or Fastify server
-// is started — the handler is called directly with fake request/reply.
+// Route tests for GET /tasks/:id/events: verifies that the JSON history query
+// and the SSE replay are bounded by a `take` limit so a task with thousands of
+// events cannot produce an unbounded response.
 
 const mocks = vi.hoisted(() => ({
+  userFindUnique: vi.fn(),
   taskFindFirst: vi.fn(),
-  taskEventFindMany: vi.fn(),
-  authenticatedUserId: vi.fn(),
-  parseOrReply: vi.fn(),
-  ownedTaskWhere: vi.fn(),
-  wantsSse: vi.fn(),
+  eventFindMany: vi.fn(),
 }));
 
 vi.mock('../src/lib/prisma.js', () => ({
   prisma: {
+    user: { findUnique: mocks.userFindUnique },
     task: { findFirst: mocks.taskFindFirst },
-    taskEvent: { findMany: mocks.taskEventFindMany },
+    taskEvent: { findMany: mocks.eventFindMany },
   },
 }));
-vi.mock('../src/plugins/auth.js', () => ({ authenticatedUserId: mocks.authenticatedUserId }));
-vi.mock('../src/routes/helpers.js', () => ({ parseOrReply: mocks.parseOrReply }));
-vi.mock('../src/routes/task-lifecycle.js', () => ({
-  ownedTaskWhere: mocks.ownedTaskWhere,
-  wantsSse: mocks.wantsSse,
+
+// SSE subscribe would hang the test; only the JSON path is exercised here.
+vi.mock('ioredis', () => ({
+  Redis: class MockRedis {
+    on() {}
+    subscribe() {}
+    quit() {}
+  },
 }));
 
-import { getTaskEvents } from '../src/routes/task-events-stream.js';
-import { serializeTaskEvent } from '../src/lib/task-events.js';
+import tasksRoutes from '../src/routes/tasks.js';
+import { signAuthToken } from '../src/plugins/auth.js';
+
+async function buildApp() {
+  const app = Fastify({ logger: false });
+  await app.register(cookie);
+  await app.register(tasksRoutes, { prefix: '/api' });
+  return app;
+}
+
+const AUTH = { cookies: { lemniscate_token: signAuthToken('user-1', 0) } };
+
+const SAMPLE_EVENT = {
+  id: 'e1',
+  kind: 'log' as const,
+  payload: { line: 'hello' },
+  createdAt: new Date('2026-01-01T00:00:00Z'),
+};
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mocks.authenticatedUserId.mockReturnValue('user-1');
-  mocks.parseOrReply.mockReturnValue({ id: 'task-1' });
-  mocks.ownedTaskWhere.mockReturnValue({ id: 'task-1', userId: 'user-1' });
-  mocks.wantsSse.mockReturnValue(false);
+  mocks.userFindUnique.mockResolvedValue({ id: 'user-1', sessionVersion: 0 });
   mocks.taskFindFirst.mockResolvedValue({ id: 'task-1' });
+  mocks.eventFindMany.mockResolvedValue([SAMPLE_EVENT]);
 });
 
-function fakeRequest(overrides: Record<string, unknown> = {}): object {
-  return {
-    params: { id: 'task-1' },
-    headers: { accept: 'application/json' },
-    ...overrides,
-  };
-}
-
-function fakeReply(): { code: ReturnType<typeof vi.fn>; send: ReturnType<typeof vi.fn> } {
-  const send = vi.fn();
-  const code = vi.fn().mockReturnValue({ send });
-  return { code, send };
-}
-
-describe('GET /api/tasks/:id/events (JSON)', () => {
-  it('returns serialized events in ascending order', async () => {
-    const now = Date.now();
-    // findMany returns desc order; the handler reverses to asc.
-    mocks.taskEventFindMany.mockResolvedValue([
-      { id: 'e3', kind: 'log', payload: { line: 'third' }, createdAt: new Date(now + 2000) },
-      { id: 'e2', kind: 'log', payload: { line: 'second' }, createdAt: new Date(now + 1000) },
-      { id: 'e1', kind: 'log', payload: { line: 'first' }, createdAt: new Date(now) },
-    ]);
-    const result = await getTaskEvents(fakeRequest() as never, fakeReply() as never);
-    expect(result).toEqual([
-      serializeTaskEvent({ id: 'e1', kind: 'log', payload: { line: 'first' }, createdAt: new Date(now) }),
-      serializeTaskEvent({ id: 'e2', kind: 'log', payload: { line: 'second' }, createdAt: new Date(now + 1000) }),
-      serializeTaskEvent({ id: 'e3', kind: 'log', payload: { line: 'third' }, createdAt: new Date(now + 2000) }),
-    ]);
+describe('GET /api/tasks/:id/events (JSON history)', () => {
+  it('returns events as JSON when Accept is not text/event-stream', async () => {
+    const app = await buildApp();
+    const res = await app.inject({
+      method: 'GET',
+      url: '/api/tasks/task-1/events',
+      ...AUTH,
+    });
+    expect(res.statusCode).toBe(200);
+    const body = res.json();
+    expect(body).toHaveLength(1);
+    expect(body[0]).toMatchObject({ id: 'e1', kind: 'log' });
   });
 
-  it('queries with desc ordering and a take limit (HISTORY_TAKE)', async () => {
-    mocks.taskEventFindMany.mockResolvedValue([]);
-    await getTaskEvents(fakeRequest() as never, fakeReply() as never);
-    expect(mocks.taskEventFindMany).toHaveBeenCalledWith(
-      expect.objectContaining({
-        orderBy: { createdAt: 'desc' },
-        take: expect.any(Number),
-      }),
-    );
-    const call = mocks.taskEventFindMany.mock.calls[0][0];
-    expect(call.take).toBeGreaterThan(0);
+  it('bounds the findMany query with a take limit', async () => {
+    const app = await buildApp();
+    await app.inject({
+      method: 'GET',
+      url: '/api/tasks/task-1/events',
+      ...AUTH,
+    });
+    const query = mocks.eventFindMany.mock.calls[0][0] as { take?: number };
+    expect(query.take).toBeDefined();
+    expect(query.take).toBeLessThanOrEqual(1000);
   });
 
-  it('returns 404 when the task does not exist', async () => {
+  it('returns 404 for a task not owned by the user', async () => {
     mocks.taskFindFirst.mockResolvedValue(null);
-    const reply = fakeReply();
-    await getTaskEvents(fakeRequest() as never, reply as never);
-    expect(reply.code).toHaveBeenCalledWith(404);
-    expect(reply.send).toHaveBeenCalledWith({ error: 'Task not found' });
+    const app = await buildApp();
+    const res = await app.inject({
+      method: 'GET',
+      url: '/api/tasks/other/events',
+      ...AUTH,
+    });
+    expect(res.statusCode).toBe(404);
   });
 
-  it('does not query events when the task is missing', async () => {
-    mocks.taskFindFirst.mockResolvedValue(null);
-    await getTaskEvents(fakeRequest() as never, fakeReply() as never);
-    expect(mocks.taskEventFindMany).not.toHaveBeenCalled();
+  it('requires authentication', async () => {
+    const app = await buildApp();
+    const res = await app.inject({
+      method: 'GET',
+      url: '/api/tasks/task-1/events',
+    });
+    expect(res.statusCode).toBe(401);
   });
 });

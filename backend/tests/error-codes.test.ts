@@ -143,3 +143,26 @@ describe('classifyError', () => {
     });
   });
 });
+
+// Backend→frontend contract: the frontend ERROR_BANNER_MAP
+// (frontend/src/lib/error-codes.ts) is keyed by the literal string values of
+// these enum members. If an enum value diverges from its key name (e.g. set to
+// a placeholder), getErrorBannerInfo() falls through to the generic UNKNOWN
+// fallback — silently disabling the actionable hint for that failure type.
+// These assertions pin the wire contract so the same corruption cannot recur.
+describe('TaskErrorCode enum values (backend→frontend contract)', () => {
+  it.each([
+    ['LLM_AUTH_FAILED', TaskErrorCode.LLM_AUTH_FAILED],
+    ['LLM_RATE_LIMITED', TaskErrorCode.LLM_RATE_LIMITED],
+    ['LLM_QUOTA_EXCEEDED', TaskErrorCode.LLM_QUOTA_EXCEEDED],
+    ['LLM_TIMEOUT', TaskErrorCode.LLM_TIMEOUT],
+    ['LLM_CONNECTION_FAILED', TaskErrorCode.LLM_CONNECTION_FAILED],
+    ['LLM_SERVER_ERROR', TaskErrorCode.LLM_SERVER_ERROR],
+    ['GIT_AUTH_FAILED', TaskErrorCode.GIT_AUTH_FAILED],
+    ['GIT_PERMISSION_DENIED', TaskErrorCode.GIT_PERMISSION_DENIED],
+    ['GIT_WORKFLOW_SCOPE', TaskErrorCode.GIT_WORKFLOW_SCOPE],
+    ['UNKNOWN', TaskErrorCode.UNKNOWN],
+  ])('%s equals its literal string', (_name, code) => {
+    expect(code).toBe(_name);
+  });
+});

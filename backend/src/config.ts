@@ -99,6 +99,10 @@ const envSchema = z.object({
   AGENT_EXECUTOR: z.enum(['hermes', 'internal']).default('hermes'),
   // Hard kill for one `hermes chat` run; the job then fails the task.
   AGENT_HERMES_TIMEOUT_MINUTES: z.coerce.number().int().positive().default(45),
+  // Maximum TaskEvent rows kept per task. When exceeded, oldest events are
+  // pruned and a single truncation marker is ensured. Bounds table growth,
+  // backup size, and event-history response latency.
+  TASK_EVENT_MAX_PER_TASK: z.coerce.number().int().positive().default(5_000),
 
   // --- Service deployments (Lemniscate Apps) ---
   // Shared secret between Traefik (HTTP provider) and the backend's
@@ -128,10 +132,6 @@ const envSchema = z.object({
   // Queued+running tasks a single user may have at once; the 6th concurrent
   // create is rejected with 429.
   TASK_MAX_ACTIVE_PER_USER: z.coerce.number().int().positive().default(5),
-  // Maximum TaskEvent rows retained per task. When exceeded, the oldest
-  // events are truncated under an advisory lock with a boundary marker so
-  // the table cannot grow without bound on long-running tasks.
-  TASK_EVENT_MAX_PER_TASK: z.coerce.number().int().positive().default(5_000),
 
   // --- Observability ---
   // Bearer token guarding GET /metrics (Prometheus). Unset = the endpoint

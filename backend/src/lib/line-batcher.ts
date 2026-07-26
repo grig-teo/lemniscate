@@ -1,62 +1,52 @@
-// Coalesces agent stdout/stderr lines into batched TaskEvent writes.
-//
-// Without batching, every readline 'line' event triggers its own
-// publishTaskEvent → prisma.taskEvent.create + Redis publish. A typical agent
-// run produces hundreds of lines, so that is hundreds of DB writes. The
-// LineBatcher collects lines and flushes them as a single { lines: string[] }
-// payload, giving roughly maxBatchSize× fewer DB writes.
+// Buffers text lines and flushes them in a single batch when either maxLines
+// is reached or maxDelayMs elapses. Used by the hermes runner to coalesce
+// agent stdout/stderr into far fewer DB writes (one TaskEvent per batch
+// instead of one per line). Guarantees a final flush on close() so no output
+// is lost when the stream ends.
 
-export interface LineBatcherOptions {
-  /** Flush as soon as this many lines accumulate (default 10). */
-  maxBatchSize?: number;
-  /** Flush at least this often even when the batch is small (default 1 s). */
-  flushIntervalMs?: number;
-}
+export type FlushFn = (lines: string[]) => Promise<void> | void;
 
 export class LineBatcher {
-  private lines: string[] = [];
-  private timer: ReturnType<typeof setInterval> | null = null;
-  private readonly maxBatchSize: number;
-  private readonly flushIntervalMs: number;
+  private buffer: string[] = [];
+  private timer: ReturnType<typeof setTimeout> | null = null;
+  private closed = false;
 
   constructor(
-    private readonly flushFn: (lines: string[]) => Promise<void>,
-    options: LineBatcherOptions = {},
-  ) {
-    this.maxBatchSize = options.maxBatchSize ?? 10;
-    this.flushIntervalMs = options.flushIntervalMs ?? 1_000;
-    this.timer = setInterval(() => {
-      void this.flush();
-    }, this.flushIntervalMs);
-    // Don't keep the event loop alive solely for the flush timer — the
-    // surrounding agent run owns the lifecycle.
-    this.timer.unref?.();
-  }
+    private readonly flushFn: FlushFn,
+    private readonly maxLines: number,
+    private readonly maxDelayMs: number,
+  ) {}
 
-  /** Adds a line, auto-flushing when the batch reaches maxBatchSize. */
   push(line: string): void {
-    this.lines.push(line);
-    if (this.lines.length >= this.maxBatchSize) {
-      void this.flush();
+    if (this.closed) return;
+    this.buffer.push(line);
+    if (this.buffer.length >= this.maxLines) {
+      this.flush();
+      return;
+    }
+    if (!this.timer) {
+      this.timer = setTimeout(() => this.flush(), this.maxDelayMs);
     }
   }
 
-  /** Flushes the current batch. A no-op when there is nothing to flush. */
-  async flush(): Promise<void> {
-    if (this.lines.length === 0) return;
-    const batch = this.lines;
-    this.lines = [];
-    try {
-      await this.flushFn(batch);
-    } catch {
-      // Swallow: a failed batch write is non-fatal, matching the per-line
-      // logEvent call's .catch(() => {}).
-    }
+  flush(): void {
+    this.clearTimer();
+    if (this.buffer.length === 0) return;
+    const lines = this.buffer;
+    this.buffer = [];
+    void Promise.resolve(this.flushFn(lines)).catch(() => {});
   }
 
-  /** Stops the periodic flush timer. Call after the final flush(). */
   close(): void {
-    if (this.timer) clearInterval(this.timer);
-    this.timer = null;
+    if (this.closed) return;
+    this.closed = true;
+    this.flush();
+  }
+
+  private clearTimer(): void {
+    if (this.timer) {
+      clearTimeout(this.timer);
+      this.timer = null;
+    }
   }
 }

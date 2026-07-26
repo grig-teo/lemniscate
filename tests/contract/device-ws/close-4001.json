@@ -1,0 +1,6 @@
+{
+  "_comment": "Close code 4001 — the server rejects an invalid or expired device token (GET /api/devices/ws?token=... with a token that no longer matches a device). The Node CLI agent exits and asks the user to pair again; the Tauri app clears the saved config and re-surfaces the pairing window. This is the only custom close code in the protocol.",
+  "direction": "close",
+  "closeCode": 4001,
+  "reason": "invalid device token"
+}

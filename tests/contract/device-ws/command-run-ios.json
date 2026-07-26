@@ -1,0 +1,14 @@
+{
+  "_comment": "run_ios command — clone, optional xcodegen, xcodebuild for a simulator or physical device destination, then install and launch the .app. macOS agents only. scheme/destination are optional (auto-detected when omitted).",
+  "direction": "server-to-client",
+  "frame": {
+    "id": "cmd-005",
+    "type": "run_ios",
+    "payload": {
+      "repoUrl": "https://github.com/example/ios-app",
+      "branch": "main",
+      "scheme": "Lemniscate",
+      "destination": "00008101-001122AABBCC"
+    }
+  }
+}

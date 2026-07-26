@@ -1,0 +1,22 @@
+{
+  "_comment": "Live environment report — replaces Device.meta.environment wholesale (a disappeared device must not linger). dockerAvailable plus the run targets the agent can see: adb devices (usb/wifi), physical iOS devices (devicectl), simulators (simctl) and Android emulators.",
+  "direction": "client-to-server",
+  "frame": {
+    "type": "capabilities",
+    "capabilities": {
+      "dockerAvailable": true,
+      "androidDevices": [
+        { "serial": "0a1b2c3d", "model": "Pixel_8", "transport": "usb" }
+      ],
+      "iosDevices": [
+        { "name": "iPhone 15 Pro", "udid": "00008120-00025C643A70201E", "available": true }
+      ],
+      "simulators": [
+        { "name": "iPhone 16", "runtime": "iOS 18.0", "state": "Shutdown" }
+      ],
+      "emulators": [
+        { "name": "Pixel_API_35" }
+      ]
+    }
+  }
+}

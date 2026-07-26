@@ -4,6 +4,7 @@ import { createTask, getTask, listTasks } from './task-crud-handlers.js';
 import {
   archiveTask,
   cancelTask,
+  closePrTask,
   improveTask,
   patchTask,
   rerunTask,
@@ -36,6 +37,7 @@ const tasksRoutes: FastifyPluginAsync = async (app) => {
   app.post('/tasks/:id/improve', improveTask);
   app.post('/tasks/:id/rerun', rerunTask);
   app.post('/tasks/:id/cancel', cancelTask);
+  app.post('/tasks/:id/close-pr', closePrTask);
   app.post('/tasks/:id/archive', archiveTask);
   app.post('/tasks/:id/unarchive', unarchiveTask);
   app.get('/tasks/:id/events', getTaskEvents);
@@ -55,6 +57,7 @@ export {
   attachmentValidationError,
   buildRerunUpdate,
   buildStartUpdate,
+  closePrBlocker,
   initialTaskStatus,
   isArchivable,
   resolveAttachmentUpdate,

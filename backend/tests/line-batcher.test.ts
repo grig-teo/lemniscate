@@ -1,96 +1,90 @@
-import { describe, expect, it, vi } from 'vitest';
-
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { LineBatcher } from '../src/lib/line-batcher.js';
 
-// Unit tests for the LineBatcher class: it coalesces agent stdout/stderr lines
-// into batched TaskEvent writes to reduce DB load (~10× fewer rows).
-
-// Allows the microtask queue to drain so fire-and-forget flush() calls resolve
-// before assertions run.
-const flushMicrotasks = (): Promise<void> => new Promise((resolve) => setImmediate(resolve));
+// Tests for LineBatcher: buffers lines and flushes them in a single batch
+// when either maxLines is reached or maxDelayMs elapses. Guarantees a final
+// flush on close() so no output is lost.
 
 describe('LineBatcher', () => {
-  it('accumulates lines without flushing until maxBatchSize', () => {
-    const flushFn = vi.fn().mockResolvedValue(undefined);
-    const batcher = new LineBatcher(flushFn, { maxBatchSize: 5, flushIntervalMs: 10_000 });
-    batcher.push('a');
-    batcher.push('b');
-    expect(flushFn).not.toHaveBeenCalled();
-    batcher.close();
-  });
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
 
-  it('auto-flushes when the batch reaches maxBatchSize', async () => {
-    const flushFn = vi.fn().mockResolvedValue(undefined);
-    const batcher = new LineBatcher(flushFn, { maxBatchSize: 3, flushIntervalMs: 10_000 });
+  it('flushes when maxLines is reached', () => {
+    const flush = vi.fn();
+    const batcher = new LineBatcher(flush, 3, 10_000);
     batcher.push('a');
     batcher.push('b');
+    expect(flush).not.toHaveBeenCalled();
     batcher.push('c');
-    await flushMicrotasks();
-    expect(flushFn).toHaveBeenCalledTimes(1);
-    expect(flushFn).toHaveBeenCalledWith(['a', 'b', 'c']);
-    batcher.close();
+    expect(flush).toHaveBeenCalledWith(['a', 'b', 'c']);
   });
 
-  it('flush writes the accumulated batch and clears the buffer', async () => {
-    const flushFn = vi.fn().mockResolvedValue(undefined);
-    const batcher = new LineBatcher(flushFn, { maxBatchSize: 100, flushIntervalMs: 10_000 });
+  it('flushes on the timer when maxLines is not reached', () => {
+    const flush = vi.fn();
+    const batcher = new LineBatcher(flush, 100, 500);
+    batcher.push('line-1');
+    batcher.push('line-2');
+    expect(flush).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(500);
+    expect(flush).toHaveBeenCalledTimes(1);
+    expect(flush).toHaveBeenCalledWith(['line-1', 'line-2']);
+  });
+
+  it('does not set a timer when the buffer is already flushed by line count', () => {
+    const flush = vi.fn();
+    const batcher = new LineBatcher(flush, 2, 500);
+    batcher.push('a');
+    batcher.push('b'); // immediate flush
+    flush.mockClear();
+    vi.advanceTimersByTime(1000);
+    expect(flush).not.toHaveBeenCalled();
+  });
+
+  it('flushes remaining lines on close()', () => {
+    const flush = vi.fn();
+    const batcher = new LineBatcher(flush, 100, 10_000);
     batcher.push('x');
     batcher.push('y');
-    await batcher.flush();
-    expect(flushFn).toHaveBeenCalledWith(['x', 'y']);
-    // Second flush is a no-op — buffer was cleared.
-    await batcher.flush();
-    expect(flushFn).toHaveBeenCalledTimes(1);
     batcher.close();
+    expect(flush).toHaveBeenCalledWith(['x', 'y']);
   });
 
-  it('flush is a no-op when the buffer is empty', async () => {
-    const flushFn = vi.fn().mockResolvedValue(undefined);
-    const batcher = new LineBatcher(flushFn);
-    await batcher.flush();
-    expect(flushFn).not.toHaveBeenCalled();
+  it('does not call flush on close when buffer is empty', () => {
+    const flush = vi.fn();
+    const batcher = new LineBatcher(flush, 100, 10_000);
     batcher.close();
+    expect(flush).not.toHaveBeenCalled();
   });
 
-  it('swallows flush errors so a failed DB write is non-fatal', async () => {
-    const flushFn = vi.fn().mockRejectedValue(new Error('DB down'));
-    const batcher = new LineBatcher(flushFn, { maxBatchSize: 100, flushIntervalMs: 10_000 });
-    batcher.push('line');
-    // Should not throw.
-    await expect(batcher.flush()).resolves.toBeUndefined();
-    batcher.close();
-  });
-
-  it('flushes on the periodic timer', async () => {
-    const flushFn = vi.fn().mockResolvedValue(undefined);
-    const batcher = new LineBatcher(flushFn, { maxBatchSize: 100, flushIntervalMs: 10 });
-    batcher.push('timed');
-    await new Promise((resolve) => setTimeout(resolve, 30));
-    expect(flushFn).toHaveBeenCalledWith(['timed']);
-    batcher.close();
-  });
-
-  it('close stops the periodic timer', async () => {
-    const flushFn = vi.fn().mockResolvedValue(undefined);
-    const batcher = new LineBatcher(flushFn, { maxBatchSize: 100, flushIntervalMs: 10 });
-    batcher.push('first');
-    batcher.close();
-    await new Promise((resolve) => setTimeout(resolve, 30));
-    // Timer-driven flush after close must not fire.
-    expect(flushFn).not.toHaveBeenCalled();
-  });
-
-  it('accumulates across multiple batches without interleaving', async () => {
-    const flushFn = vi.fn().mockResolvedValue(undefined);
-    const batcher = new LineBatcher(flushFn, { maxBatchSize: 2, flushIntervalMs: 10_000 });
+  it('clears the timer on flush so no duplicate flush fires', () => {
+    const flush = vi.fn();
+    const batcher = new LineBatcher(flush, 100, 500);
     batcher.push('a');
-    batcher.push('b');
-    await flushMicrotasks();
-    batcher.push('c');
-    batcher.push('d');
-    await flushMicrotasks();
-    expect(flushFn).toHaveBeenNthCalledWith(1, ['a', 'b']);
-    expect(flushFn).toHaveBeenNthCalledWith(2, ['c', 'd']);
+    batcher.close(); // flush + clear timer
+    flush.mockClear();
+    vi.advanceTimersByTime(1000);
+    expect(flush).not.toHaveBeenCalled();
+  });
+
+  it('starts a new timer after a timer flush so subsequent lines batch', () => {
+    const flush = vi.fn();
+    const batcher = new LineBatcher(flush, 100, 500);
+    batcher.push('first');
+    vi.advanceTimersByTime(500); // timer flush
+    expect(flush).toHaveBeenCalledWith(['first']);
+    flush.mockClear();
+
+    batcher.push('second');
+    vi.advanceTimersByTime(500);
+    expect(flush).toHaveBeenCalledWith(['second']);
+  });
+
+  it('close is idempotent (double close does not double-flush)', () => {
+    const flush = vi.fn();
+    const batcher = new LineBatcher(flush, 100, 10_000);
+    batcher.push('a');
     batcher.close();
+    batcher.close();
+    expect(flush).toHaveBeenCalledTimes(1);
   });
 });

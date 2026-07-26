@@ -26,24 +26,13 @@ export function firstStringField(
   return null;
 }
 
-/** A string[] field under `key`, or null when the field is absent or not an array of strings. */
-export function stringArrayField(payload: unknown, key: string): string[] | null {
-  const record = asRecord(payload);
-  if (!record) return null;
-  const value = record[key];
-  if (!Array.isArray(value)) return null;
-  return value.every((item) => typeof item === 'string') ? value : null;
-}
-
-/**
- * Console log text for a `log` event payload. Handles batched payloads
- * ({ lines: string[] }) by joining the lines, single-line payloads
- * ({ line: string } / { message } / { text }), and bare strings.
- */
+/** Console log text for a `log` event payload. */
 export function payloadToLogText(payload: unknown): string {
   if (typeof payload === 'string') return payload;
-  const lines = stringArrayField(payload, 'lines');
-  if (lines && lines.length > 0) return lines.join('\n');
+  const record = asRecord(payload);
+  if (record && Array.isArray(record.lines)) {
+    return record.lines.filter((l): l is string => typeof l === 'string').join('\n');
+  }
   return firstStringField(payload, ['message', 'line', 'text']) ?? JSON.stringify(payload);
 }
 

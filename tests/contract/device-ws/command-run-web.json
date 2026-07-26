@@ -1,0 +1,14 @@
+{
+  "_comment": "run_web command — clone the repo, bring up compose (or Dockerfile), wait up to 30 s for the port, then open the browser. Reports done (with URL + project dir) or failed.",
+  "direction": "server-to-client",
+  "frame": {
+    "id": "cmd-001",
+    "type": "run_web",
+    "payload": {
+      "repoUrl": "https://github.com/example/webapp",
+      "branch": "main",
+      "port": 3000,
+      "composePath": "docker-compose.yml"
+    }
+  }
+}

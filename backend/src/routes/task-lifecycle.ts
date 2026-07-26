@@ -77,6 +77,19 @@ export function rerunBlocker(task: { status: string }): string | null {
   return null;
 }
 
+// Close-PR eligibility for POST /tasks/:id/close-pr: only awaiting_review
+// tasks (an open PR exists on the git host) with a branchName can be closed
+// and have their branch deleted. The provider calls happen in the handler.
+export function closePrBlocker(task: { status: string; branchName: string | null }): string | null {
+  if (task.status !== 'awaiting_review') {
+    return `task is ${task.status}, not awaiting_review`;
+  }
+  if (!task.branchName) {
+    return 'task has no branch to close';
+  }
+  return null;
+}
+
 // Rerunning resets the run state: re-queued from scratch with a fresh
 // branch, no leftover error code/message or PR link.
 export function buildRerunUpdate() {

@@ -129,6 +129,44 @@ async function gitlabPullRequestDiff(
     .join('\n');
 }
 
+// Closes the open MR (no merge) via PUT /merge_requests/{iid} with
+// state_event=close. Reuses gitlabLookupMrIid to resolve the iid.
+async function gitlabClosePullRequest(
+  connection: PrConnectionInput,
+  token: string,
+  input: PullRequestRefInput,
+): Promise<void> {
+  const { iid } = await gitlabLookupMrIid(connection, token, input);
+  const url = `${gitlabMrsUrl(connection, input.repoFullName)}/${iid}`;
+  await apiRequest(
+    'gitlab',
+    'PUT',
+    url,
+    gitlabHeaders(token, gitlabTokenType(connection)),
+    token,
+    { state_event: 'close' },
+  );
+}
+
+// Deletes the head branch via DELETE /repository/branches/{branch}. Self-hosted
+// GitLab base URLs are honored via gitlabApiBase; the project path is encoded.
+async function gitlabDeleteBranch(
+  connection: PrConnectionInput,
+  token: string,
+  repoFullName: string,
+  branch: string,
+): Promise<void> {
+  const project = encodeURIComponent(repoFullName);
+  const url = `${gitlabApiBase(connection.baseUrl)}/projects/${project}/repository/branches/${encodeURIComponent(branch)}`;
+  await apiRequest(
+    'gitlab',
+    'DELETE',
+    url,
+    gitlabHeaders(token, gitlabTokenType(connection)),
+    token,
+  );
+}
+
 async function gitlabOpenPullRequest(
   connection: PrConnectionInput,
   token: string,
@@ -247,6 +285,9 @@ export function gitlabPrApi(connection: PrConnectionInput, token: string): Provi
     diff: (input) => gitlabPullRequestDiff(connection, token, input),
     state: (input) => gitlabPullRequestState(connection, token, input),
     list: (repoFullName) => gitlabListPullRequests(connection, token, repoFullName),
+    close: (input) => gitlabClosePullRequest(connection, token, input),
+    deleteBranch: (repoFullName, branch) =>
+      gitlabDeleteBranch(connection, token, repoFullName, branch),
     checks: (input) => gitlabChecksStatus(connection, token, input),
   };
 }

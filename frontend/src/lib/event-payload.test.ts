@@ -5,7 +5,6 @@ import {
   payloadToDiffText,
   payloadToLogText,
   statusFromPayload,
-  stringArrayField,
 } from '@/lib/event-payload';
 
 describe('firstStringField', () => {
@@ -31,22 +30,23 @@ describe('payloadToLogText', () => {
     expect(payloadToLogText('hello')).toBe('hello');
   });
 
-  it('joins lines from a batched { lines: string[] } payload', () => {
-    expect(payloadToLogText({ lines: ['a', 'b', 'c'] })).toBe('a\nb\nc');
-  });
-
-  it('treats an empty lines array as a normal payload (falls through to JSON)', () => {
-    expect(payloadToLogText({ lines: [] })).toBe(JSON.stringify({ lines: [] }));
-  });
-
-  it('ignores a lines field that is not all strings', () => {
-    expect(payloadToLogText({ lines: ['a', 42] })).toBe(JSON.stringify({ lines: ['a', 42] }));
-  });
-
   it('prefers message, then line, then text', () => {
     expect(payloadToLogText({ message: 'm', line: 'l', text: 't' })).toBe('m');
     expect(payloadToLogText({ line: 'l', text: 't' })).toBe('l');
     expect(payloadToLogText({ text: 't' })).toBe('t');
+  });
+
+  it('joins { lines: string[] } batched payloads into multiline text', () => {
+    expect(payloadToLogText({ lines: ['line one', 'line two'] })).toBe('line one\nline two');
+    expect(payloadToLogText({ lines: ['only'] })).toBe('only');
+  });
+
+  it('joins batched lines even when message/line/text are absent', () => {
+    expect(payloadToLogText({ lines: ['a', 'b'], line: 'ignored' })).toBe('a\nb');
+  });
+
+  it('filters non-string entries from a lines array', () => {
+    expect(payloadToLogText({ lines: ['a', 42, 'b'] })).toBe('a\nb');
   });
 
   it('falls back to JSON for other shapes', () => {
@@ -66,29 +66,6 @@ describe('statusFromPayload', () => {
     expect(statusFromPayload({ status: 3 })).toBeNull();
     expect(statusFromPayload({ other: 'x' })).toBeNull();
     expect(statusFromPayload(null)).toBeNull();
-  });
-});
-
-describe('stringArrayField', () => {
-  it('returns the array when the field is a string[]', () => {
-    expect(stringArrayField({ lines: ['a', 'b'] }, 'lines')).toEqual(['a', 'b']);
-  });
-
-  it('returns null when the field is absent', () => {
-    expect(stringArrayField({ other: 1 }, 'lines')).toBeNull();
-  });
-
-  it('returns null when the field is not an array', () => {
-    expect(stringArrayField({ lines: 'single' }, 'lines')).toBeNull();
-  });
-
-  it('returns null when the array contains non-strings', () => {
-    expect(stringArrayField({ lines: ['a', 1] }, 'lines')).toBeNull();
-  });
-
-  it('returns null for non-object payloads', () => {
-    expect(stringArrayField('lines', 'lines')).toBeNull();
-    expect(stringArrayField(null, 'lines')).toBeNull();
   });
 });
 

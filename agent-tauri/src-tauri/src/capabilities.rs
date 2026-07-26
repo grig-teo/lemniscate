@@ -1,10 +1,11 @@
 //! Live run-target probes reported in the `capabilities` frame: docker, adb
 //! devices (usb/wifi), physical iOS devices (devicectl), simulators (simctl)
 //! and Android emulators. Pure parsers are unit-tested; the probes themselves
-//! are best-effort — a missing tool just yields an empty list. Mirrors the
-//! capabilities section of agent/lib.js — keep both in sync.
+//! are best-effort — a missing tool just yields an empty list. The frame
+//! shape is pinned by the shared contract fixture
+//! tests/contract/device-ws/capabilities.json.
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::path::PathBuf;
 use std::time::Duration;
@@ -14,7 +15,7 @@ use crate::{exec, install_apk, xcode};
 const PROBE_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// The environment report sent as `{type: "capabilities", capabilities}`.
-#[derive(Debug, Clone, Default, Serialize, PartialEq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct Capabilities {
     pub docker_available: bool,
@@ -24,7 +25,7 @@ pub struct Capabilities {
     pub emulators: Vec<Emulator>,
 }
 
-#[derive(Debug, Clone, Serialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct AndroidDevice {
     pub serial: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -32,14 +33,14 @@ pub struct AndroidDevice {
     pub transport: String, // "usb" | "wifi"
 }
 
-#[derive(Debug, Clone, Serialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct IosDevice {
     pub name: String,
     pub udid: String,
     pub available: bool,
 }
 
-#[derive(Debug, Clone, Serialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Simulator {
     pub name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -50,7 +51,7 @@ pub struct Simulator {
     pub udid: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Emulator {
     pub name: String,
 }

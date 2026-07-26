@@ -15,10 +15,14 @@ import {
   type AppNotification,
   type NotificationList,
 } from '@/lib/notifications';
+import { useFireBrowserNotifications } from '@/lib/browser-notifications';
 import type { Task } from '@/lib/hooks';
 import { useWorkspaceSelection } from '@/lib/selection';
 
 const QUERY_KEY = ['notifications'] as const;
+
+/** Stable reference so the firing hook's effect doesn't run on every render. */
+const NO_NOTIFICATIONS: readonly AppNotification[] = [];
 
 /**
  * Notification bell for the top navigation: unread-count badge fed by a 30s
@@ -54,6 +58,10 @@ export function NotificationBell() {
   });
 
   const unreadCount = query.data?.unreadCount ?? 0;
+  // Raises a desktop notification for new unread events the user opted into
+  // (Settings → Notifications → Browser notifications). The hook seeds the
+  // seen-id set on first run, so it only fires for events arriving after mount.
+  useFireBrowserNotifications(query.data?.notifications ?? NO_NOTIFICATIONS);
   return (
     <div className="relative">
       <Button

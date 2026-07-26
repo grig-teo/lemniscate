@@ -110,6 +110,26 @@ async function githubPullRequestDiff(token: string, input: PullRequestRefInput):
   );
 }
 
+// Closes the open PR (no merge) via PATCH /pulls/{n} with state=closed.
+async function githubClosePullRequest(token: string, input: PullRequestRefInput): Promise<void> {
+  const { number } = await githubLookupPullNumber(token, input);
+  const url = `${githubPullsUrl(input.repoFullName)}/${number}`;
+  await apiRequest('github', 'PATCH', url, githubHeaders(token), token, { state: 'closed' });
+}
+
+// Deletes the head branch via DELETE /git/refs/heads/{branch}. Throws on
+// protected-branch or permission errors; the caller decides whether to surface.
+async function githubDeleteBranch(
+  token: string,
+  repoFullName: string,
+  branch: string,
+): Promise<void> {
+  const repoPath = encodeRepoPath(repoFullName);
+  const ref = encodeURIComponent(branch);
+  const url = `${GITHUB_API}/repos/${repoPath}/git/refs/heads/${ref}`;
+  await apiRequest('github', 'DELETE', url, githubHeaders(token), token);
+}
+
 async function githubOpenPullRequest(
   token: string,
   input: OpenPullRequestInput,
@@ -274,6 +294,8 @@ export function githubPrApi(token: string): ProviderPrApi {
     diff: (input) => githubPullRequestDiff(token, input),
     state: (input) => githubPullRequestState(token, input),
     list: (repoFullName) => githubListPullRequests(token, repoFullName),
+    close: (input) => githubClosePullRequest(token, input),
+    deleteBranch: (repoFullName, branch) => githubDeleteBranch(token, repoFullName, branch),
     checks: (input) => githubChecksStatus(token, input),
   };
 }

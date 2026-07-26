@@ -1,18 +1,22 @@
 import { Prisma } from '@prisma/client';
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import { enqueueRunTask } from '../lib/proposal-scheduler.js';
+import { applyTaskPrState } from '../lib/pr-merged-handler.js';
+import { closePullRequest, deleteBranch } from '../lib/pull-requests.js';
 import { prisma } from '../lib/prisma.js';
 import { attachmentsData } from '../lib/task-attachments.js';
 import { publishTaskEvent } from '../lib/task-events.js';
 import { findLlmConfig } from '../lib/agent-runtime.js';
 import { requestImprovedPrompt } from '../lib/task-improve.js';
 import { authenticatedUserId } from '../plugins/auth.js';
+import { errorMessage } from '../lib/utils.js';
 import { parseOrReply } from './helpers.js';
 import {
   attachmentValidationError,
   buildRerunUpdate,
   buildStartUpdate,
   CANCELLABLE_STATUSES,
+  closePrBlocker,
   isArchivable,
   ownedTaskWhere,
   rerunBlocker,
@@ -257,5 +261,50 @@ export async function unarchiveTask(request: FastifyRequest, reply: FastifyReply
     where: { id: task.id },
     data: { archivedAt: null },
   });
+  return { task: updated };
+}
+
+// Close a PR and delete the associated branch from the UI. Only awaiting_review
+// tasks with a branch are eligible (closePrBlocker). The PR close is required
+// (a failure surfaces a 502); branch deletion is best-effort (a protected-
+// branch refusal does not strand the task — the PR is already closed). The
+// task status flip reuses applyTaskPrState so the webhook / state-sync poller
+// and this handler share one code path (AGENTS.md §6).
+export async function closePrTask(request: FastifyRequest, reply: FastifyReply) {
+  const userId = authenticatedUserId(request);
+  const params = parseOrReply(idParamsSchema, request.params, reply, 'Invalid task id');
+  if (params === null) return;
+  const task = await prisma.task.findFirst({
+    where: ownedTaskWhere(userId, params.id),
+    include: { repository: { include: { connection: true } } },
+  });
+  if (!task) {
+    return reply.code(404).send({ error: 'Task not found' });
+  }
+  const blocker = closePrBlocker(task);
+  if (blocker) {
+    return reply.code(400).send({ error: blocker });
+  }
+  const ref = {
+    repoFullName: task.repository.fullName,
+    headBranch: task.branchName as string,
+    baseBranch: task.repository.defaultBranch,
+  };
+  try {
+    await closePullRequest(task.repository.connection, ref);
+  } catch (err) {
+    request.log.warn({ err }, 'close-pr: provider close failed');
+    return reply.code(502).send({ error: `Failed to close PR: ${errorMessage(err)}` });
+  }
+  // Best-effort branch delete: a protected-branch refusal or a missing branch
+  // does not fail the whole operation — the PR is already closed, which is
+  // the user's primary intent.
+  await deleteBranch(task.repository.connection, ref.repoFullName, ref.headBranch).catch(
+    (err) => {
+      request.log.warn({ err }, 'close-pr: branch delete failed (best-effort)');
+    },
+  );
+  await applyTaskPrState(task, 'closed');
+  const updated = await prisma.task.findUniqueOrThrow({ where: { id: task.id } });
   return { task: updated };
 }
