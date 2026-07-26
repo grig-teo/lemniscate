@@ -63,17 +63,25 @@ export function stripAnsi(text: string): string {
   );
 }
 
+// Emits a double-quoted YAML scalar. YAML is a JSON superset, so JSON.stringify
+// produces exactly a valid YAML double-quoted scalar with `\` and `"` escaped —
+// safe for any string (api keys with `#`, urls with fragments, models with `: `).
+// No raw-interpolated value may appear in config.yaml without passing through it.
+function yamlScalar(value: string): string {
+  return JSON.stringify(value);
+}
+
 // config.yaml for a custom OpenAI-compatible endpoint. api_mode is pinned:
 // left to auto-detect, Hermes picks the anthropic_messages transport for
 // coding endpoints (kimi/z.ai) and then fails on a missing optional package.
 export function hermesConfigYaml(llm: HermesLlmConfig): string {
   return [
     'model:',
-    `  default: ${llm.model}`,
+    `  default: ${yamlScalar(llm.model)}`,
     '  provider: custom',
     '  api_mode: chat_completions',
-    `  base_url: ${llm.baseUrl}`,
-    `  api_key: ${llm.apiKey}`,
+    `  base_url: ${yamlScalar(llm.baseUrl)}`,
+    `  api_key: ${yamlScalar(llm.apiKey)}`,
     `  context_length: ${llm.contextWindow}`,
     '',
   ].join('\n');

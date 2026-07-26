@@ -11,7 +11,12 @@ vi.mock('node:child_process', () => ({ spawn: mocks.spawn }));
 vi.mock('../src/lib/agent-git.js', () => ({ logEvent: mocks.logEvent }));
 vi.mock('../src/lib/prisma.js', () => ({ prisma: { task: { findUnique: mocks.taskFindUnique } } }));
 
-import { runHermesTask, type HermesTaskOptions } from '../src/lib/hermes-runner.js';
+import {
+  hermesConfigYaml,
+  runHermesTask,
+  type HermesLlmConfig,
+  type HermesTaskOptions,
+} from '../src/lib/hermes-runner.js';
 
 // Tests for the Hermes CLI task executor: isolated HERMES_HOME config,
 // non-interactive spawn, line streaming with ANSI stripping + secret
@@ -90,11 +95,11 @@ describe('runHermesTask', () => {
     expect(yaml).toBe(
       [
         'model:',
-        '  default: model-x',
+        '  default: "model-x"',
         '  provider: custom',
         '  api_mode: chat_completions',
-        '  base_url: https://llm.example/v1',
-        '  api_key: sk-test',
+        '  base_url: "https://llm.example/v1"',
+        '  api_key: "sk-test"',
         '  context_length: 128000',
         '',
       ].join('\n'),
@@ -338,5 +343,63 @@ describe('runHermesTask cancellation', () => {
     await new Promise((resolve) => setTimeout(resolve, 50));
     await closeWith(child, 0);
     await expect(promise).resolves.toBeUndefined();
+  });
+});
+
+describe('hermesConfigYaml', () => {
+  // A YAML double-quoted scalar is exactly a JSON string, so a value that
+  // JSON.parses back to the original is provably a valid quoted scalar that
+  // round-trips. Anything not wrapped in quotes (or wrapping an unescaped
+  // value) fails here — the bug this guards against.
+  function quotedValue(yaml: string, key: string): string {
+    const line = yaml.split('\n').find((l) => l.trimStart().startsWith(`${key}:`));
+    if (!line) throw new Error(`no field '${key}' in:\n${yaml}`);
+    const raw = line.slice(line.indexOf(':') + 1).trim();
+    if (!raw.startsWith('"') || !raw.endsWith('"')) {
+      throw new Error(`field '${key}' is not a double-quoted scalar: '${raw}'`);
+    }
+    return JSON.parse(raw);
+  }
+
+  const baseLlm: HermesLlmConfig = {
+    baseUrl: 'https://llm.example/v1',
+    apiKey: 'sk-test',
+    model: 'model-x',
+    contextWindow: 128_000,
+  };
+
+  it('double-quotes model, base_url, and api_key on the happy path', () => {
+    const yaml = hermesConfigYaml(baseLlm);
+    expect(quotedValue(yaml, 'default')).toBe('model-x');
+    expect(quotedValue(yaml, 'base_url')).toBe('https://llm.example/v1');
+    expect(quotedValue(yaml, 'api_key')).toBe('sk-test');
+  });
+
+  it('round-trips an api key containing a YAML comment marker', () => {
+    const yaml = hermesConfigYaml({ ...baseLlm, apiKey: 'abc #123' });
+    expect(quotedValue(yaml, 'api_key')).toBe('abc #123');
+  });
+
+  it('round-trips a base url containing a fragment', () => {
+    const yaml = hermesConfigYaml({ ...baseLlm, baseUrl: 'https://gw.example/v1#frag' });
+    expect(quotedValue(yaml, 'base_url')).toBe('https://gw.example/v1#frag');
+  });
+
+  it('round-trips a model name containing ": " and a reserved indicator', () => {
+    const yaml = hermesConfigYaml({ ...baseLlm, model: 'weird: model*' });
+    expect(quotedValue(yaml, 'default')).toBe('weird: model*');
+  });
+
+  it('round-trips values containing double quotes and backslashes', () => {
+    const yaml = hermesConfigYaml({ ...baseLlm, apiKey: 'a"b\\c', model: 'm"' });
+    expect(quotedValue(yaml, 'api_key')).toBe('a"b\\c');
+    expect(quotedValue(yaml, 'default')).toBe('m"');
+  });
+
+  it('leaves provider, api_mode, and context_length as unquoted literals', () => {
+    const yaml = hermesConfigYaml(baseLlm);
+    expect(yaml).toContain('  provider: custom');
+    expect(yaml).toContain('  api_mode: chat_completions');
+    expect(yaml).toContain('  context_length: 128000');
   });
 });
