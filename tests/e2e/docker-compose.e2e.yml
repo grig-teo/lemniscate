@@ -3,14 +3,22 @@
 #   docker compose -f docker-compose.yml -f tests/e2e/docker-compose.e2e.yml
 #
 # What it changes relative to the production stack:
-#   - adds the `gitstub` service: a throwaway git provider (git smart HTTP +
-#     GitVerse-shaped API over self-signed TLS) plus a stub OpenAI-compatible
-#     LLM endpoint, so the full agent loop runs with zero external network
-#     and zero real secrets;
+#   - adds the `gitea` service: a real, throwaway git server (pinned image,
+#     SQLite, install-locked) seeded by run.sh with one user, one access
+#     token and one repository. The full agent pipeline — PAT connect, repo
+#     sync, clone, commit, branch push, pull-request open — runs against it,
+#     so the suite asserts PR creation with zero external network and zero
+#     real secrets;
+#   - adds the `gitstub` service: the TLS edge in front of Gitea (the
+#     backend's GitVerse client derives https://api.<host> from the
+#     connection baseUrl — the edge rewrites that to Gitea's /api/v1) plus
+#     the deterministic mock OpenAI-compatible LLM endpoint;
 #   - relaxes the SSRF guard (ALLOW_PRIVATE_URLS) and TLS verification ONLY
-#     inside the e2e network so the stack can reach the stubs;
+#     inside the e2e network so the stack can reach the edge;
 #   - selects the 'internal' agent executor so the suite does not depend on
-#     the Hermes CLI (also skipped in the image build for speed).
+#     the Hermes CLI (also skipped in the image build for speed);
+#   - sets a throwaway METRICS_TOKEN so the suite can assert the backend's
+#     token-guarded /metrics endpoint.
 #
 # Host ports come from the base file's *_BIND variables; run.sh sets them to
 # 127.0.0.1:0 (kernel-assigned ephemeral ports) so parallel/local runs never
@@ -27,6 +35,7 @@ services:
       NODE_TLS_REJECT_UNAUTHORIZED: "0"
       GIT_SSL_NO_VERIFY: "true"
       AGENT_EXECUTOR: internal
+      METRICS_TOKEN: ${E2E_METRICS_TOKEN:-e2e-metrics-token}
 
   worker:
     build:
@@ -39,8 +48,29 @@ services:
       GIT_SSL_NO_VERIFY: "true"
       AGENT_EXECUTOR: internal
 
+  gitea:
+    # Pinned release (never :latest) — same rule as the MinIO image in the
+    # base file; bump deliberately.
+    image: gitea/gitea:1.26.4
+    restart: unless-stopped
+    environment:
+      GITEA__database__DB_TYPE: sqlite3
+      GITEA__security__INSTALL_LOCK: "true"
+      GITEA__service__DISABLE_REGISTRATION: "true"
+      GITEA__server__ROOT_URL: https://gitstub/
+      GITEA__server__START_SSH_SERVER: "false"
+      GITEA__repository__DEFAULT_BRANCH: main
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://localhost:3000/api/healthz || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
   gitstub:
     build: ./tests/e2e/gitstub
+    depends_on:
+      gitea:
+        condition: service_healthy
     networks:
       default:
         aliases:

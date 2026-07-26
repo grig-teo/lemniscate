@@ -125,7 +125,7 @@ jobs:
         run: ./gradlew lint
 
   e2e:
-    name: E2E — smoke suite on the real compose stack
+    name: E2E — agent pipeline on the real compose stack (Gitea + mock LLM)
     needs: changes
     if: needs.changes.outputs.e2e == 'true'
     runs-on: ubuntu-latest
@@ -134,14 +134,17 @@ jobs:
       - uses: actions/checkout@v4
 
       # run.sh boots docker-compose.yml + tests/e2e/docker-compose.e2e.yml,
-      # waits on /health/ready for backend and worker, seeds one user, and
-      # drives one full task lifecycle (queued -> running -> done, branch
-      # pushed to the gitstub remote) against the real Postgres/Redis.
+      # waits on /health/ready for backend and worker, seeds a throwaway
+      # Gitea (user + token + repo) and one DB user/connection, then drives
+      # the core value chain through the real API: PAT connect -> repo sync
+      # -> LLM config -> task run (clone/LLM/commit/push) -> asserted
+      # pull-request creation on Gitea, plus /api/usage, notification and
+      # Prometheus /metrics assertions.
       - name: Run e2e smoke suite
         run: ./tests/e2e/run.sh
 
-      # run.sh dumps backend/worker/gitstub (and all other service) logs to
-      # tests/e2e/artifacts/ on failure — keep them for debugging.
+      # run.sh dumps backend/worker/gitea/gitstub (and all other service)
+      # logs to tests/e2e/artifacts/ on failure — keep them for debugging.
       - name: Upload service logs on failure
         if: failure()
         uses: actions/upload-artifact@v4
