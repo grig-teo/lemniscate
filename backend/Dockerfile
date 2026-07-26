@@ -47,6 +47,9 @@ COPY --from=build --chown=app:app /app/dist ./dist
 COPY --from=build --chown=app:app /app/package.json ./package.json
 COPY --from=build --chown=app:app /app/prisma ./prisma
 COPY --from=build --chown=app:app /app/scripts ./scripts
+# Task workdir mountpoint: named volumes initialize with the image's owner,
+# so this must belong to app or every clone fails with EACCES.
+RUN mkdir -p /tmp/lemniscate-repos && chown app:app /tmp/lemniscate-repos
 USER app
 EXPOSE 3000
 # API server entrypoint: apply migrations, then start.
