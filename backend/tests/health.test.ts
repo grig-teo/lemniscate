@@ -4,8 +4,11 @@ import { checkReadiness } from '../src/lib/health.js';
 import { registerHealthRoutes, type HealthDeps } from '../src/routes/health.js';
 
 // Readiness contract: /health stays a dependency-free liveness probe while
-// /health/ready verifies Postgres (SELECT 1) and Redis (PING), answering 503
-// with per-check results when any dependency is down or too slow to answer.
+// /health/ready verifies Postgres (SELECT 1), Redis (PING) and — when MinIO
+// is configured — the library bucket (bucketExists), answering 503 with
+// per-check results when any dependency is down or too slow to answer.
+// minio is tri-state in the payload: null means "not configured" and does
+// not affect readiness.
 
 const healthyDeps: HealthDeps = {
   checkPostgres: async () => 1,
@@ -43,7 +46,7 @@ describe('GET /health/ready (readiness)', () => {
     const app = await buildApp(healthyDeps);
     const response = await app.inject({ method: 'GET', url: '/health/ready' });
     expect(response.statusCode).toBe(200);
-    expect(response.json()).toEqual({ ok: true, postgres: true, redis: true });
+    expect(response.json()).toEqual({ ok: true, postgres: true, redis: true, minio: null });
   });
 
   it('returns 503 when the Postgres check throws', async () => {
@@ -55,7 +58,7 @@ describe('GET /health/ready (readiness)', () => {
     });
     const response = await app.inject({ method: 'GET', url: '/health/ready' });
     expect(response.statusCode).toBe(503);
-    expect(response.json()).toEqual({ ok: false, postgres: false, redis: true });
+    expect(response.json()).toEqual({ ok: false, postgres: false, redis: true, minio: null });
   });
 
   it('returns 503 when the Redis check throws', async () => {
@@ -67,7 +70,26 @@ describe('GET /health/ready (readiness)', () => {
     });
     const response = await app.inject({ method: 'GET', url: '/health/ready' });
     expect(response.statusCode).toBe(503);
-    expect(response.json()).toEqual({ ok: false, postgres: true, redis: false });
+    expect(response.json()).toEqual({ ok: false, postgres: true, redis: false, minio: null });
+  });
+
+  it('reports minio: true when the configured bucket exists', async () => {
+    const app = await buildApp({ ...healthyDeps, checkMinio: async () => true });
+    const response = await app.inject({ method: 'GET', url: '/health/ready' });
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({ ok: true, postgres: true, redis: true, minio: true });
+  });
+
+  it('returns 503 when the MinIO check throws', async () => {
+    const app = await buildApp({
+      ...healthyDeps,
+      checkMinio: async () => {
+        throw new Error('bucket missing');
+      },
+    });
+    const response = await app.inject({ method: 'GET', url: '/health/ready' });
+    expect(response.statusCode).toBe(503);
+    expect(response.json()).toEqual({ ok: false, postgres: true, redis: true, minio: false });
   });
 });
 
@@ -78,7 +100,7 @@ describe('checkReadiness', () => {
       { checkPostgres: hanging, checkRedis: healthyDeps.checkRedis },
       50,
     );
-    expect(report).toEqual({ postgres: false, redis: true });
+    expect(report).toEqual({ postgres: false, redis: true, minio: null });
   });
 
   it('runs both checks even when one rejects synchronously', async () => {
@@ -90,6 +112,19 @@ describe('checkReadiness', () => {
       },
     });
     expect(redisChecked).toBe(true);
-    expect(report).toEqual({ postgres: false, redis: true });
+    expect(report).toEqual({ postgres: false, redis: true, minio: null });
+  });
+
+  it('reports minio: null when no MinIO check is configured', async () => {
+    const report = await checkReadiness(healthyDeps);
+    expect(report.minio).toBeNull();
+  });
+
+  it('fails a hanging MinIO check past the timeout', async () => {
+    const report = await checkReadiness(
+      { ...healthyDeps, checkMinio: () => new Promise(() => {}) },
+      50,
+    );
+    expect(report).toEqual({ postgres: true, redis: true, minio: false });
   });
 });

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { errorMessage, redactSecrets, sleep } from '../src/lib/utils.js';
+import { errorMessage, redactSecrets, redisEndpointForLog, sleep } from '../src/lib/utils.js';
 
 // Locking tests for the shared micro-utilities that were duplicated across
 // agent-loop.ts (sanitize/errorMessage/sleep), llm-client.ts (scrubApiKey/
@@ -39,5 +39,21 @@ describe('sleep', () => {
     const started = Date.now();
     await sleep(20);
     expect(Date.now() - started).toBeGreaterThanOrEqual(15);
+  });
+});
+
+describe('redisEndpointForLog', () => {
+  it('strips credentials, keeping only host and port', () => {
+    expect(redisEndpointForLog('redis://:s3cret@redis.internal:6380')).toBe('redis.internal:6380');
+    expect(redisEndpointForLog('redis://user:s3cret@redis.internal:6380')).toBe('redis.internal:6380');
+  });
+
+  it('keeps the default port explicit when the URL omits it', () => {
+    expect(redisEndpointForLog('redis://localhost')).toBe('localhost:6379');
+  });
+
+  it('never leaks credentials even for unparseable URLs', () => {
+    const out = redisEndpointForLog('not a url :s3cret@');
+    expect(out).not.toContain('s3cret');
   });
 });

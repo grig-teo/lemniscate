@@ -10,8 +10,8 @@ import { Client } from 'minio';
 let client: Client | null = null;
 const readyBuckets = new Set<string>();
 
-/** Configured client + ensured bucket, or null when MinIO env vars are unset. */
-export async function getMinioBucket(bucket: string): Promise<{ client: Client } | null> {
+/** Configured client, or null when MinIO env vars are unset. No bucket creation. */
+export async function getMinioClient(): Promise<Client | null> {
   const { config } = await import('../config.js');
   if (!config.MINIO_ENDPOINT || !config.MINIO_ROOT_USER || !config.MINIO_ROOT_PASSWORD) {
     return null;
@@ -25,11 +25,37 @@ export async function getMinioBucket(bucket: string): Promise<{ client: Client }
       secretKey: config.MINIO_ROOT_PASSWORD,
     });
   }
+  return client;
+}
+
+/** True when MinIO env vars are set, without touching the network. */
+export async function minioConfigured(): Promise<boolean> {
+  return (await getMinioClient()) !== null;
+}
+
+/**
+ * Readiness probe for the configured library bucket. Rejects when MinIO is
+ * unreachable or the bucket is missing, so a failed probeDependency marks
+ * the check unhealthy. Callers must gate on minioConfigured() first.
+ */
+export async function assertLibraryBucket(): Promise<void> {
+  const minio = await getMinioClient();
+  if (!minio) throw new Error('minio is not configured');
+  const { config } = await import('../config.js');
+  if (!(await minio.bucketExists(config.MINIO_BUCKET))) {
+    throw new Error(`minio bucket '${config.MINIO_BUCKET}' missing`);
+  }
+}
+
+/** Configured client + ensured bucket, or null when MinIO env vars are unset. */
+export async function getMinioBucket(bucket: string): Promise<{ client: Client } | null> {
+  const minio = await getMinioClient();
+  if (!minio) return null;
   if (!readyBuckets.has(bucket)) {
-    if (!(await client.bucketExists(bucket))) {
-      await client.makeBucket(bucket);
+    if (!(await minio.bucketExists(bucket))) {
+      await minio.makeBucket(bucket);
     }
     readyBuckets.add(bucket);
   }
-  return { client };
+  return { client: minio };
 }
