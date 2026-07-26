@@ -109,6 +109,12 @@ private fun MainContent(viewModel: MainViewModel, ui: MainUiState, modifier: Mod
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
     ) {
+        Text(
+            "Hello World",
+            style = MaterialTheme.typography.headlineMedium,
+            textAlign = TextAlign.Center,
+        )
+        Spacer(Modifier.height(24.dp))
         MicButton(viewModel, ui)
         Spacer(Modifier.height(16.dp))
         StatusHint(ui)
