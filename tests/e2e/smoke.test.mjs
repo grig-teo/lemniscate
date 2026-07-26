@@ -1,5 +1,7 @@
-// E2E smoke suite — runs on the host against the real compose stack booted
-// by run.sh. Covers the product's first-run path end to end:
+// E2E smoke suite — run.sh executes these tests in a throwaway container on
+// the compose network (tests/e2e/testrunner/Dockerfile), against the real
+// stack reached via internal service URLs (http://backend:3000 etc.). Covers
+// the product's first-run path end to end:
 //
 //   health/readiness (Postgres + Redis + MinIO via /health/ready)
 //   -> PAT connect (login) against the stub git provider
@@ -10,8 +12,9 @@
 //   -> task console contains the stub LLM's summary
 //   -> the task branch (with the stub's file) landed on the git remote
 //
-// Everything runs over the published ephemeral ports; the only credentials
-// are throwaway e2e values. Node's built-in test runner, no dependencies.
+// The only credentials are throwaway e2e values; the gitstub TLS cert is a
+// self-signed one generated at image build. Node's built-in test runner, no
+// dependencies.
 
 import assert from 'node:assert/strict';
 import { execFile as execFileCb } from 'node:child_process';

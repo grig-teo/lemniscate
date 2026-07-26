@@ -3,10 +3,10 @@ import {
   backoffMs,
   chatCompletions,
   LlmError,
+  setLlmObserver,
   timeoutForAttemptSeconds,
   toReasoningEffort,
 } from '../src/lib/llm-client.js';
-import { metricsRegistry } from '../src/lib/metrics.js';
 
 // Locking tests for the OpenAI-compatible chat client. fetch is stubbed;
 // no network is touched. apiKey 'sk-secret' must never appear in errors.
@@ -297,47 +297,48 @@ describe('timeoutForAttemptSeconds', () => {
   });
 });
 
-describe('chatCompletions metrics', () => {
-  it('records request, latency, and token metrics on success', async () => {
-    metricsRegistry.resetMetrics();
-    stubFetch(
-      jsonResponse({
-        choices: [{ message: { content: 'hi' } }],
-        model: 'echo-model',
-        usage: { prompt_tokens: 3, completion_tokens: 4, total_tokens: 7 },
-      }),
-    );
-
-    await chatCompletions({ ...BASE });
-
-    const text = await metricsRegistry.metrics();
-    expect(text).toContain('lemniscate_llm_requests_total{model="echo-model",status="ok"} 1');
-    expect(text).toContain('lemniscate_llm_request_duration_seconds_count{model="echo-model"} 1');
-    expect(text).toContain('lemniscate_llm_tokens_total{model="echo-model",kind="prompt"} 3');
-    expect(text).toContain(
-      'lemniscate_llm_tokens_total{model="echo-model",kind="completion"} 4',
-    );
+describe('setLlmObserver', () => {
+  it('reports a success observation with latency', async () => {
+    stubFetch(jsonResponse({ choices: [{ message: { content: 'ok' } }] }));
+    const seen: { outcome: string; latencyMs: number }[] = [];
+    setLlmObserver((obs) => seen.push(obs));
+    try {
+      await chatCompletions({ ...BASE });
+    } finally {
+      setLlmObserver(undefined);
+    }
+    expect(seen).toHaveLength(1);
+    expect(seen[0]?.outcome).toBe('success');
+    expect(seen[0]?.latencyMs).toBeGreaterThanOrEqual(0);
   });
 
-  it('records a failed request labeled by error kind, without token counters', async () => {
-    metricsRegistry.resetMetrics();
-    stubFetch(jsonResponse({ error: 'overloaded' }, 500));
+  it('reports the LlmError kind when the request ultimately fails', async () => {
+    stubFetch(jsonResponse({ error: 'bad' }, 400));
+    const seen: { outcome: string; latencyMs: number }[] = [];
+    setLlmObserver((obs) => seen.push(obs));
+    try {
+      await expect(chatCompletions({ ...BASE })).rejects.toThrow(LlmError);
+    } finally {
+      setLlmObserver(undefined);
+    }
+    expect(seen.map((o) => o.outcome)).toEqual(['http']);
+  });
 
-    await expect(chatCompletions({ ...BASE })).rejects.toBeInstanceOf(LlmError);
-
-    const text = await metricsRegistry.metrics();
-    expect(text).toContain('lemniscate_llm_requests_total{model="test-model",status="http"} 1');
-    expect(text).not.toContain('lemniscate_llm_tokens_total{');
-
-    // Failed calls must still observe a finite duration — a NaN sum would
-    // poison the latency histogram. RequestState.startedAt is set by
-    // makeRequestState before the first attempt.
-    const sumLine = text
-      .split('\n')
-      .find((line) => line.startsWith('lemniscate_llm_request_duration_seconds_sum{model="test-model"}'));
-    expect(sumLine).toBeDefined();
-    const sum = Number(sumLine?.split(' ').pop());
-    expect(Number.isFinite(sum)).toBe(true);
-    expect(sum).toBeGreaterThanOrEqual(0);
+  it('reports timeouts as outcome "timeout"', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (_url: string | URL, init?: RequestInit) => {
+      await new Promise((resolve, reject) => {
+        init?.signal?.addEventListener('abort', () => reject(new Error('aborted')));
+      });
+    }));
+    const seen: { outcome: string }[] = [];
+    setLlmObserver((obs) => seen.push(obs));
+    try {
+      await expect(
+        chatCompletions({ ...BASE, timeoutSeconds: 0 }),
+      ).rejects.toThrow(LlmError);
+    } finally {
+      setLlmObserver(undefined);
+    }
+    expect(seen.map((o) => o.outcome)).toEqual(['timeout']);
   });
 });

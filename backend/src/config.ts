@@ -104,11 +104,6 @@ const envSchema = z.object({
   // Shared secret between Traefik (HTTP provider) and the backend's
   // /api/internal/traefik/dynamic endpoint. Empty = endpoint disabled (503).
   TRAEFIK_PROVIDER_TOKEN: z.string().default(''),
-  // Shared secret guarding GET /metrics (Prometheus scrape of the API
-  // process; x-metrics-token header or Bearer auth). Empty = disabled (503).
-  // The worker's :WORKER_HEALTH_PORT/metrics is unauthenticated but only
-  // reachable on the internal compose network.
-  METRICS_TOKEN: z.string().default(''),
   // Docker bridge network service containers join (isolated from platform
   // internals; Traefik is the only member shared with the platform).
   APPS_NETWORK: z.string().min(1).default('lemniscate-apps'),
@@ -125,6 +120,17 @@ const envSchema = z.object({
   // Queued+running tasks a single user may have at once; the 6th concurrent
   // create is rejected with 429.
   TASK_MAX_ACTIVE_PER_USER: z.coerce.number().int().positive().default(5),
+
+  // --- Observability ---
+  // Bearer token guarding GET /metrics (Prometheus). Unset = the endpoint
+  // answers 404, so it can never be exposed through the frontend proxy by
+  // accident. Generate a random one and put it in the Prometheus scrape
+  // config's authorization credentials (see docs/observability.md).
+  METRICS_TOKEN: optionalString,
+  // Opt-in Sentry error reporting for the API and worker. Unset = the SDK is
+  // never imported and reporting is a no-op. Events are scrubbed of the
+  // secrets below before leaving the process.
+  SENTRY_DSN: optionalString,
 });
 
 const parsed = envSchema.safeParse(process.env);
@@ -139,3 +145,14 @@ if (!parsed.success) {
 
 export const config = parsed.data;
 export type Config = typeof config;
+
+// Values scrubbed from every Sentry event (lib/sentry.ts scrubEvent) before
+// it leaves the process: anything that authenticates against our own
+// dependencies. Per-user LLM keys are already redacted at their source
+// (llm-client scrubs the apiKey out of every thrown error).
+export const MONITORED_SECRETS: string[] = [
+  config.JWT_SECRET,
+  config.ENCRYPTION_KEY,
+  config.DATABASE_URL,
+  config.REDIS_URL,
+];

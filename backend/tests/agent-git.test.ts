@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const mocks = vi.hoisted(() => ({
   publishTaskEvent: vi.fn(),
   archiveWorkdirToMinio: vi.fn(),
+  notifyTaskFailure: vi.fn(),
 }));
 
 vi.mock('../src/lib/task-events.js', () => ({
@@ -13,7 +14,11 @@ vi.mock('../src/lib/workdir-archive.js', () => ({
   archiveWorkdirToMinio: mocks.archiveWorkdirToMinio,
 }));
 
-import { cleanupWorkdir, cloneRepository, explainGitFailure, git, planWorkdirSweep, sanitizeRelativePath } from '../src/lib/agent-git.js';
+vi.mock('../src/lib/notifications.js', () => ({
+  notifyTaskFailure: mocks.notifyTaskFailure,
+}));
+
+import { cleanupWorkdir, cloneRepository, explainGitFailure, git, planWorkdirSweep, recordJobFailure, sanitizeRelativePath } from '../src/lib/agent-git.js';
 
 // Locking tests for the LLM-path safety check extracted from agent-loop.ts,
 // plus the git() console logging: every command echoes a redacted
@@ -22,6 +27,7 @@ import { cleanupWorkdir, cloneRepository, explainGitFailure, git, planWorkdirSwe
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.publishTaskEvent.mockResolvedValue(undefined);
+  mocks.notifyTaskFailure.mockResolvedValue(undefined);
 });
 
 describe('sanitizeRelativePath', () => {
@@ -212,6 +218,33 @@ describe('cleanupWorkdir', () => {
       expect(lines).toEqual(['cleaned up workdir']);
     } finally {
       await fs.rm(tmp, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('recordJobFailure', () => {
+  it('emits a task-failure notification with the error kind', async () => {
+    const err = new Error('boom');
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const message = await recordJobFailure('run-task', 'task-1', err, []);
+      expect(message).toBe('boom');
+      expect(mocks.notifyTaskFailure).toHaveBeenCalledWith('task-1', 'Error', 'boom');
+      expect(mocks.publishTaskEvent).toHaveBeenCalledWith('task-1', 'log', {
+        line: 'error: boom',
+      });
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+
+  it('still returns the message when the notification itself fails', async () => {
+    mocks.notifyTaskFailure.mockRejectedValueOnce(new Error('db down'));
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      await expect(recordJobFailure('run-task', 'task-1', new Error('boom'), [])).resolves.toBe('boom');
+    } finally {
+      errorSpy.mockRestore();
     }
   });
 });

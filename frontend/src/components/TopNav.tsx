@@ -1,6 +1,7 @@
 import { Link } from 'react-router-dom';
 
 import { BrandMark } from '@/components/BrandMark';
+import { NotificationBell } from '@/components/NotificationBell';
 import { SettingsDialog } from '@/components/settings/SettingsDialog';
 import { ThemeToggle } from '@/components/ThemeToggle';
 
@@ -16,6 +17,7 @@ export function TopNav() {
       </Link>
 
       <div className="flex items-center gap-1">
+        <NotificationBell />
         <ThemeToggle />
         <SettingsDialog />
       </div>

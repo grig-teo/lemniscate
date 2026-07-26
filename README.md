@@ -75,54 +75,11 @@ and `frontend` only starts once `backend` is `service_healthy`. Inspect with
 Point external uptime monitoring at `/health/ready`: a 503 means Postgres or
 Redis is down and the deploy/proxy should stop routing traffic to the API.
 
-### Prometheus metrics
-
-Both processes expose a Prometheus exposition (`prom-client`, registry in
-`backend/src/lib/metrics.ts`):
-
-- **Worker** — `GET :3100/metrics` (same port as `/health`; unauthenticated
-  but bound on the internal compose network, published to the host only as
-  `127.0.0.1:3101`). Carries queue gauges, job durations/outcomes, failure
-  counters, and LLM request/token metrics, plus default Node.js metrics.
-- **API** — `GET :3000/metrics`, guarded by the `METRICS_TOKEN` shared
-  secret (unset = 503, disabled). Send it as `x-metrics-token: <token>` or
-  `Authorization: Bearer <token>`. The payload is aggregate-only.
-
-Metrics (labels stay bounded — job name, error kind, model — never
-taskId/userId):
-
-| Metric | Type | Labels |
-| --- | --- | --- |
-| `lemniscate_queue_jobs` | gauge | `queue`, `state` (waiting/active/delayed/failed/completed) |
-| `lemniscate_jobs_total` | counter | `job_name`, `outcome` |
-| `lemniscate_job_duration_seconds` | histogram | `job_name` |
-| `lemniscate_job_failures_total` | counter | `job_name`, `error_kind` |
-| `lemniscate_llm_requests_total` | counter | `model`, `status` |
-| `lemniscate_llm_request_duration_seconds` | histogram | `model` |
-| `lemniscate_llm_tokens_total` | counter | `model`, `kind` (prompt/completion) |
-
-Queue gauges are refreshed from `getJobCounts()` every 15s in the worker
-(the same source as `:3100/health`), so scrapes never hit Redis directly.
-
-Example scrape config:
-
-```yaml
-scrape_configs:
-  - job_name: lemniscate-worker
-    static_configs:
-      - targets: ['localhost:3101']   # WORKER_HEALTH_BIND from compose
-  - job_name: lemniscate-api
-    static_configs:
-      - targets: ['localhost:3000']
-    authorization:
-      type: Bearer
-      credentials: '<METRICS_TOKEN>'
-```
-
-Alert examples expressible purely from these metrics:
-`lemniscate_queue_jobs{state="waiting"} > 50 for 15m` (backlog),
-`rate(lemniscate_job_failures_total[5m]) > 0` (failure spike), and
-`increase(lemniscate_llm_tokens_total[1d])` (daily token spend).
+For deeper observability (Prometheus metrics and opt-in Sentry error
+reporting) see [docs/observability.md](docs/observability.md): the API
+serves a token-guarded `/metrics` (`METRICS_TOKEN`, 404 when unset), the
+worker serves `/metrics` on its health port, and `SENTRY_DSN` enables
+scrubbed error reporting in both processes.
 
 ## OAuth app setup
 
@@ -178,6 +135,12 @@ by hand:
    roughly match the run's token usage shown in the live console. With
    `METRICS_TOKEN` set, `curl -s -H "Authorization: Bearer $METRICS_TOKEN"
    localhost:3000/metrics` answers 200 (and 401 without it).
+10. Confirm the TopNav bell shows an unread "PR opened" notification within
+    30s of the PR being created, and that clicking it opens the PR; merge the
+    PR on the git host and confirm a "PR merged" notification appears within
+    one pr-state-sync interval (5 min). Optionally set a webhook URL via
+    `PUT /api/notifications/settings` and verify the HMAC-signed POST
+    (`x-lemniscate-signature: sha256=…`) reaches the bridge.
 
 > Note: the live OAuth login, LLM calls, and branch/PR creation paths could
 > not be exercised without real provider and LLM credentials — verify them
