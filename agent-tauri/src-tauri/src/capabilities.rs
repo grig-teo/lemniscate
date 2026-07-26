@@ -46,6 +46,8 @@ pub struct Simulator {
     pub runtime: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub state: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub udid: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -165,6 +167,7 @@ pub fn parse_simctl_devices(json_text: &str) -> Vec<Simulator> {
                 name: name.to_string(),
                 runtime: Some(sim_runtime_label(runtime)),
                 state: device.get("state").and_then(Value::as_str).map(str::to_string),
+                udid: device.get("udid").and_then(Value::as_str).map(str::to_string),
             });
         }
     }
@@ -278,14 +281,14 @@ mod tests {
                 {"udid": "W1", "name": "Apple Watch", "state": "Shutdown", "isAvailable": true}
             ]
         }}"#;
-        let names: Vec<(String, Option<String>)> =
-            parse_simctl_devices(json).into_iter().map(|s| (s.name, s.runtime)).collect();
+        let names: Vec<(String, Option<String>, Option<String>)> =
+            parse_simctl_devices(json).into_iter().map(|s| (s.name, s.runtime, s.udid)).collect();
         assert_eq!(
             names,
             vec![
-                ("iPhone 15".into(), Some("iOS 17.5".into())),
-                ("iPhone SE".into(), Some("iOS 17.5".into())),
-                ("Apple Watch".into(), Some("watchOS 10.5".into())),
+                ("iPhone 15".into(), Some("iOS 17.5".into()), Some("S1".into())),
+                ("iPhone SE".into(), Some("iOS 17.5".into()), Some("S2".into())),
+                ("Apple Watch".into(), Some("watchOS 10.5".into()), Some("W1".into())),
             ]
         );
         assert!(parse_simctl_devices("garbage").is_empty());

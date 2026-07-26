@@ -30,7 +30,10 @@ pub async fn execute(tx: ResultSender, config: Config, id: String, payload: Valu
 async fn attempt(ctx: &mut CommandContext, config: &Config, payload: &Value) -> Result<Value, String> {
     let adb = find_adb().await;
     let device = match &adb {
-        Some(adb) => first_adb_device(ctx, adb).await,
+        Some(adb) => pick_adb_device(
+            &adb_device_serials(ctx, adb).await,
+            payload.get("deviceSerial").and_then(Value::as_str),
+        )?,
         None => None,
     };
     let apk_path = obtain_apk(ctx, config, payload).await?;
@@ -55,14 +58,28 @@ pub(crate) async fn find_adb() -> Option<String> {
     None
 }
 
-/// Serial of the first attached device/emulator, or None when none is online.
-async fn first_adb_device(ctx: &mut CommandContext, adb: &str) -> Option<String> {
+/// Serials of attached devices/emulators in state `device`, empty on failure.
+async fn adb_device_serials(ctx: &mut CommandContext, adb: &str) -> Vec<String> {
     let result = exec::run_capture(adb, &["devices", "-l"], None, DEVICES_TIMEOUT).await;
     ctx.append(&format!("$ {adb} devices -l\n{}", result.output));
     if !result.ok {
-        return None;
+        return vec![];
     }
-    parse_adb_devices(&result.output).into_iter().next()
+    parse_adb_devices(&result.output)
+}
+
+/// Device to install to: the requested serial when given (erroring when it
+/// is not attached), otherwise the first attached one — mirroring the Node
+/// agent's deviceSerial handling.
+fn pick_adb_device(devices: &[String], serial: Option<&str>) -> Result<Option<String>, String> {
+    match serial {
+        None => Ok(devices.first().cloned()),
+        Some(serial) if devices.iter().any(|d| d == serial) => Ok(Some(serial.to_string())),
+        Some(serial) => {
+            let available = if devices.is_empty() { "none".to_string() } else { devices.join(", ") };
+            Err(format!("adb device \"{serial}\" not found (available: {available})"))
+        }
+    }
 }
 
 /// Candidate adb binaries: PATH first, then the standard SDK locations.
@@ -301,6 +318,35 @@ mod tests {
             vec!["emulator-5554".to_string(), "192.168.1.5:5555".to_string()]
         );
         assert!(parse_adb_devices("List of devices attached\n").is_empty());
+    }
+
+    // --- device selection (payload.deviceSerial) ---------------------------------------
+
+    #[test]
+    fn pick_adb_device_returns_the_requested_serial_when_attached() {
+        let devices = vec!["emulator-5554".to_string(), "0a1b2c3d".to_string()];
+        assert_eq!(pick_adb_device(&devices, Some("0a1b2c3d")), Ok(Some("0a1b2c3d".to_string())));
+    }
+
+    #[test]
+    fn pick_adb_device_falls_back_to_the_first_device_without_a_serial() {
+        let devices = vec!["emulator-5554".to_string(), "0a1b2c3d".to_string()];
+        assert_eq!(pick_adb_device(&devices, None), Ok(Some("emulator-5554".to_string())));
+    }
+
+    #[test]
+    fn pick_adb_device_is_none_without_devices_or_serial() {
+        assert_eq!(pick_adb_device(&[], None), Ok(None));
+    }
+
+    #[test]
+    fn pick_adb_device_errors_when_the_requested_serial_is_not_attached() {
+        let devices = vec!["emulator-5554".to_string()];
+        let error = pick_adb_device(&devices, Some("0a1b2c3d")).unwrap_err();
+        assert!(error.contains("0a1b2c3d"), "got {error}");
+        assert!(error.contains("emulator-5554"), "got {error}");
+        let error = pick_adb_device(&[], Some("0a1b2c3d")).unwrap_err();
+        assert!(error.contains("available: none"), "got {error}");
     }
 
     // --- apk file naming -------------------------------------------------------------
