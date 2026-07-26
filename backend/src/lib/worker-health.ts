@@ -2,22 +2,18 @@ import { createServer, type Server, type ServerResponse } from 'node:http';
 import type { Queue } from 'bullmq';
 
 export interface WorkerQueueSnapshot {
-  waiting: number;
-  active: number;
-  delayed: number;
-  failed: number;
-  completed: number;
+  ok: true;
+  queue: string;
+  counts: Record<string, number>;
   ts: string;
 }
 
 export async function queueSnapshot(queue: Queue): Promise<WorkerQueueSnapshot> {
   const counts = await queue.getJobCounts('waiting', 'active', 'delayed', 'failed', 'completed');
   return {
-    waiting: counts.waiting ?? 0,
-    active: counts.active ?? 0,
-    delayed: counts.delayed ?? 0,
-    failed: counts.failed ?? 0,
-    completed: counts.completed ?? 0,
+    ok: true,
+    queue: queue.name,
+    counts,
     ts: new Date().toISOString(),
   };
 }
@@ -30,7 +26,7 @@ function sendJson(res: ServerResponse, status: number, body: unknown): void {
 async function handleHealth(queue: Queue, res: ServerResponse): Promise<void> {
   try {
     const snapshot = await queueSnapshot(queue);
-    sendJson(res, 200, { ok: true, ...snapshot });
+    sendJson(res, 200, snapshot);
     return;
   } catch (err) {
     sendJson(res, 503, {
@@ -41,7 +37,7 @@ async function handleHealth(queue: Queue, res: ServerResponse): Promise<void> {
   }
 }
 
-export function startWorkerHealthServer(queue: Queue, port = 3100): Promise<Server> {
+export function startWorkerHealthServer(queue: Queue, port = 3100): Server {
   const server = createServer((req, res) => {
     if (req.url !== '/health') {
       sendJson(res, 404, { ok: false, error: 'not found' });
@@ -49,7 +45,6 @@ export function startWorkerHealthServer(queue: Queue, port = 3100): Promise<Serv
     }
     void handleHealth(queue, res);
   });
-  return new Promise((resolve) => {
-    server.listen(port, () => resolve(server));
-  });
+  server.listen(port);
+  return server;
 }
