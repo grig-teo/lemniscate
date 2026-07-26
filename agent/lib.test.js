@@ -367,3 +367,155 @@ test('isTauriScript matches tauri-related script names only', () => {
   assert.equal(lib.isTauriScript('electron'), false);
   assert.equal(lib.isTauriScript('start'), false);
 });
+
+// --- adb helpers ----------------------------------------------------------------
+
+test('adbCandidates covers PATH and the standard SDK locations', () => {
+  const candidates = lib.adbCandidates({ ANDROID_HOME: '/sdk' }, '/home/u');
+  assert.equal(candidates[0], 'adb');
+  assert.ok(candidates.includes(path.join('/sdk', 'platform-tools', 'adb')));
+  assert.ok(candidates.includes(path.join('/home/u', 'Library', 'Android', 'sdk', 'platform-tools', 'adb')));
+});
+
+test('adbCandidates skips ANDROID_HOME when unset', () => {
+  const candidates = lib.adbCandidates({}, '/home/u');
+  assert.equal(candidates.length, 2);
+});
+
+test('parseAdbDevices returns serials in state device only', () => {
+  const output = [
+    'List of devices attached',
+    'emulator-5554\tdevice',
+    '0a1b2c3d\toffline',
+    '',
+  ].join('\n');
+  assert.deepEqual(lib.parseAdbDevices(output), ['emulator-5554']);
+});
+
+test('parseAdbDevices parses adb devices -l output', () => {
+  const output = [
+    'List of devices attached',
+    'emulator-5554          device product:sdk_gphone64_arm64 model:sdk_gphone64_arm64 device:emu64a transport_id:1',
+    '',
+  ].join('\n');
+  assert.deepEqual(lib.parseAdbDevices(output), ['emulator-5554']);
+});
+
+test('parseAdbDevices returns [] when nothing is attached', () => {
+  assert.deepEqual(lib.parseAdbDevices('List of devices attached\n\n'), []);
+});
+
+// --- run_ios helpers --------------------------------------------------------------
+
+const SIMCTL_JSON = JSON.stringify({
+  devices: {
+    'com.apple.CoreSimulator.SimRuntime.iOS-17-5': [
+      { udid: 'SIM-BOOTED', name: 'iPhone 15', state: 'Booted', isAvailable: true },
+      { udid: 'SIM-SHUTDOWN', name: 'iPhone SE', state: 'Shutdown', isAvailable: true },
+      { udid: 'SIM-UNAVAILABLE', name: 'iPhone 14', state: 'Shutdown', isAvailable: false },
+    ],
+    'com.apple.CoreSimulator.SimRuntime.watchOS-10-5': [
+      { udid: 'WATCH-1', name: 'Apple Watch', state: 'Shutdown', isAvailable: true },
+    ],
+  },
+});
+
+test('parseServerMessage parses run_ios commands', () => {
+  const raw = '{"type":"run_ios","id":"c1","payload":{"repoUrl":"https://x","branch":"main","scheme":"App"}}';
+  assert.deepEqual(lib.parseServerMessage(raw), {
+    kind: 'command',
+    id: 'c1',
+    commandType: 'run_ios',
+    payload: { repoUrl: 'https://x', branch: 'main', scheme: 'App' },
+  });
+});
+
+test('parseBootedSimulatorUdid returns the first booted device, null otherwise', () => {
+  assert.equal(lib.parseBootedSimulatorUdid(SIMCTL_JSON), 'SIM-BOOTED');
+  assert.equal(lib.parseBootedSimulatorUdid('{"devices":{}}'), null);
+  assert.equal(lib.parseBootedSimulatorUdid('garbage'), null);
+});
+
+test('parseAvailableIphone skips unavailable devices and non-iOS runtimes', () => {
+  assert.deepEqual(lib.parseAvailableIphone(SIMCTL_JSON), { udid: 'SIM-BOOTED', name: 'iPhone 15' });
+  assert.equal(lib.parseAvailableIphone('{"devices":{}}'), null);
+});
+
+test('isSimulatorUdid distinguishes simulators from physical devices', () => {
+  assert.equal(lib.isSimulatorUdid(SIMCTL_JSON, 'SIM-SHUTDOWN'), true);
+  assert.equal(lib.isSimulatorUdid(SIMCTL_JSON, '00008101-PHYSICAL'), false);
+});
+
+test('xcodegenDir prefers ios/project.yml over the repo root', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'xcodegen-'));
+  fs.writeFileSync(path.join(root, 'project.yml'), 'x');
+  assert.equal(lib.xcodegenDir(root), root);
+  fs.mkdirSync(path.join(root, 'ios'));
+  fs.writeFileSync(path.join(root, 'ios', 'project.yml'), 'x');
+  assert.equal(lib.xcodegenDir(root), path.join(root, 'ios'));
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
+test('xcodegenDir returns null without a project.yml', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'xcodegen-'));
+  assert.equal(lib.xcodegenDir(root), null);
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
+test('findXcodeProject prefers ios/ and workspaces over projects', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'xcode-'));
+  fs.mkdirSync(path.join(root, 'Root.xcodeproj'));
+  fs.mkdirSync(path.join(root, 'ios'));
+  fs.mkdirSync(path.join(root, 'ios', 'App.xcodeproj'));
+  fs.mkdirSync(path.join(root, 'ios', 'App.xcworkspace'));
+  assert.deepEqual(lib.findXcodeProject(root), {
+    flag: '-workspace',
+    path: path.join(root, 'ios', 'App.xcworkspace'),
+    name: 'App',
+  });
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
+test('findXcodeProject falls back to a root project, null when absent', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'xcode-'));
+  fs.mkdirSync(path.join(root, 'App.xcodeproj'));
+  assert.deepEqual(lib.findXcodeProject(root), {
+    flag: '-project',
+    path: path.join(root, 'App.xcodeproj'),
+    name: 'App',
+  });
+  const empty = fs.mkdtempSync(path.join(os.tmpdir(), 'xcode-'));
+  assert.equal(lib.findXcodeProject(empty), null);
+  fs.rmSync(root, { recursive: true, force: true });
+  fs.rmSync(empty, { recursive: true, force: true });
+});
+
+test('findBuiltApp returns the .app from a platform products dir', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dd-'));
+  const products = path.join(root, 'Debug-iphonesimulator');
+  fs.mkdirSync(products, { recursive: true });
+  fs.mkdirSync(path.join(products, 'App.app'));
+  fs.writeFileSync(path.join(products, 'notes.txt'), 'x');
+  assert.equal(lib.findBuiltApp(root), path.join(products, 'App.app'));
+  assert.equal(lib.findBuiltApp(path.join(root, 'missing')), null);
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
+test('xcodebuildArgs builds the invocation', () => {
+  assert.deepEqual(
+    lib.xcodebuildArgs({
+      flag: '-project',
+      projectPath: '/repos/app/ios/App.xcodeproj',
+      scheme: 'App',
+      destination: 'platform=iOS Simulator,id=SIM-1',
+      derivedDataPath: '/repos/app/dd',
+    }),
+    [
+      '-project', '/repos/app/ios/App.xcodeproj',
+      '-scheme', 'App',
+      '-destination', 'platform=iOS Simulator,id=SIM-1',
+      '-derivedDataPath', '/repos/app/dd',
+      'build',
+    ],
+  );
+});

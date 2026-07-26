@@ -26,6 +26,7 @@ const HTTP_READY_TIMEOUT_MS = 30_000;
 const GRADLE_BUILD_TIMEOUT_MS = 30 * 60_000;
 const NPM_INSTALL_TIMEOUT_MS = 15 * 60_000;
 const DESKTOP_START_GRACE_MS = 20_000;
+const XCODE_BUILD_TIMEOUT_MS = 30 * 60_000;
 
 const USAGE = `Lemniscate device agent
 
@@ -203,15 +204,50 @@ async function launchInstallIntent(log, apkPath) {
   return fallback.ok;
 }
 
+/** First adb binary that answers, or null when adb is not installed. */
+async function findAdb() {
+  for (const candidate of lib.adbCandidates()) {
+    const probe = await run(candidate, ['version'], { timeout: 10_000 });
+    if (probe.ok) return candidate;
+  }
+  return null;
+}
+
+/** Serial of the first attached device/emulator, or null when none is online. */
+async function firstAdbDevice(log, adb) {
+  const result = await run(adb, ['devices', '-l'], { timeout: 15_000 });
+  log.text += `$ ${adb} devices -l\n${result.output}`;
+  if (!result.ok) return null;
+  return lib.parseAdbDevices(result.output)[0] ?? null;
+}
+
+/** Local path of the APK to install: the chained build output when given. */
+async function obtainApk(log, config, payload) {
+  if (payload.apkPath) {
+    if (!fs.existsSync(payload.apkPath)) throw new Error(`APK not found at ${payload.apkPath}`);
+    return payload.apkPath;
+  }
+  if (!payload.apkUrl) throw new Error('install_apk needs either apkUrl or apkPath in the payload');
+  const destPath = lib.apkPathFor(payload.apkUrl, payload.appName);
+  const headers = lib.downloadHeaders(config.server, payload.apkUrl, config.deviceToken);
+  await downloadApk(log, payload.apkUrl, destPath, headers);
+  return destPath;
+}
+
 async function executeInstallApk(send, config, { id, payload }) {
   const log = { text: '' };
   send(lib.commandResultMessage(id, 'running'));
   try {
-    const destPath = lib.apkPathFor(payload.apkUrl, payload.appName);
-    const headers = lib.downloadHeaders(config.server, payload.apkUrl, config.deviceToken);
-    await downloadApk(log, payload.apkUrl, destPath, headers);
-    const installIntentLaunched = lib.isTermux() ? await launchInstallIntent(log, destPath) : false;
-    send(lib.commandResultMessage(id, 'done', { savedTo: destPath, installIntentLaunched }));
+    const adb = await findAdb();
+    const device = adb ? await firstAdbDevice(log, adb) : null;
+    const apkPath = await obtainApk(log, config, payload);
+    if (device) {
+      await step(log, adb, ['-s', device, 'install', '-r', apkPath]);
+      send(lib.commandResultMessage(id, 'done', { installedTo: device, apkPath, method: 'adb' }));
+      return;
+    }
+    const installIntentLaunched = lib.isTermux() ? await launchInstallIntent(log, apkPath) : false;
+    send(lib.commandResultMessage(id, 'done', { savedTo: apkPath, installIntentLaunched }));
   } catch (error) {
     send(lib.commandResultMessage(id, 'failed', { error: error.message, log: lib.tailLog(log.text) }));
   }
@@ -343,10 +379,99 @@ async function executeRunDesktop(send, { id, payload }) {
   }
 }
 
+// --- run_ios execution ----------------------------------------------------------
+
+/** Regenerate the Xcode project when the repo ships an xcodegen setup. */
+async function maybeRunXcodegen(log, projectDir) {
+  const dir = lib.xcodegenDir(projectDir);
+  if (!dir) return false;
+  const probe = await run('xcodegen', ['--version'], { timeout: 10_000 });
+  log.text += `$ xcodegen --version\n${probe.output}`;
+  if (!probe.ok) return false;
+  await step(log, 'xcodegen', [], { cwd: dir });
+  return true;
+}
+
+/**
+ * UDID to target: payload.destination wins (simulator or physical device);
+ * otherwise a booted simulator, else boot the first available iPhone sim.
+ * Returns { udid, simulator }.
+ */
+async function resolveIosDestination(log, requested) {
+  const list = await run('xcrun', ['simctl', 'list', 'devices', '-j'], { timeout: 30_000 });
+  if (!list.ok) throw new Error('xcrun simctl failed — is Xcode installed on this device?');
+  if (requested) {
+    return { udid: requested, simulator: lib.isSimulatorUdid(list.output, requested) };
+  }
+  const booted = lib.parseBootedSimulatorUdid(list.output);
+  if (booted) return { udid: booted, simulator: true };
+  const iphone = lib.parseAvailableIphone(list.output);
+  if (!iphone) throw new Error('No booted simulator and no available iPhone simulator found');
+  await step(log, 'xcrun', ['simctl', 'boot', iphone.udid]);
+  log.text += `Booted simulator ${iphone.name} (${iphone.udid})\n`;
+  return { udid: iphone.udid, simulator: true };
+}
+
+/** CFBundleIdentifier of the built app, read from its Info.plist. */
+async function readBundleId(log, appPath) {
+  const plist = path.join(appPath, 'Info.plist');
+  const result = await run('/usr/libexec/PlistBuddy', ['-c', 'Print:CFBundleIdentifier', plist]);
+  log.text += `$ /usr/libexec/PlistBuddy -c Print:CFBundleIdentifier ${plist}\n${result.output}`;
+  const bundleId = result.output.trim();
+  if (!result.ok || !bundleId) throw new Error('Could not read CFBundleIdentifier from the built app');
+  return bundleId;
+}
+
+async function executeRunIos(send, { id, payload }) {
+  const log = { text: '' };
+  const progress = (text) => {
+    log.text += `${text}\n`;
+    send(lib.commandResultMessage(id, 'running', { progress: text }));
+  };
+  send(lib.commandResultMessage(id, 'running'));
+  try {
+    if (process.platform !== 'darwin') {
+      throw new Error('run_ios needs macOS with Xcode — this device is not a Mac');
+    }
+    const projectDir = await ensureRepo(log, payload.repoUrl, payload.branch);
+    progress('Repository ready');
+    if (await maybeRunXcodegen(log, projectDir)) progress('Generated the Xcode project with xcodegen');
+    const project = lib.findXcodeProject(projectDir);
+    if (!project) throw new Error('No .xcodeproj or .xcworkspace found at repo root or one level deep');
+    const scheme = payload.scheme ?? project.name;
+    const { udid, simulator } = await resolveIosDestination(log, payload.destination);
+    progress(`Building scheme ${scheme} for ${simulator ? 'simulator' : 'device'} ${udid}`);
+    const derivedDataPath = path.join(projectDir, 'dd');
+    const buildArgs = lib.xcodebuildArgs({
+      flag: project.flag,
+      projectPath: project.path,
+      scheme,
+      destination: simulator ? `platform=iOS Simulator,id=${udid}` : `id=${udid}`,
+      derivedDataPath,
+    });
+    await step(log, 'xcodebuild', buildArgs, { cwd: projectDir, timeout: XCODE_BUILD_TIMEOUT_MS });
+    const appPath = lib.findBuiltApp(path.join(derivedDataPath, 'Build', 'Products'));
+    if (!appPath) throw new Error('Build succeeded but no .app was found in the derived data products');
+    if (simulator) {
+      await step(log, 'xcrun', ['simctl', 'install', udid, appPath]);
+      const bundleId = await readBundleId(log, appPath);
+      await step(log, 'xcrun', ['simctl', 'launch', udid, bundleId]);
+      send(lib.commandResultMessage(id, 'done', { scheme, simulator: udid, appPath, bundleId, projectDir }));
+      return;
+    }
+    // Physical device: provisioning is on the user, install is best-effort.
+    await step(log, 'xcrun', ['devicectl', 'device', 'install', 'app', '--device', udid, appPath]);
+    send(lib.commandResultMessage(id, 'done', { scheme, device: udid, appPath, projectDir }));
+  } catch (error) {
+    send(lib.commandResultMessage(id, 'failed', { error: error.message, log: lib.tailLog(log.text) }));
+  }
+}
+
 function executeCommand(send, config, command) {
   if (command.commandType === 'install_apk') return executeInstallApk(send, config, command);
   if (command.commandType === 'build_android') return executeBuildAndroid(send, config, command);
   if (command.commandType === 'run_desktop') return executeRunDesktop(send, command);
+  if (command.commandType === 'run_ios') return executeRunIos(send, command);
   return executeRunWeb(send, command);
 }
 
