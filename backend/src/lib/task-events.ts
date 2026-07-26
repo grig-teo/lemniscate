@@ -52,6 +52,72 @@ export async function publishTaskEvent(
     // The DB row is the source of truth; a dropped live update is not fatal.
     console.error(`failed to publish task event to Redis (task ${taskId}):`, err);
   }
+  // Best-effort cap enforcement — non-fatal if it fails.
+  void enforceEventCap(taskId).catch(() => {});
+}
+
+// --- TaskEvent cap enforcement ---
+//
+// TaskEvent rows grow with every agent stdout/stderr line. Without a cap a
+// long-running task can produce tens of thousands of rows, bloating the table
+// and slowing the events replay. The cap keeps at most
+// config.TASK_EVENT_MAX_PER_TASK rows per task: a modulo counter avoids
+// COUNT(*) on every write, and when the cap is exceeded the oldest events are
+// deleted under an advisory lock with a boundary marker.
+
+// Run the COUNT(*) + truncate check on every Nth event for this task, using a
+// Redis INCR counter. Falls back to always-checking when Redis is unavailable
+// so correctness never depends on Redis.
+const CAP_CHECK_EVERY = 64;
+
+function eventCounterKey(taskId: string): string {
+  return `task-event-count:${taskId}`;
+}
+
+async function shouldCheckCap(taskId: string): Promise<boolean> {
+  try {
+    const n = await getPublisher().incr(eventCounterKey(taskId));
+    return n % CAP_CHECK_EVERY === 0;
+  } catch {
+    return true;
+  }
+}
+
+// Counts events for the task and truncates when the cap is exceeded.
+// Exported for direct unit testing.
+export async function enforceEventCap(taskId: string): Promise<void> {
+  if (!(await shouldCheckCap(taskId))) return;
+  const count = await prisma.taskEvent.count({ where: { taskId } });
+  if (count <= config.TASK_EVENT_MAX_PER_TASK) return;
+  await truncateTaskEvents(taskId, config.TASK_EVENT_MAX_PER_TASK);
+}
+
+// Deletes all but the newest `keep` events under a transaction-scoped advisory
+// lock so two concurrent workers cannot both truncate and double-insert the
+// marker. A single 'log' event with { truncated: true } marks the boundary.
+async function truncateTaskEvents(taskId: string, keep: number): Promise<void> {
+  await prisma.$transaction(async (tx) => {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${taskId}))`;
+    const survivors = await tx.taskEvent.findMany({
+      where: { taskId },
+      orderBy: { createdAt: 'desc' },
+      take: keep,
+      select: { id: true },
+    });
+    await tx.taskEvent.deleteMany({
+      where: { taskId, NOT: { id: { in: survivors.map((e) => e.id) } } },
+    });
+    await tx.taskEvent.create({
+      data: {
+        taskId,
+        kind: 'log',
+        payload: {
+          truncated: true,
+          message: 'Earlier events were truncated to bound table growth',
+        } as Prisma.InputJsonValue,
+      },
+    });
+  });
 }
 
 // Updates the task status (plus optional extra columns) and emits the

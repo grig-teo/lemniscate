@@ -77,8 +77,6 @@ function classifyLlmHttpStatus(status: number | undefined, message: string): Tas
 // rethrown exceptions that lost their LlmError wrapper, etc.). Checks the
 // most specific signatures first.
 function classifyByMessage(message: string): TaskErrorCode {
-  const lower = message.toLowerCase();
-
   // Git workflow scope — must be checked before the generic permission
   // denied pattern, because the workflow rejection message also contains
   // "permission" wording.

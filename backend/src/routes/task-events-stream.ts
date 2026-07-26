@@ -17,6 +17,10 @@ import { idParamsSchema } from './task-schemas.js';
 //   diff   → { path: string, diff: string } | { path: string, action: 'created'|'modified'|'deleted' }
 
 const SSE_HEARTBEAT_MS = 15_000;
+// Cap on how many historical events the JSON endpoint and SSE replay return.
+// Keeps payloads bounded for long-running tasks; the TaskEvent cap
+// (config.TASK_EVENT_MAX_PER_TASK) bounds total storage.
+const HISTORY_TAKE = 1_000;
 
 // Task events: full history as JSON when the client asks for it,
 // otherwise a live SSE stream (history replay + pub/sub follow).
@@ -35,21 +39,24 @@ export async function getTaskEvents(request: FastifyRequest, reply: FastifyReply
   if (!wantsSse(request.headers.accept)) {
     const events = await prisma.taskEvent.findMany({
       where: { taskId: task.id },
-      orderBy: { createdAt: 'asc' },
+      orderBy: { createdAt: 'desc' },
+      take: HISTORY_TAKE,
     });
-    return events.map(serializeTaskEvent);
+    return events.reverse().map(serializeTaskEvent);
   }
 
   return streamTaskEvents(request, reply, task.id);
 }
 
 // Replay persisted history first (ascending), then follow live events.
+// Uses desc+take+reverse so the payload is bounded to HISTORY_TAKE rows.
 async function replayHistory(reply: FastifyReply, taskId: string): Promise<void> {
   const history = await prisma.taskEvent.findMany({
     where: { taskId },
-    orderBy: { createdAt: 'asc' },
+    orderBy: { createdAt: 'desc' },
+    take: HISTORY_TAKE,
   });
-  for (const event of history) {
+  for (const event of history.reverse()) {
     reply.raw.write(`data: ${JSON.stringify(serializeTaskEvent(event))}\n\n`);
   }
 }

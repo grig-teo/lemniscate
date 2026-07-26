@@ -2,7 +2,8 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import readline from 'node:readline';
-import { logEvent } from './agent-git.js';
+import { logBatch } from './agent-git.js';
+import { LineBatcher } from './line-batcher.js';
 import { prisma } from './prisma.js';
 import { redactSecrets } from './utils.js';
 
@@ -124,12 +125,13 @@ function streamLines(
   stream: NodeJS.ReadableStream,
   opts: HermesTaskOptions,
   tail: OutputTail,
+  batcher: LineBatcher | null,
 ): void {
   const rl = readline.createInterface({ input: stream, terminal: false });
   rl.on('line', (raw) => {
     const line = redactSecrets(stripAnsi(raw), opts.secrets);
     tail.push(line);
-    if (opts.taskId) void logEvent(opts.taskId, line).catch(() => {});
+    batcher?.push(line);
   });
 }
 
@@ -146,6 +148,11 @@ function waitForHermes(child: ChildProcess, opts: HermesTaskOptions): Promise<vo
   return new Promise((resolve, reject) => {
     const tail = makeOutputTail(OUTPUT_TAIL_CHARS);
     const taskId = opts.taskId;
+    // Coalesce stdout/stderr lines into batched TaskEvent writes (~10× fewer
+    // DB rows). Null when there is no taskId — output only feeds the tail.
+    const batcher = taskId
+      ? new LineBatcher((lines) => logBatch(taskId, lines))
+      : null;
     const cancelPoll = taskId
       ? setInterval(() => {
           void taskIsCancelled(taskId).then((cancelled) => {
@@ -158,6 +165,7 @@ function waitForHermes(child: ChildProcess, opts: HermesTaskOptions): Promise<vo
     const settle = (fn: () => void) => {
       clearTimeout(timer);
       if (cancelPoll) clearInterval(cancelPoll);
+      batcher?.close();
       fn();
     };
     const timer = setTimeout(() => {
@@ -166,8 +174,8 @@ function waitForHermes(child: ChildProcess, opts: HermesTaskOptions): Promise<vo
         reject(timeoutError(opts.timeoutMs));
       });
     }, opts.timeoutMs);
-    if (child.stdout) streamLines(child.stdout, opts, tail);
-    if (child.stderr) streamLines(child.stderr, opts, tail);
+    if (child.stdout) streamLines(child.stdout, opts, tail, batcher);
+    if (child.stderr) streamLines(child.stderr, opts, tail, batcher);
     child.on('error', (err) => {
       settle(() => reject(spawnError(err as NodeJS.ErrnoException)));
     });
@@ -175,7 +183,10 @@ function waitForHermes(child: ChildProcess, opts: HermesTaskOptions): Promise<vo
 // marker check a broken run would look like "no changes produced".
 const INIT_FAILURE_MARKER = 'Failed to initialize agent';
 
-    child.on('close', (code) => {
+    child.on('close', async (code) => {
+      // Drain remaining buffered lines before settling so the console
+      // shows the full output even on early exit.
+      await batcher?.flush();
       if (tail.text().includes(INIT_FAILURE_MARKER)) {
         settle(() => reject(new Error(`hermes agent failed to initialize: ${tail.text()}`)));
         return;

@@ -128,6 +128,10 @@ const envSchema = z.object({
   // Queued+running tasks a single user may have at once; the 6th concurrent
   // create is rejected with 429.
   TASK_MAX_ACTIVE_PER_USER: z.coerce.number().int().positive().default(5),
+  // Maximum TaskEvent rows retained per task. When exceeded, the oldest
+  // events are truncated under an advisory lock with a boundary marker so
+  // the table cannot grow without bound on long-running tasks.
+  TASK_EVENT_MAX_PER_TASK: z.coerce.number().int().positive().default(5_000),
 
   // --- Observability ---
   // Bearer token guarding GET /metrics (Prometheus). Unset = the endpoint
