@@ -19,8 +19,6 @@ import { NotificationsSection } from '@/components/settings/NotificationsSection
 import { RepoFlagsSection } from '@/components/settings/RepoFlagsSection';
 import { UsageSection } from '@/components/settings/UsageSection';
 
-type SettingsTab = 'llm' | 'git' | 'repos' | 'notifications' | 'usage';
-
 /**
  * Settings dialog: LLM configurations, git host connections, and repository
  * automation flags. Opened from the gear button in the top nav.

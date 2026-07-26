@@ -1,10 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import {
-  getErrorBannerInfo,
-  hasActionableError,
-  type TaskErrorCode,
-} from '@/lib/error-codes';
+import { getErrorBannerInfo, hasActionableError } from '@/lib/error-codes';
 
 // Tests for the frontend error-code → user-friendly banner mapping. Every
 // backend TaskErrorCode must map to a non-empty title + hint. The settings
