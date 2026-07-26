@@ -1,0 +1,64 @@
+{
+  "tasks": [
+    {
+      "id": "task_prompt_1",
+      "repositoryId": "repo_1",
+      "kind": "prompt",
+      "title": "Fix the login crash",
+      "prompt": "Investigate and fix the crash on the login screen.",
+      "status": "queued",
+      "branchName": null,
+      "prUrl": null,
+      "llmConfigId": "cfg_1",
+      "thinkingLevel": "medium",
+      "error": null,
+      "createdAt": "2026-07-01T10:00:00.000Z",
+      "updatedAt": "2026-07-01T10:00:00.000Z"
+    },
+    {
+      "id": "task_prompt_2",
+      "repositoryId": "repo_1",
+      "kind": "prompt",
+      "title": "Add dark mode toggle",
+      "prompt": "Add a dark mode toggle in settings.",
+      "status": "running",
+      "branchName": "agent/dark-mode-toggle",
+      "prUrl": null,
+      "llmConfigId": null,
+      "thinkingLevel": null,
+      "error": null,
+      "createdAt": "2026-07-01T11:00:00.000Z",
+      "updatedAt": "2026-07-01T11:05:00.000Z"
+    },
+    {
+      "id": "task_proposal_1",
+      "repositoryId": "repo_2",
+      "kind": "proposal",
+      "title": "Harden token storage",
+      "prompt": null,
+      "status": "done",
+      "branchName": "agent/harden-token-storage",
+      "prUrl": "https://github.com/example/app/pull/42",
+      "llmConfigId": "cfg_1",
+      "thinkingLevel": null,
+      "error": null,
+      "createdAt": "2026-07-02T09:00:00.000Z",
+      "updatedAt": "2026-07-02T09:30:00.000Z"
+    },
+    {
+      "id": "task_proposal_2",
+      "repositoryId": "repo_2",
+      "kind": "proposal",
+      "title": "Add retry to API client",
+      "prompt": null,
+      "status": "failed",
+      "branchName": null,
+      "prUrl": null,
+      "llmConfigId": null,
+      "thinkingLevel": "low",
+      "error": "agent exited with code 1",
+      "createdAt": "2026-07-03T08:00:00.000Z",
+      "updatedAt": "2026-07-03T08:10:00.000Z"
+    }
+  ]
+}

@@ -114,11 +114,16 @@ docs/                 # design specs
 
 - Backend: `cd backend && npm run build && npm test` (tsc strict, vitest)
 - Frontend: `cd frontend && npm run build` (tsc --noEmit + vite build)
-- Android: `cd android && ./gradlew assembleDebug lint` (CI: path-filtered job on
-  `android/**`, lint currently non-blocking)
+- Android: `cd android && ./gradlew testDebugUnitTest lint assembleDebug` (CI:
+  path-filtered job on `android/**`; lint is blocking — pre-existing findings
+  live in `android/app/lint-baseline.xml`, new findings fail the build)
 - iOS: `cd ios && xcodegen && xcodebuild -project Lemniscate.xcodeproj -scheme
-  Lemniscate -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO
-  build` (CI: path-filtered job on `ios/**`, macos runner)
+  Lemniscate -destination 'platform=iOS Simulator,name=<any iPhone>'
+  CODE_SIGNING_ALLOWED=NO test` (CI: path-filtered job on `ios/**`, macos
+  runner; CI picks the simulator from `-showdestinations`)
+- Mobile contract fixtures: `tests/contract/*.json` are decoded by both apps'
+  test suites (`ContractFixturesTest.kt` / `ContractFixturesTests.swift`);
+  backend payload-shape changes must update fixtures + DTOs in the same PR
 - Full stack: `docker compose up --build` → `/health/ready` on :3000 (deep check:
   Postgres `SELECT 1` + Redis `PING`, 503 on failure; `/health` stays a static
   liveness probe), worker liveness with queue counts on :3100/health, SPA on :8080

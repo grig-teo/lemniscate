@@ -11,10 +11,14 @@ import kotlinx.coroutines.launch
 import space.grigteo.lemniscate.LemniscateApp
 import space.grigteo.lemniscate.core.Providers
 import space.grigteo.lemniscate.core.api.ConnectionPayload
+import space.grigteo.lemniscate.core.api.LemniscateApi
 import space.grigteo.lemniscate.core.api.friendlyMessage
 
 /** Handles token-based provider login; OAuth logins report through [completeOAuth]. */
-class AuthViewModel(private val app: LemniscateApp) : ViewModel() {
+class AuthViewModel(
+    private val api: LemniscateApi,
+    private val setSessionToken: (String?) -> Unit,
+) : ViewModel() {
 
     var busy by mutableStateOf(false)
         private set
@@ -23,7 +27,7 @@ class AuthViewModel(private val app: LemniscateApp) : ViewModel() {
 
     /** Store the session cookie harvested from the OAuth WebView. */
     fun completeOAuth(token: String, onLoggedIn: () -> Unit) {
-        app.cookieJar.setToken(token)
+        setSessionToken(token)
         onLoggedIn()
     }
 
@@ -34,7 +38,7 @@ class AuthViewModel(private val app: LemniscateApp) : ViewModel() {
         error = null
         viewModelScope.launch {
             try {
-                app.api.connect(ConnectionPayload(provider, token.trim(), baseUrl?.trim()?.ifBlank { null }))
+                api.connect(ConnectionPayload(provider, token.trim(), baseUrl?.trim()?.ifBlank { null }))
                 onLoggedIn()
             } catch (e: Exception) {
                 error = e.friendlyMessage()
@@ -48,7 +52,7 @@ class AuthViewModel(private val app: LemniscateApp) : ViewModel() {
         val DEFAULT_GITVERSE_URL = "https://gitverse.ru"
 
         fun factory(app: LemniscateApp) = viewModelFactory {
-            initializer { AuthViewModel(app) }
+            initializer { AuthViewModel(app.api, app.cookieJar::setToken) }
         }
     }
 }

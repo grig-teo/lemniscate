@@ -36,6 +36,23 @@ xcodebuild -project ios/Lemniscate.xcodeproj -scheme Lemniscate \
   -destination 'generic/platform=iOS Simulator' build
 ```
 
+## Testing
+
+The `LemniscateTests` XCTest target (declared in `project.yml`, so re-run
+`xcodegen` after pulling this change) covers endpoint URL construction,
+LLM-config form validation, the auth/main/repo-picker view models against a
+stubbed `APIClienting`, and the shared API-contract fixtures in
+`tests/contract/` (mirrored by the Android contract tests).
+
+```sh
+xcodebuild -project ios/Lemniscate.xcodeproj -scheme Lemniscate \
+  -destination 'platform=iOS Simulator,name=iPhone 16' \
+  CODE_SIGNING_ALLOWED=NO test
+```
+
+View models take `api: any APIClienting = APIClient.shared`; tests inject a
+`StubAPIClient` (see `LemniscateTests/TestSupport.swift`).
+
 ## Notes
 
 - Sign-in: GitHub/GitLab use OAuth in a WebView sheet (the session cookie is
