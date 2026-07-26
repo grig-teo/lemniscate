@@ -41,10 +41,17 @@ RUN apk add --no-cache git openssl bash curl xz ripgrep tar docker-cli \
 # Cleanup: browser-tool node_modules are unused with --skip-browser; the
 # installer caches and root's seeded data dir are dead weight for the app user.
 ARG HERMES_COMMIT=d48d6fadff6a2135110925a807a9d076c7ae958c
-RUN curl -fsSL https://hermes-agent.nousresearch.com/install.sh \
-  | bash -s -- --skip-browser --skip-setup --commit "$HERMES_COMMIT" \
-  && rm -rf /usr/local/lib/hermes-agent/node_modules \
-    /root/.cache /root/.hermes
+# e2e builds set SKIP_HERMES_INSTALL=1: the smoke suite uses the 'internal'
+# executor, and skipping the network-fetched installer keeps the e2e image
+# build fast and independent of external availability. Production builds
+# leave it unset.
+ARG SKIP_HERMES_INSTALL=""
+RUN if [ "$SKIP_HERMES_INSTALL" != "1" ]; then \
+      curl -fsSL https://hermes-agent.nousresearch.com/install.sh \
+        | bash -s -- --skip-browser --skip-setup --commit "$HERMES_COMMIT" \
+      && rm -rf /usr/local/lib/hermes-agent/node_modules \
+        /root/.cache /root/.hermes; \
+    fi
 COPY --from=build --chown=app:app /app/node_modules ./node_modules
 COPY --from=build --chown=app:app /app/dist ./dist
 COPY --from=build --chown=app:app /app/package.json ./package.json

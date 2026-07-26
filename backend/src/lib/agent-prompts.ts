@@ -25,7 +25,10 @@ const llmChangeSchema = z.object({
   action: z.enum(['create', 'modify', 'delete']),
   content: z.string().optional(),
 });
-const llmChangesResponseSchema = z.object({
+// Exported (only) so the e2e stub-LLM fixture can be validated against the
+// exact contract the agent loop parses — see tests/e2e-stub-llm-fixture.test.ts
+// and tests/e2e/gitstub/llm-fixture.json.
+export const llmChangesResponseSchema = z.object({
   summary: z.string().min(1).max(4_000),
   changes: z.array(llmChangeSchema).max(100),
 });
