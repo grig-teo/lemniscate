@@ -130,23 +130,69 @@ async function githubOpenPullRequest(
 
 const githubCombinedStatusSchema = z.object({ state: z.string(), total_count: z.number() });
 
-// Combined commit status of the PR head. A commit with zero checks cannot be
-// blocked by checks, so total_count 0 counts as green.
+const githubCheckRunsSchema = z.object({
+  check_runs: z.array(z.object({ status: z.string(), conclusion: z.string().nullable() })),
+});
+
+export interface GitHubCombinedStatus {
+  state: string;
+  total_count: number;
+}
+
+export interface GitHubCheckRun {
+  status: string;
+  conclusion: string | null;
+}
+
+// Conclusions that do not block a merge (GitHub Actions docs).
+const CHECK_RUN_OK_CONCLUSIONS = new Set(['success', 'neutral', 'skipped']);
+
+function checkRunOutcome(run: GitHubCheckRun): 'pending' | 'failing' | 'ok' {
+  if (run.status !== 'completed') return 'pending';
+  return CHECK_RUN_OK_CONCLUSIONS.has(run.conclusion ?? '') ? 'ok' : 'failing';
+}
+
+// Gate signal = commit statuses (external CI) AND check runs (GitHub
+// Actions). The combined-status endpoint alone never sees Actions runs —
+// on an Actions-only repo it reports total_count 0, which must NOT read as
+// green on its own. Failing beats pending beats green across both signals.
+export function githubChecksState(
+  combined: GitHubCombinedStatus,
+  checkRuns: GitHubCheckRun[],
+): PrChecksStatus['state'] {
+  const outcomes = checkRuns.map(checkRunOutcome);
+  if (outcomes.includes('failing')) return 'failing';
+  if (combined.total_count > 0 && combined.state !== 'success' && combined.state !== 'pending') {
+    return 'failing';
+  }
+  if (outcomes.includes('pending')) return 'pending';
+  if (combined.total_count > 0 && combined.state === 'pending') return 'pending';
+  return 'green';
+}
+
+// CI state of the PR head: commit statuses (external CI) plus check runs
+// (GitHub Actions — the only signal Actions produces). filter=latest so a
+// re-run supersedes its earlier failed attempt.
 async function githubChecksStatus(
   token: string,
   input: PullRequestRefInput,
 ): Promise<PrChecksStatus> {
-  const url =
-    `${GITHUB_API}/repos/${encodeRepoPath(input.repoFullName)}` +
-    `/commits/${encodeURIComponent(input.headBranch)}/status`;
-  const { body } = await apiRequest('github', 'GET', url, githubHeaders(token), token);
-  const status = githubCombinedStatusSchema.parse(body);
-  const state: PrChecksStatus['state'] =
-    status.total_count === 0 || status.state === 'success'
-      ? 'green'
-      : status.state === 'pending'
-        ? 'pending'
-        : 'failing';
+  const repoPath = encodeRepoPath(input.repoFullName);
+  const ref = encodeURIComponent(input.headBranch);
+  const headers = githubHeaders(token);
+  const [statusRes, runsRes] = await Promise.all([
+    apiRequest('github', 'GET', `${GITHUB_API}/repos/${repoPath}/commits/${ref}/status`, headers, token),
+    apiRequest(
+      'github',
+      'GET',
+      `${GITHUB_API}/repos/${repoPath}/commits/${ref}/check-runs?filter=latest&per_page=100`,
+      headers,
+      token,
+    ),
+  ]);
+  const combined = githubCombinedStatusSchema.parse(statusRes.body);
+  const { check_runs } = githubCheckRunsSchema.parse(runsRes.body);
+  const state = githubChecksState(combined, check_runs);
   return { supported: true, green: state === 'green', state };
 }
 

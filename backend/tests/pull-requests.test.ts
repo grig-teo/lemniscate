@@ -416,31 +416,60 @@ const gitlabConnection = {
 };
 
 describe('pullRequestChecksStatus', () => {
-  it('github: green when the combined commit status is success', async () => {
+  // GitHub CI signal = combined commit status AND check runs (GitHub
+  // Actions reports only to check runs — see tests/pr-github.test.ts).
+  const githubStatusUrl =
+    'https://api.github.com/repos/ivan/repo/commits/lemniscate%2Ft-1/status';
+  const githubCheckRunsUrl =
+    'https://api.github.com/repos/ivan/repo/commits/lemniscate%2Ft-1/check-runs?filter=latest&per_page=100';
+
+  function stubGithubChecks(combined: unknown, checkRuns: unknown[] = []) {
     stubFetch((url) => {
-      expect(url).toBe(
-        'https://api.github.com/repos/ivan/repo/commits/lemniscate%2Ft-1/status',
-      );
-      return mockResponse(200, { state: 'success', total_count: 2 });
+      if (url === githubStatusUrl) return mockResponse(200, combined);
+      expect(url).toBe(githubCheckRunsUrl);
+      return mockResponse(200, { total_count: checkRuns.length, check_runs: checkRuns });
     });
+  }
+
+  it('github: green when the combined commit status is success', async () => {
+    stubGithubChecks({ state: 'success', total_count: 2 });
     const status = await pullRequestChecksStatus(ghConnection, gvRef);
     expect(status).toEqual({ supported: true, green: true, state: 'green' });
   });
 
   it('github: green when the commit has no checks at all', async () => {
-    stubFetch(() => mockResponse(200, { state: 'pending', total_count: 0 }));
+    stubGithubChecks({ state: 'pending', total_count: 0 });
     const status = await pullRequestChecksStatus(ghConnection, gvRef);
     expect(status).toEqual({ supported: true, green: true, state: 'green' });
   });
 
   it('github: failing when checks failed', async () => {
-    stubFetch(() => mockResponse(200, { state: 'failure', total_count: 3 }));
+    stubGithubChecks({ state: 'failure', total_count: 3 });
     const status = await pullRequestChecksStatus(ghConnection, gvRef);
     expect(status).toEqual({ supported: true, green: false, state: 'failing' });
   });
 
   it('github: pending while checks are still running', async () => {
-    stubFetch(() => mockResponse(200, { state: 'pending', total_count: 2 }));
+    stubGithubChecks({ state: 'pending', total_count: 2 });
+    const status = await pullRequestChecksStatus(ghConnection, gvRef);
+    expect(status).toEqual({ supported: true, green: false, state: 'pending' });
+  });
+
+  it('github: failing when an Actions check run failed despite zero commit statuses', async () => {
+    // The live-observed regression: Actions-only repo reports total_count 0
+    // on the status endpoint — the gate merged red PRs as "green".
+    stubGithubChecks({ state: 'pending', total_count: 0 }, [
+      { status: 'completed', conclusion: 'success' },
+      { status: 'completed', conclusion: 'failure' },
+    ]);
+    const status = await pullRequestChecksStatus(ghConnection, gvRef);
+    expect(status).toEqual({ supported: true, green: false, state: 'failing' });
+  });
+
+  it('github: pending while an Actions check run is still in progress', async () => {
+    stubGithubChecks({ state: 'pending', total_count: 0 }, [
+      { status: 'in_progress', conclusion: null },
+    ]);
     const status = await pullRequestChecksStatus(ghConnection, gvRef);
     expect(status).toEqual({ supported: true, green: false, state: 'pending' });
   });
