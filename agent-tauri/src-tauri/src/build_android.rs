@@ -68,9 +68,10 @@ async fn build_apk_in_docker(
     let image = payload.get("image").and_then(Value::as_str).unwrap_or(DEFAULT_IMAGE);
     let module = payload.get("gradleModule").and_then(Value::as_str).unwrap_or(DEFAULT_MODULE);
     let task = payload.get("gradleTask").and_then(Value::as_str).unwrap_or(DEFAULT_TASK);
+    let docker = exec::require_docker().await?;
     let args = gradle_docker_args(project_dir, image, module, task);
     let refs: Vec<&str> = args.iter().map(String::as_str).collect();
-    ctx.step("docker", &refs, None, GRADLE_BUILD_TIMEOUT).await?;
+    ctx.step(&docker, &refs, None, GRADLE_BUILD_TIMEOUT).await?;
     Ok(())
 }
 

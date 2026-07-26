@@ -7,7 +7,7 @@ use sha2::{Digest, Sha256};
 
 use crate::capabilities::Capabilities;
 
-pub const AGENT_VERSION: &str = "0.2.1";
+pub const AGENT_VERSION: &str = "0.2.2";
 
 /// Server close code meaning "device token rejected — pair again".
 pub const CLOSE_CODE_RE_PAIR: u16 = 4001;

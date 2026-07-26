@@ -9,7 +9,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 
-export const AGENT_VERSION = '0.4.2';
+export const AGENT_VERSION = '0.4.3';
 
 /** install_apk downloads are refused beyond this size. */
 export const APK_MAX_BYTES = 100 * 1024 * 1024;
@@ -271,6 +271,20 @@ export function emulatorCandidates(env = process.env, home = os.homedir()) {
   if (env.ANDROID_HOME) candidates.push(path.join(env.ANDROID_HOME, 'emulator', 'emulator'));
   candidates.push(path.join(home, 'Library', 'Android', 'sdk', 'emulator', 'emulator'));
   return candidates;
+}
+
+/**
+ * Candidate docker binaries: PATH first, then the standard install locations.
+ * GUI-launched agents (Tauri app from Finder) get a minimal PATH without
+ * /usr/local/bin or homebrew, so bare 'docker' is often ENOENT there.
+ */
+export function dockerCandidates(platform = process.platform) {
+  if (platform === 'darwin') return ['docker', '/usr/local/bin/docker', '/opt/homebrew/bin/docker'];
+  if (platform === 'linux') return ['docker', '/usr/bin/docker', '/usr/local/bin/docker', '/snap/bin/docker'];
+  if (platform === 'win32') {
+    return ['docker', 'C:\\Program Files\\Docker\\Docker\\resources\\bin\\docker.exe'];
+  }
+  return ['docker'];
 }
 
 // --- build_android helpers ----------------------------------------------------

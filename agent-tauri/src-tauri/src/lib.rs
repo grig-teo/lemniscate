@@ -22,7 +22,6 @@ use tauri::menu::{Menu, MenuItem};
 use tauri::tray::TrayIconBuilder;
 use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
-use tokio::process::Command;
 
 use config::Config;
 use protocol::Meta;
@@ -256,11 +255,10 @@ fn node_arch() -> &'static str {
 
 async fn docker_available() -> bool {
     // Docker Desktop can wedge — never let the probe hang the pairing flow.
-    let probe = Command::new("docker").arg("info").output();
-    match tokio::time::timeout(std::time::Duration::from_secs(5), probe).await {
-        Ok(Ok(output)) => output.status.success(),
-        _ => false,
-    }
+    tokio::time::timeout(std::time::Duration::from_secs(5), exec::find_docker())
+        .await
+        .map(|found| found.is_some())
+        .unwrap_or(false)
 }
 
 // --- entry -------------------------------------------------------------------------

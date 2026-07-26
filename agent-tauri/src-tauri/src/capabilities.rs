@@ -70,7 +70,7 @@ pub async fn collect() -> Capabilities {
 }
 
 async fn docker_available() -> bool {
-    exec::run_capture("docker", &["info"], None, PROBE_TIMEOUT).await.ok
+    exec::find_docker().await.is_some()
 }
 
 async fn probe_adb_devices() -> Vec<AndroidDevice> {

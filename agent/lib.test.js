@@ -632,3 +632,13 @@ test('xcodebuildArgs builds the invocation', () => {
     ],
   );
 });
+
+test('dockerCandidates puts PATH docker first, then per-OS fallbacks', () => {
+  assert.equal(lib.dockerCandidates('darwin')[0], 'docker');
+  assert.ok(lib.dockerCandidates('darwin').includes('/usr/local/bin/docker'));
+  assert.ok(lib.dockerCandidates('darwin').includes('/opt/homebrew/bin/docker'));
+  assert.ok(lib.dockerCandidates('linux').includes('/usr/bin/docker'));
+  assert.ok(lib.dockerCandidates('linux').includes('/snap/bin/docker'));
+  assert.ok(lib.dockerCandidates('win32').some((c) => c.includes('Docker\\Docker\\resources')));
+  assert.deepEqual(lib.dockerCandidates('freebsd'), ['docker']);
+});

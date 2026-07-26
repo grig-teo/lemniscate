@@ -81,8 +81,30 @@ async function step(log, command, args, options) {
   if (!result.ok) throw new Error(`${command} ${args[0] ?? ''} failed (exit ${result.error?.code ?? '?'})`);
 }
 
+/** First docker binary that answers `docker info`, cached for the process. */
+let resolvedDocker = null;
+
+async function findDocker() {
+  if (resolvedDocker) return resolvedDocker;
+  for (const candidate of lib.dockerCandidates()) {
+    const result = await run(candidate, ['info'], { timeout: 5_000 });
+    if (result.ok) {
+      resolvedDocker = candidate;
+      return candidate;
+    }
+  }
+  return null;
+}
+
+/** Resolved docker binary or a hard failure for commands that need it. */
+async function requireDocker() {
+  const docker = await findDocker();
+  if (!docker) throw new Error('Docker not found or not running — start Docker on this device');
+  return docker;
+}
+
 async function dockerAvailable() {
-  return (await run('docker', ['info'], { timeout: 5_000 })).ok;
+  return (await findDocker()) !== null;
 }
 
 // --- capabilities probes (all best-effort: a missing tool → an empty list) -------
@@ -172,14 +194,16 @@ async function ensureRepo(log, repoUrl, branch) {
 }
 
 async function runWithCompose(log, projectDir, composeFile) {
-  await step(log, 'docker', ['compose', '-f', composeFile, 'up', '-d', '--build'], { cwd: projectDir });
+  const docker = await requireDocker();
+  await step(log, docker, ['compose', '-f', composeFile, 'up', '-d', '--build'], { cwd: projectDir });
 }
 
 async function runWithDockerfile(log, projectDir, port) {
+  const docker = await requireDocker();
   const tag = `lemniscate-${path.basename(projectDir)}`.slice(0, 60);
-  await step(log, 'docker', ['build', '-t', tag, '.'], { cwd: projectDir });
-  await run('docker', ['rm', '-f', tag]); // best-effort replace of a previous run
-  await step(log, 'docker', ['run', '-d', '--name', tag, '-p', `${port}:${port}`, tag]);
+  await step(log, docker, ['build', '-t', tag, '.'], { cwd: projectDir });
+  await run(docker, ['rm', '-f', tag]); // best-effort replace of a previous run
+  await step(log, docker, ['run', '-d', '--name', tag, '-p', `${port}:${port}`, tag]);
 }
 
 /** Poll until the app answers HTTP (any status counts) or the timeout hits. */
@@ -314,13 +338,14 @@ async function ensureGradlewExecutable(log, projectDir) {
 
 /** Run the gradle build inside the android build box image. */
 async function buildApkInDocker(log, projectDir, payload) {
+  const docker = await requireDocker();
   const args = lib.gradleDockerArgs({
     repoDir: projectDir,
     image: payload.image ?? 'mingc/android-build-box:1.29.0',
     gradleModule: payload.gradleModule ?? 'app',
     gradleTask: payload.gradleTask ?? 'assembleDebug',
   });
-  await step(log, 'docker', args, { timeout: GRADLE_BUILD_TIMEOUT_MS });
+  await step(log, docker, args, { timeout: GRADLE_BUILD_TIMEOUT_MS });
 }
 
 /** POST the APK to the server, authenticated with this device's own token. */

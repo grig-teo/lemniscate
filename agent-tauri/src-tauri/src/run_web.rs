@@ -76,26 +76,27 @@ async fn run_strategy(
     project_dir: &Path,
     port: u16,
 ) -> Result<(), String> {
+    let docker = exec::require_docker().await?;
     match strategy {
         RunStrategy::Compose(file) => {
-            ctx.step("docker", &["compose", "-f", file, "up", "-d", "--build"], Some(project_dir), DEFAULT_CMD_TIMEOUT).await?;
+            ctx.step(&docker, &["compose", "-f", file, "up", "-d", "--build"], Some(project_dir), DEFAULT_CMD_TIMEOUT).await?;
         }
-        RunStrategy::Dockerfile => run_with_dockerfile(ctx, project_dir, port).await?,
+        RunStrategy::Dockerfile => run_with_dockerfile(ctx, &docker, project_dir, port).await?,
     }
     Ok(())
 }
 
-async fn run_with_dockerfile(ctx: &mut CommandContext, project_dir: &Path, port: u16) -> Result<(), String> {
+async fn run_with_dockerfile(ctx: &mut CommandContext, docker: &str, project_dir: &Path, port: u16) -> Result<(), String> {
     let name = project_dir
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_else(|| "repo".to_string());
     let tag: String = format!("lemniscate-{name}").chars().take(60).collect();
-    ctx.step("docker", &["build", "-t", &tag, "."], Some(project_dir), DEFAULT_CMD_TIMEOUT).await?;
+    ctx.step(docker, &["build", "-t", &tag, "."], Some(project_dir), DEFAULT_CMD_TIMEOUT).await?;
     // Best-effort replace of a previous run.
-    let _ = exec::run_capture("docker", &["rm", "-f", &tag], None, DEFAULT_CMD_TIMEOUT).await;
+    let _ = exec::run_capture(docker, &["rm", "-f", &tag], None, DEFAULT_CMD_TIMEOUT).await;
     let mapping = format!("{port}:{port}");
-    ctx.step("docker", &["run", "-d", "--name", &tag, "-p", &mapping, &tag], Some(project_dir), DEFAULT_CMD_TIMEOUT).await?;
+    ctx.step(docker, &["run", "-d", "--name", &tag, "-p", &mapping, &tag], Some(project_dir), DEFAULT_CMD_TIMEOUT).await?;
     Ok(())
 }
 

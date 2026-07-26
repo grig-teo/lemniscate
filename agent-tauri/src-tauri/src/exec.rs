@@ -225,3 +225,62 @@ mod tests {
         assert_eq!(required_str(&json!({"branch": "main"}), "branch", "run_ios").unwrap(), "main");
     }
 }
+
+// --- docker binary resolution ---------------------------------------------------
+
+use std::sync::OnceLock;
+
+static DOCKER_PATH: OnceLock<Option<String>> = OnceLock::new();
+
+/// Candidate docker binaries: PATH first, then the standard install
+/// locations. GUI-launched agents get a minimal PATH without /usr/local/bin
+/// or homebrew, so bare "docker" is often ENOENT there.
+pub fn docker_candidates() -> Vec<&'static str> {
+    if cfg!(target_os = "macos") {
+        vec!["docker", "/usr/local/bin/docker", "/opt/homebrew/bin/docker"]
+    } else if cfg!(target_os = "linux") {
+        vec!["docker", "/usr/bin/docker", "/usr/local/bin/docker", "/snap/bin/docker"]
+    } else if cfg!(target_os = "windows") {
+        vec!["docker", "C:\\Program Files\\Docker\\Docker\\resources\\bin\\docker.exe"]
+    } else {
+        vec!["docker"]
+    }
+}
+
+/// First docker binary that answers `docker info`; cached for the process.
+pub async fn find_docker() -> Option<String> {
+    if let Some(cached) = DOCKER_PATH.get() {
+        return cached.clone();
+    }
+    for candidate in docker_candidates() {
+        if run_capture(candidate, &["info"], None, Duration::from_secs(5)).await.ok {
+            let found = Some(candidate.to_string());
+            let _ = DOCKER_PATH.set(found.clone());
+            return found;
+        }
+    }
+    let _ = DOCKER_PATH.set(None);
+    None
+}
+
+/// Resolved docker binary, or an error for commands that need it.
+pub async fn require_docker() -> Result<String, String> {
+    find_docker()
+        .await
+        .ok_or_else(|| "Docker not found or not running — start Docker on this device".to_string())
+}
+
+#[cfg(test)]
+mod docker_tests {
+    use super::*;
+
+    #[test]
+    fn docker_candidates_starts_with_path_docker() {
+        let candidates = docker_candidates();
+        assert_eq!(candidates[0], "docker");
+        if cfg!(target_os = "macos") {
+            assert!(candidates.contains(&"/usr/local/bin/docker"));
+            assert!(candidates.contains(&"/opt/homebrew/bin/docker"));
+        }
+    }
+}
