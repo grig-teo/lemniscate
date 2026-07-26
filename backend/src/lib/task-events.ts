@@ -63,45 +63,57 @@ export async function publishTaskEvent(
 const TRUNCATION_MARKER_LINE = '— earlier output truncated —';
 
 // Deletes events beyond TASK_EVENT_MAX_PER_TASK, keeping only the newest K.
-// When rows are pruned, ensures a single truncation marker survives.
+// Uses id-based deletion (not timestamp comparison) so events sharing the
+// boundary timestamp are correctly pruned — the survivor count is exactly K
+// regardless of ties. When rows are pruned, ensures a single truncation marker.
 async function enforceEventCap(taskId: string): Promise<void> {
   const count = await prisma.taskEvent.count({ where: { taskId } });
   if (count <= config.TASK_EVENT_MAX_PER_TASK) return;
 
-  const boundary = await prisma.taskEvent.findFirst({
-    where: { taskId },
-    orderBy: { createdAt: 'desc' },
-    skip: config.TASK_EVENT_MAX_PER_TASK - 1,
-    select: { createdAt: true },
-  });
-  if (!boundary) return;
-
+  const survivors = await newestSurvivorIds(taskId);
   const deleted = await prisma.taskEvent.deleteMany({
-    where: { taskId, createdAt: { lt: boundary.createdAt } },
+    where: { taskId, id: { notIn: survivors } },
   });
   if (deleted.count > 0) await ensureTruncationMarker(taskId);
 }
 
-// Creates the truncation marker only if one does not already exist for the
-// task, then publishes it so live console subscribers see it immediately.
-async function ensureTruncationMarker(taskId: string): Promise<void> {
-  const existing = await prisma.taskEvent.findFirst({
-    where: {
-      taskId,
-      kind: 'log',
-      payload: { path: ['line'], equals: TRUNCATION_MARKER_LINE },
-    },
+// Ids of the K newest events for a task. Ordered by createdAt desc then id
+// desc so timestamp ties are broken deterministically.
+async function newestSurvivorIds(taskId: string): Promise<string[]> {
+  const events = await prisma.taskEvent.findMany({
+    where: { taskId },
+    orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+    take: config.TASK_EVENT_MAX_PER_TASK,
     select: { id: true },
   });
-  if (existing) return;
+  return events.map((e) => e.id);
+}
 
-  const marker = await prisma.taskEvent.create({
-    data: {
-      taskId,
-      kind: 'log',
-      payload: { line: TRUNCATION_MARKER_LINE } as Prisma.InputJsonValue,
-    },
+// Creates the truncation marker only if one does not already exist for the
+// task. The check-and-create runs inside a transaction with a per-task
+// advisory lock so two concurrent publishTaskEvent calls (e.g. stdout and
+// stderr batchers flushing near-simultaneously) cannot both insert a marker.
+async function ensureTruncationMarker(taskId: string): Promise<void> {
+  const marker = await prisma.$transaction(async (tx) => {
+    await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtext(${taskId}))`;
+    const existing = await tx.taskEvent.findFirst({
+      where: {
+        taskId,
+        kind: 'log',
+        payload: { path: ['line'], equals: TRUNCATION_MARKER_LINE },
+      },
+      select: { id: true },
+    });
+    if (existing) return null;
+    return tx.taskEvent.create({
+      data: {
+        taskId,
+        kind: 'log',
+        payload: { line: TRUNCATION_MARKER_LINE } as Prisma.InputJsonValue,
+      },
+    });
   });
+  if (!marker) return;
   try {
     await getPublisher().publish(
       `task-events:${taskId}`,
