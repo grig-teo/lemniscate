@@ -63,6 +63,11 @@ function makeOpts(overrides: Partial<HermesTaskOptions> = {}): HermesTaskOptions
 
 // Ends both streams, waits for the line handlers to flush, then emits close.
 async function closeWith(child: FakeChild, code: number): Promise<void> {
+  // Wait until the runner has spawned: it writes HERMES_HOME (async fs)
+  // before attaching its close/error listeners, and under CI/parallel load
+  // that can outlast the flush delay below — a 'close' emitted before the
+  // listener exists is lost and the test hangs until timeout.
+  await vi.waitFor(() => expect(mocks.spawn).toHaveBeenCalled());
   child.stdout.end();
   child.stderr.end();
   await new Promise((resolve) => setTimeout(resolve, 10));
@@ -321,5 +326,17 @@ describe('runHermesTask cancellation', () => {
     );
     expect(err?.message).toBe('cancelled by user');
     expect(child.kill).toHaveBeenCalledWith('SIGKILL');
+  });
+
+  it('keeps running when the cancel check itself throws synchronously', async () => {
+    const child = fakeChild();
+    mocks.spawn.mockReturnValue(child);
+    // A cleared/broken mock returns undefined, making findUnique().catch throw
+    // synchronously inside the poll tick; the runner must swallow that.
+    mocks.taskFindUnique.mockReturnValue(undefined);
+    const promise = runHermesTask(makeOpts({ pollMs: 20 }));
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    await closeWith(child, 0);
+    await expect(promise).resolves.toBeUndefined();
   });
 });
