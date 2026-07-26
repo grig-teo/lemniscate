@@ -54,6 +54,16 @@ docker compose up --build
 - Frontend: http://localhost:8080
 - Backend API: http://localhost:3000
 
+## Backups
+
+All product state lives in the `pgdata` and `miniodata` volumes plus your
+`.env` files. `scripts/backup.sh` dumps Postgres, mirrors every MinIO bucket
+and tars the env files into `./backups/` (14 daily + 4 weekly retention);
+`docker compose --profile backup up -d` runs it daily with no host
+dependencies. `scripts/restore.sh` restores a chosen backup and verifies
+`/health/ready`. Full runbook, off-host copy one-liners and the tested
+restore drill: [docs/backups.md](docs/backups.md).
+
 ## Health checks and monitoring
 
 The API splits liveness from readiness:

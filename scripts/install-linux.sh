@@ -196,4 +196,9 @@ cat <<EOF
       http://localhost:3000/health/ready   # 200 = serving, 503 = a dependency is down
     (/health is a dependency-free liveness probe; /health/ready verifies
     Postgres and Redis and reports per-check status as JSON.)
+
+    Backups (see docs/backups.md):
+      ./scripts/backup.sh                        # one-shot: pg dump + MinIO mirror + .env tarball
+      $COMPOSE --profile backup up -d            # daily automated backups
+      ./scripts/restore.sh latest                # restore (tested drill in docs/backups.md)
 EOF
