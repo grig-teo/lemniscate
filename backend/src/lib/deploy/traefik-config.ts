@@ -1,4 +1,4 @@
-import { servicePath } from './slug.js';
+import { servicePath, slugify } from './slug.js';
 
 // Builds the Traefik dynamic configuration served at
 // /api/internal/traefik/dynamic (HTTP provider). Pure and unit-tested
@@ -8,6 +8,10 @@ import { servicePath } from './slug.js';
 // the whole blue-green mechanism: the worker flips Service.activeContainer
 // after the new container passes its health check, and Traefik picks the
 // change up on the next poll (~5s).
+//
+// Each owner with at least one live service also gets an index router at
+// /<owner>/ pointing at the backend's apps-index page. Service rules are
+// longer, so Traefik's default rule-length priority keeps them winning.
 
 export interface TraefikServiceInput {
   ownerUsername: string;
@@ -24,13 +28,18 @@ export interface TraefikDynamicConfig {
   };
 }
 
-export function buildTraefikConfig(services: TraefikServiceInput[]): TraefikDynamicConfig {
+export function buildTraefikConfig(
+  services: TraefikServiceInput[],
+  backendUrl: string,
+): TraefikDynamicConfig {
   const routers: Record<string, unknown> = {};
   const backends: Record<string, unknown> = {};
   const middlewares: Record<string, unknown> = {};
+  const owners = new Set<string>();
   for (const svc of services) {
     const path = servicePath(svc.ownerUsername, svc.name);
     const key = `${path.slice(1).replace(/\//g, '-')}`;
+    owners.add(slugify(svc.ownerUsername));
     routers[key] = {
       rule: `PathPrefix(\`${path}\`)`,
       entryPoints: ['web'],
@@ -44,6 +53,19 @@ export function buildTraefikConfig(services: TraefikServiceInput[]): TraefikDyna
     };
     middlewares[`${key}-strip`] = {
       stripPrefix: { prefixes: [path] },
+    };
+  }
+  for (const owner of owners) {
+    const key = `${owner}-index`;
+    routers[key] = {
+      rule: `Path(\`/${owner}\`) || PathPrefix(\`/${owner}/\`)`,
+      entryPoints: ['web'],
+      service: key,
+      middlewares: [`${key}-rewrite`],
+    };
+    backends[key] = { loadBalancer: { servers: [{ url: backendUrl }] } };
+    middlewares[`${key}-rewrite`] = {
+      replacePath: { path: `/api/apps-index/${owner}` },
     };
   }
   // Traefik's YAML decoder rejects EMPTY maps ({} values) — so with no
