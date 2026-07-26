@@ -1,19 +1,32 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-// Locking tests for the BullMQ enqueue helpers and the global proposals-topup
-// schedule. BullMQ, ioredis and prisma are mocked so no real Redis/DB is
-// contacted; we only assert what would be enqueued.
+// Locking tests for the BullMQ enqueue helpers, the global proposals-topup
+// schedule, and the atomic proposal auto-start claim. BullMQ, ioredis and
+// prisma are mocked so no real Redis/DB is contacted; we only assert what
+// would be enqueued and how tasks are claimed.
 
-const mocks = vi.hoisted(() => ({
-  add: vi.fn().mockResolvedValue(undefined),
-  upsertJobScheduler: vi.fn().mockResolvedValue(undefined),
-  taskGroupBy: vi.fn(),
-  taskFindMany: vi.fn(),
-  taskFindFirst: vi.fn(),
-  taskCount: vi.fn(),
-  taskUpdate: vi.fn(),
-  repositoryFindMany: vi.fn(),
-}));
+const mocks = vi.hoisted(() => {
+  const fns = {
+    add: vi.fn().mockResolvedValue(undefined),
+    upsertJobScheduler: vi.fn().mockResolvedValue(undefined),
+    taskGroupBy: vi.fn(),
+    taskFindMany: vi.fn(),
+    taskFindFirst: vi.fn(),
+    taskCount: vi.fn(),
+    taskUpdate: vi.fn(),
+    taskUpdateMany: vi.fn(),
+    repositoryFindMany: vi.fn(),
+    executeRaw: vi.fn(),
+    transaction: vi.fn(),
+  };
+  // The interactive-transaction client: same task fns, plus $executeRaw for
+  // the per-repository pg_advisory_xact_lock.
+  const tx = {
+    task: { count: fns.taskCount, findFirst: fns.taskFindFirst, updateMany: fns.taskUpdateMany },
+    $executeRaw: fns.executeRaw,
+  };
+  return { ...fns, tx };
+});
 
 vi.mock('bullmq', () => ({
   Queue: class {
@@ -30,8 +43,11 @@ vi.mock('../src/lib/prisma.js', () => ({
       findFirst: mocks.taskFindFirst,
       count: mocks.taskCount,
       update: mocks.taskUpdate,
+      updateMany: mocks.taskUpdateMany,
     },
     repository: { findMany: mocks.repositoryFindMany },
+    $transaction: (cb: unknown) => mocks.transaction(cb),
+    $executeRaw: mocks.executeRaw,
   },
 }));
 
@@ -44,10 +60,14 @@ import {
   recoverQueuedTasks,
   registerProposalAutoRunSchedule,
   registerProposalTopUpSchedule,
+  startNextProposal,
 } from '../src/lib/proposal-scheduler.js';
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mocks.transaction.mockImplementation(async (cb) => cb(mocks.tx));
+  mocks.executeRaw.mockResolvedValue(0);
+  mocks.taskUpdateMany.mockResolvedValue({ count: 1 });
 });
 
 describe('enqueueGenerateProposalsNow', () => {
@@ -198,7 +218,9 @@ describe('enqueueRunTask', () => {
 
 // proposals-autorun job: for repos with autoRunProposals on, start the oldest
 // pending proposal every 20 min — but only when no proposal of that repo is
-// queued/running yet.
+// queued/running yet. The check + claim run inside one transaction guarded
+// by a per-repository advisory lock, so overlapping ticks cannot both pass
+// the "no active proposal" check.
 describe('enqueueProposalAutoRuns', () => {
   it('queries only repos with the flag on an active connection', async () => {
     mocks.repositoryFindMany.mockResolvedValue([]);
@@ -209,18 +231,19 @@ describe('enqueueProposalAutoRuns', () => {
     });
   });
 
-  it('starts the oldest pending proposal when none is queued or running', async () => {
+  it('claims the oldest pending proposal atomically when none is queued or running', async () => {
     mocks.repositoryFindMany.mockResolvedValue([{ id: 'r1' }]);
     mocks.taskCount.mockResolvedValue(0);
     mocks.taskFindFirst.mockResolvedValue({ id: 'p1' });
     await enqueueProposalAutoRuns();
+    expect(mocks.executeRaw).toHaveBeenCalled(); // pg_advisory_xact_lock taken
     expect(mocks.taskFindFirst).toHaveBeenCalledWith({
       where: { repositoryId: 'r1', kind: 'proposal', status: 'pending' },
       orderBy: { createdAt: 'asc' },
       select: { id: true },
     });
-    expect(mocks.taskUpdate).toHaveBeenCalledWith({
-      where: { id: 'p1' },
+    expect(mocks.taskUpdateMany).toHaveBeenCalledWith({
+      where: { id: 'p1', status: 'pending' },
       data: { status: 'queued' },
     });
     expect(mocks.add).toHaveBeenCalledWith(
@@ -243,6 +266,57 @@ describe('enqueueProposalAutoRuns', () => {
     mocks.taskCount.mockResolvedValue(0);
     mocks.taskFindFirst.mockResolvedValue(null);
     await enqueueProposalAutoRuns();
+    expect(mocks.add).not.toHaveBeenCalled();
+  });
+});
+
+// The "one active proposal per repo" invariant under races: overlapping
+// autorun ticks (or a tick racing a manual start) must resolve to exactly
+// one started task, and a task cancelled while the scheduler is claiming it
+// must never be resurrected to 'queued'.
+describe('startNextProposal atomicity', () => {
+  it('two overlapping ticks start exactly one proposal for the repository', async () => {
+    let active = 0;
+    let claimed = false;
+    mocks.taskCount.mockImplementation(async () => active);
+    mocks.taskFindFirst.mockResolvedValue({ id: 'p1' });
+    mocks.taskUpdateMany.mockImplementation(async () => {
+      if (claimed) return { count: 0 };
+      claimed = true;
+      active = 1;
+      return { count: 1 };
+    });
+    // Serialize transactions the way pg_advisory_xact_lock does: the second
+    // tick's count+claim runs only after the first one commits.
+    let chain: Promise<unknown> = Promise.resolve();
+    mocks.transaction.mockImplementation(async (cb) => {
+      const result = chain.then(() => cb(mocks.tx));
+      chain = result.catch(() => {});
+      return result;
+    });
+
+    const [first, second] = await Promise.all([
+      startNextProposal('r1'),
+      startNextProposal('r1'),
+    ]);
+
+    expect(Number(first) + Number(second)).toBe(1);
+    expect(mocks.add).toHaveBeenCalledTimes(1);
+  });
+
+  it('a task cancelled between select and claim stays cancelled', async () => {
+    mocks.taskCount.mockResolvedValue(0);
+    mocks.taskFindFirst.mockResolvedValue({ id: 'p1' });
+    // The conditional claim matches 0 rows: the user cancelled the task
+    // right after the scheduler selected it.
+    mocks.taskUpdateMany.mockResolvedValue({ count: 0 });
+
+    expect(await startNextProposal('r1')).toBe(false);
+
+    expect(mocks.taskUpdateMany).toHaveBeenCalledWith({
+      where: { id: 'p1', status: 'pending' },
+      data: { status: 'queued' },
+    });
     expect(mocks.add).not.toHaveBeenCalled();
   });
 });
