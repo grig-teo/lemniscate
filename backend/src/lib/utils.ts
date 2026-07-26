@@ -20,3 +20,16 @@ export function redactSecrets(text: string, secrets: string[]): string {
 export function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
+
+// Credential-safe `host:port` for startup logs: a REDIS_URL may embed a
+// password (redis://:secret@host:6379) which must never reach container
+// logs. Anything unparseable collapses to a constant string for the same
+// reason — never echo the raw URL back.
+export function redisEndpointForLog(url: string): string {
+  try {
+    const parsed = new URL(url);
+    return `${parsed.hostname}:${parsed.port || '6379'}`;
+  } catch {
+    return '(unparseable REDIS_URL)';
+  }
+}
