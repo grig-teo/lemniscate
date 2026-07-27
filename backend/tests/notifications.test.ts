@@ -42,6 +42,7 @@ import {
   notifyJobFailure,
   notifyProposalGenerationFailure,
   notifyTaskFailure,
+  scrubRepositoryFailureMessage,
   signWebhookBody,
 } from '../src/lib/notifications.js';
 import { encrypt } from '../src/lib/crypto.js';
@@ -339,5 +340,47 @@ describe('notifyProposalGenerationFailure', () => {
     const body = lastNotificationBody();
     expect(body).not.toContain('ghp_live_token');
     expect(body).toContain('[redacted]');
+  });
+});
+
+// scrubRepositoryFailureMessage backs the lastProposalError stamp: the
+// persisted column is served by GET /repositories and rendered in the RepoRow
+// tooltip, so it must go through the same failureSecrets scrub as the
+// notification body. Never throws — falls back to config-level secrets.
+describe('scrubRepositoryFailureMessage', () => {
+  it('scrubs the owner connection token and saved LLM keys from the message', async () => {
+    mocks.repositoryFindUnique.mockResolvedValue({
+      connection: {
+        userId: 'user-1',
+        accessTokenEnc: encrypt('ghp_live_token'),
+        refreshTokenEnc: null,
+      },
+    });
+    mocks.llmConfigFindMany.mockResolvedValue([{ apiKeyEnc: encrypt('sk-live-key') }]);
+
+    const scrubbed = await scrubRepositoryFailureMessage(
+      'r1',
+      'clone https://ghp_live_token@github.com/org/demo failed; LLM 401 for sk-live-key',
+    );
+
+    expect(scrubbed).not.toContain('ghp_live_token');
+    expect(scrubbed).not.toContain('sk-live-key');
+    expect(scrubbed).toContain('[redacted]');
+    expect(scrubbed).toContain('github.com/org/demo failed');
+  });
+
+  it('returns the message scrubbed with config-level secrets when the repository is gone', async () => {
+    mocks.repositoryFindUnique.mockResolvedValue(null);
+
+    const scrubbed = await scrubRepositoryFailureMessage('ghost', 'LLM connection refused');
+
+    expect(scrubbed).toBe('LLM connection refused');
+    expect(mocks.llmConfigFindMany).not.toHaveBeenCalled();
+  });
+
+  it('never throws when the lookup fails', async () => {
+    mocks.repositoryFindUnique.mockRejectedValue(new Error('db down'));
+
+    await expect(scrubRepositoryFailureMessage('r1', 'boom')).resolves.toBe('boom');
   });
 });

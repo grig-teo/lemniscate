@@ -273,6 +273,9 @@ export async function generateProposals(repositoryId: string): Promise<void> {
 // generate-proposals outcome — never inside generateProposals itself, so the
 // stamping has no effect on unit-tested proposal logic and the worker retains
 // control over when/how the stamp is applied (including on the final retry).
+// The failure message MUST be pre-scrubbed by the caller
+// (scrubRepositoryFailureMessage): lastProposalError is served by
+// GET /repositories and rendered in the frontend tooltip.
 
 export async function stampProposalSuccess(repositoryId: string): Promise<void> {
   await prisma.repository.update({

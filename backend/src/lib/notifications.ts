@@ -243,6 +243,33 @@ export async function notifyJobFailure(entry: JobFailureNotification): Promise<v
   }
 }
 
+// Scrubs a repository-scoped worker failure message against the owner's
+// tokens/keys before it is PERSISTED (Repository.lastProposalError) and
+// served by GET /repositories / rendered in the UI. Worker-level errors
+// arrive raw (git clone URLs with embedded tokens, LLM client errors), so
+// the stamp path needs the same failureSecrets scrub as the notification
+// path. Never throws: on any lookup failure it falls back to scrubbing with
+// the config-level MONITORED_SECRETS only (better than persisting raw).
+export async function scrubRepositoryFailureMessage(
+  repositoryId: string,
+  message: string,
+): Promise<string> {
+  try {
+    const repository = await prisma.repository.findUnique({
+      where: { id: repositoryId },
+      select: {
+        connection: { select: { userId: true, accessTokenEnc: true, refreshTokenEnc: true } },
+      },
+    });
+    if (!repository) return redactSecrets(message, [...MONITORED_SECRETS]);
+    const secrets = await failureSecrets(repository.connection);
+    return redactSecrets(message, secrets);
+  } catch (err) {
+    logger.error({ repositoryId, err }, 'failed to scrub repository failure message');
+    return redactSecrets(message, [...MONITORED_SECRETS]);
+  }
+}
+
 // Dedicated failure notification for generate-proposals jobs. Called from the
 // worker handler ONLY on the final retry attempt (so transient failures that
 // recover do not alarm the user). Deduped per repo: one unread

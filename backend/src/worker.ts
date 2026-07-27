@@ -21,7 +21,10 @@ import {
 } from './lib/proposal-scheduler.js';
 import { registerPrStateSyncSchedule, recoverStuckReviews, syncMergedPullRequests } from './lib/pr-state-sync.js';
 import { deliverNotification } from './lib/notification-delivery.js';
-import { notifyProposalGenerationFailure } from './lib/notifications.js';
+import {
+  notifyProposalGenerationFailure,
+  scrubRepositoryFailureMessage,
+} from './lib/notifications.js';
 import { startHeartbeat } from './lib/worker-heartbeat.js';
 import { jobFailureFromError, logJobFailure } from './lib/job-failure-log.js';
 import { metrics, startQueueMetricsPoller } from './lib/metrics.js';
@@ -104,6 +107,10 @@ function jobMetricName(name: string): string {
 // lastProposalAt on success and lastProposalError on every failure, and
 // emits a proposal_generation_failed notification only on the final retry
 // attempt (so transient blips that recover do not alarm the user).
+// The raw worker-level error is scrubbed ONCE against the owner's
+// tokens/keys and the scrubbed text is used for both the persisted stamp
+// (served by GET /repositories, rendered in the RepoRow tooltip) and the
+// notification body.
 // The generic job_failed path in notifyJobFailure is skipped for this job
 // name (see notifications.ts) to avoid a duplicate notification.
 function isFinalAttempt(job: Job): boolean {
@@ -119,7 +126,7 @@ async function runGenerateProposals(repositoryId: string, job: Job): Promise<voi
     await generateProposals(repositoryId);
     await stampProposalSuccess(repositoryId);
   } catch (err) {
-    const message = errorMessage(err);
+    const message = await scrubRepositoryFailureMessage(repositoryId, errorMessage(err));
     await stampProposalFailure(repositoryId, message);
     if (isFinalAttempt(job)) {
       await notifyProposalGenerationFailure(repositoryId, message);
