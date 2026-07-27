@@ -43,8 +43,10 @@ import { errorMessage } from './utils.js';
 // repository. The PR merges ONLY when provider CI checks are green:
 //   pending  → re-enqueue with a delay and check again (bounded, ~30 min)
 //   failing  → the hermes agent fixes the branch first, then re-check
-//   conflict → resolve (hermes or direct LLM), push, and wait for CI on the
-//              resolution commit before the next merge attempt
+//   stale    → main moved since the branch started: rebase the task branch
+//              onto main (conflicts resolved by hermes or direct LLM),
+//              force-push, and wait for CI on the rebased head before the
+//              next merge attempt — never main-into-branch merge commits
 // Providers without a checks API (e.g. GitVerse) merge unverified, as before.
 
 export const MERGE_GATE_DELAY_MS = 60_000;
@@ -121,21 +123,84 @@ async function runCiFixViaHermes(ctx: GateContext): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
-// Merge with conflict resolution
+// Rebase onto the base branch (staleness + conflict resolution)
 // ---------------------------------------------------------------------------
 
-// Merges FETCH_HEAD locally; returns the conflicted paths ([] on clean merge).
-async function mergeHeadBranch(workdir: string): Promise<string[]> {
+// Paths with unresolved rebase/merge conflicts in the workdir.
+async function conflictedPaths(workdir: string): Promise<string[]> {
+  const output = await git(['diff', '--name-only', '--diff-filter=U'], { cwd: workdir });
+  return output
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean);
+}
+
+// Full clone of the base branch (a shallow one lacks the common ancestor a
+// rebase needs) plus the head branch, with the remote-tracking ref updated
+// so the later --force-with-lease push leases against the state we saw.
+// Returns true when the base has commits the head lacks — the branch is
+// stale and must be rebased before merging.
+async function prepareMergeCheckout(ctx: GateContext): Promise<boolean> {
+  const { task, headBranch, workdir, cloneUrl, secrets, auth } = ctx;
+  await cloneRepository(workdir, cloneUrl, task.repository.defaultBranch, secrets, {
+    shallow: false,
+    auth,
+  });
+  await git(
+    ['fetch', 'origin', `+refs/heads/${headBranch}:refs/remotes/origin/${headBranch}`],
+    { cwd: workdir, secrets, auth },
+  );
   try {
-    await git(['merge', '--no-edit', 'FETCH_HEAD'], { cwd: workdir });
-    return [];
+    // Base tip already in the head's history → branch is up to date.
+    await git(['merge-base', '--is-ancestor', 'HEAD', 'FETCH_HEAD'], { cwd: workdir });
+    return false;
   } catch {
-    const output = await git(['diff', '--name-only', '--diff-filter=U'], { cwd: workdir });
-    return output
-      .split('\n')
-      .map((line) => line.trim())
-      .filter(Boolean);
+    return true;
   }
+}
+
+// One rebase step (start or --continue): returns the conflicted paths, []
+// when the step completed the rebase. A failure with NO conflicted paths is
+// a genuine rebase error and is rethrown.
+async function tryRebaseStep(workdir: string, args: string[]): Promise<string[]> {
+  try {
+    await git(args, { cwd: workdir });
+    return [];
+  } catch (err) {
+    const conflicted = await conflictedPaths(workdir);
+    if (conflicted.length === 0) throw err;
+    return conflicted;
+  }
+}
+
+// Safety net: each --continue advances one commit, so real rebases need far
+// fewer rounds; a loop here means the resolver is stuck.
+const MAX_REBASE_ROUNDS = 50;
+const REBASE_BRANCH = 'lemniscate-rebase';
+
+// Rebases the head branch onto the local base checkout, letting `resolve`
+// rewrite each round's conflicted files (git add happens inside it), then
+// force-pushes the linear branch back over the PR head.
+async function runRebaseLoop(
+  ctx: GateContext,
+  resolve: (conflicted: string[]) => Promise<void>,
+): Promise<void> {
+  const { task, headBranch, workdir, secrets, auth } = ctx;
+  await git(['checkout', '-b', REBASE_BRANCH, 'FETCH_HEAD'], { cwd: workdir });
+  let conflicted = await tryRebaseStep(workdir, ['rebase', task.repository.defaultBranch]);
+  for (let rounds = 0; conflicted.length > 0; rounds += 1) {
+    if (rounds >= MAX_REBASE_ROUNDS) {
+      throw new Error(`rebase conflict resolution did not converge after ${rounds} rounds`);
+    }
+    await resolve(conflicted);
+    // core.editor=true: reuse the original commit message non-interactively.
+    conflicted = await tryRebaseStep(workdir, ['-c', 'core.editor=true', 'rebase', '--continue']);
+  }
+  await git(['push', '--force-with-lease', 'origin', `HEAD:${headBranch}`], {
+    cwd: workdir,
+    secrets,
+    auth,
+  });
 }
 
 async function resolveConflictedFile(
@@ -167,44 +232,21 @@ async function resolveConflictedFile(
   await logEvent(task.id, `resolved conflict in ${rel}`);
 }
 
-// One conflict-resolution round: merge the head branch into a local checkout
-// of the base branch, let the LLM rewrite each conflicted file, commit, and
-// push the merge commit to the PR head branch (a fast-forward there, since
-// the old head is the merge commit's second parent).
-async function resolveMergeConflictsOnce(ctx: GateContext): Promise<void> {
-  const { task, headBranch, workdir, cloneUrl, secrets, auth } = ctx;
-  // Full clone: a shallow one lacks the common ancestor a real merge needs.
-  await cloneRepository(workdir, cloneUrl, task.repository.defaultBranch, secrets, {
-    shallow: false,
-    auth,
+// Rebases the head branch onto the base (checkout already prepared by
+// prepareMergeCheckout); the LLM rewrites each conflicted file per round.
+async function rebaseHeadBranchWithLlm(ctx: GateContext): Promise<void> {
+  await runRebaseLoop(ctx, async (conflicted) => {
+    for (const rel of conflicted) {
+      await resolveConflictedFile(ctx, rel);
+    }
   });
-  await git(['fetch', 'origin', headBranch], { cwd: workdir, secrets, auth });
-  const conflicted = await mergeHeadBranch(workdir);
-  for (const rel of conflicted) {
-    await resolveConflictedFile(ctx, rel);
-  }
-  if (conflicted.length > 0) {
-    await git(['commit', '-m', 'resolve merge conflicts'], { cwd: workdir });
-  } else {
-    await logEvent(task.id, 'merge applied cleanly locally; publishing the merge');
-  }
-  await git(['push', 'origin', `HEAD:${headBranch}`], { cwd: workdir, secrets, auth });
 }
 
-// Hermes variant: the agent rewrites every conflicted file inside the merge
-// checkout; staging, marker verification, commit, and push stay external.
-async function resolveMergeConflictsViaHermes(ctx: GateContext): Promise<void> {
-  const { task, rt, headBranch, workdir, cloneUrl, secrets, auth } = ctx;
-  // Full clone: a shallow one lacks the common ancestor a real merge needs.
-  await cloneRepository(workdir, cloneUrl, task.repository.defaultBranch, secrets, {
-    shallow: false,
-    auth,
-  });
-  await git(['fetch', 'origin', headBranch], { cwd: workdir, secrets, auth });
-  const conflicted = await mergeHeadBranch(workdir);
-  if (conflicted.length === 0) {
-    await logEvent(task.id, 'merge applied cleanly locally; publishing the merge');
-  } else {
+// Hermes variant: the agent rewrites every conflicted file of the round;
+// marker verification and staging stay external.
+async function rebaseHeadBranchViaHermes(ctx: GateContext): Promise<void> {
+  const { task, rt, headBranch, workdir, secrets } = ctx;
+  await runRebaseLoop(ctx, async (conflicted) => {
     await logEvent(
       task.id,
       `resolving ${conflicted.length} conflicted file(s) with the hermes agent`,
@@ -231,9 +273,7 @@ async function resolveMergeConflictsViaHermes(ctx: GateContext): Promise<void> {
       await publishTaskEvent(task.id, 'diff', { path: rel, action: 'conflict-resolved' });
       await logEvent(task.id, `resolved conflict in ${rel}`);
     }
-    await git(['commit', '-m', 'resolve merge conflicts'], { cwd: workdir });
-  }
-  await git(['push', 'origin', `HEAD:${headBranch}`], { cwd: workdir, secrets, auth });
+  });
 }
 
 // Auto-deploy: a merged PR redeploys the repository's service when it has
@@ -253,53 +293,72 @@ async function maybeQueueServiceDeploy(task: TaskWithRepo): Promise<void> {
   }
 }
 
-// One merge attempt. On conflict the branch is resolved and pushed, then the
-// gate re-enqueues — CI must pass on the resolution commit before the next
-// merge attempt (this is how a broken resolution never reaches main).
+// One merge attempt. Rebase-first: when main advanced since the branch
+// started, the task branch is rebased onto it (conflicts resolved by the
+// agent) and force-pushed, then the gate re-enqueues — CI must pass on the
+// rebased head before the next merge attempt (this is how a broken rebase
+// never reaches main). A direct provider merge happens only when the branch
+// is already up to date with main.
 async function mergeWithConflictResolution(ctx: GateContext): Promise<void> {
   const { task, rt, headBranch, attempt, ciFixes } = ctx;
-  const result = await mergePullRequest(task.repository.connection, {
-    repoFullName: task.repository.fullName,
-    headBranch,
-    baseBranch: task.repository.defaultBranch,
-  });
-  if (result.merged) {
-    await logEvent(task.id, `merged pull request: ${result.prUrl}`);
-    await setTaskStatus(task.id, 'done');
-    await notify(task.repository.connection.userId, 'pr_merged', {
-      title: `PR merged: ${task.title}`,
-      body: `${task.repository.fullName} — pull request auto-merged by the merge gate`,
-      taskId: task.id,
-      prUrl: result.prUrl,
+  const stale = await prepareMergeCheckout(ctx);
+  if (!stale) {
+    const result = await mergePullRequest(task.repository.connection, {
+      repoFullName: task.repository.fullName,
+      headBranch,
+      baseBranch: task.repository.defaultBranch,
     });
-    // The task's run workdir was kept for the review window — merged means
-    // it is no longer needed.
-    await cleanupWorkdir(path.join(config.AGENT_WORKDIR, task.id), task.id);
-    await maybeQueueServiceDeploy(task);
-    return;
+    if (result.merged) {
+      await logEvent(task.id, `merged pull request: ${result.prUrl}`);
+      await setTaskStatus(task.id, 'done');
+      await notify(task.repository.connection.userId, 'pr_merged', {
+        title: `PR merged: ${task.title}`,
+        body: `${task.repository.fullName} — pull request auto-merged by the merge gate`,
+        taskId: task.id,
+        prUrl: result.prUrl,
+      });
+      // The task's run workdir was kept for the review window — merged means
+      // it is no longer needed.
+      await cleanupWorkdir(path.join(config.AGENT_WORKDIR, task.id), task.id);
+      await maybeQueueServiceDeploy(task);
+      return;
+    }
+    if (!result.conflict) {
+      await stopForManualMerge(task);
+      return;
+    }
+    // Conflict despite an up-to-date branch: main moved between the
+    // staleness check and the provider call — fall through to the rebase.
   }
-  if (!result.conflict || attempt >= MERGE_GATE_MAX_ATTEMPTS) {
-    await logEvent(task.id, 'merge could not be completed — manual review needed');
-    await notifyOncePerTask(task.repository.connection.userId, 'merge_gate_failed', {
-      title: `Merge gate gave up: ${task.title}`,
-      body: `${task.repository.fullName} — merge could not be completed; manual review needed`,
-      taskId: task.id,
-      prUrl: task.prUrl ?? undefined,
-    });
+  if (attempt >= MERGE_GATE_MAX_ATTEMPTS) {
+    await stopForManualMerge(task);
     return;
   }
   await logEvent(
     task.id,
-    `merge conflict — resolving with the ${config.AGENT_EXECUTOR === 'hermes' ? 'hermes agent' : 'LLM'}`,
+    stale
+      ? 'main moved since the branch started — rebasing the task branch onto it'
+      : 'merge conflict — rebasing the task branch onto main',
   );
   if (config.AGENT_EXECUTOR === 'hermes') {
-    await resolveMergeConflictsViaHermes(ctx);
+    await rebaseHeadBranchViaHermes(ctx);
   } else {
-    await resolveMergeConflictsOnce(ctx);
+    await rebaseHeadBranchWithLlm(ctx);
   }
   await persistTokenUsage(task.id, rt.usedTokens, tokenSplit(rt));
-  await logEvent(task.id, 'pushed conflict resolution; waiting for CI before the next merge attempt');
+  await logEvent(task.id, 'pushed the rebased branch; waiting for CI before the next merge attempt');
   await enqueueMergeGate(task.id, attempt + 1, ciFixes, MERGE_GATE_DELAY_MS);
+}
+
+// The gate cannot (or may no longer) merge: log + one notification per task.
+async function stopForManualMerge(task: TaskWithRepo): Promise<void> {
+  await logEvent(task.id, 'merge could not be completed — manual review needed');
+  await notifyOncePerTask(task.repository.connection.userId, 'merge_gate_failed', {
+    title: `Merge gate gave up: ${task.title}`,
+    body: `${task.repository.fullName} — merge could not be completed; manual review needed`,
+    taskId: task.id,
+    prUrl: task.prUrl ?? undefined,
+  });
 }
 
 // ---------------------------------------------------------------------------

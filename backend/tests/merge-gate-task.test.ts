@@ -5,10 +5,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 // Task-level locking tests for mergeGateTask (merge-gate.ts): the pure
 // decision table lives in tests/merge-gate.test.ts — here we pin everything
 // the decision DRIVES: pending re-enqueue with attempt/ciFixes job identity,
-// the hermes CI-fix path, conflict resolution (internal LLM and hermes), the
-// actual merge + deploy fan-out, and the record-then-rethrow failure path.
-// Prisma, git, the queue, and providers are mocked; conflict files are real
-// files in a tmp workdir so file rewrites are pinned too.
+// the hermes CI-fix path, the rebase-first stale-branch flow (internal LLM
+// and hermes conflict resolution), the actual merge + deploy fan-out, and
+// the record-then-rethrow failure path. Prisma, git, the queue, and
+// providers are mocked; conflict files are real files in a tmp workdir so
+// file rewrites are pinned too.
 
 const mocks = vi.hoisted(() => ({
   config: {
@@ -142,13 +143,30 @@ function gateWorkdir(attempt = 0, ciFixes = 0) {
 
 const CONFLICTED = ['line a', '<<<<<<< HEAD', 'base', '=======', 'branch', '>>>>>>> b'].join('\n');
 
-// Local merge of FETCH_HEAD always conflicts on src/a.ts.
-function gitWithConflict(files = ['src/a.ts']) {
+// Stale branch: the merge-base check fails and the rebase onto main stops
+// with conflicts on src/a.ts; --continue succeeds after resolution.
+function gitWithRebaseConflict(files = ['src/a.ts']) {
   return async (args: string[]) => {
-    if (args[0] === 'merge') throw new Error('CONFLICT (content)');
+    if (args[0] === 'merge-base') throw new Error('not an ancestor');
+    if (args.includes('rebase') && !args.includes('--continue')) {
+      throw new Error('CONFLICT (content)');
+    }
     if (args[0] === 'diff') return `${files.join('\n')}\n`;
     return '';
   };
+}
+
+// Stale branch, clean rebase: merge-base check fails, the rebase applies
+// without conflicts.
+function gitStaleClean() {
+  return async (args: string[]) => {
+    if (args[0] === 'merge-base') throw new Error('not an ancestor');
+    return '';
+  };
+}
+
+function gitCalls(...verbs: string[]): string[][] {
+  return mocks.git.mock.calls.filter((c) => verbs.some((v) => (c[0] as string[]).includes(v)));
 }
 
 async function seedConflictedWorkdir(workdir: string) {
@@ -307,6 +325,10 @@ describe('mergeGateTask green CI', () => {
       'task-1',
     );
     expect(mocks.enqueueMergeGate).not.toHaveBeenCalled();
+    // Up-to-date branch (default git mock: merge-base passes) — no rebase,
+    // no force push: the provider merge is the only git-level action.
+    expect(gitCalls('rebase')).toHaveLength(0);
+    expect(gitCalls('push')).toHaveLength(0);
   });
 
   it('queues a service deploy when the repository has one with autoDeploy on', async () => {
@@ -343,14 +365,13 @@ describe('mergeGateTask green CI', () => {
   });
 });
 
-describe('mergeGateTask conflict resolution (internal executor)', () => {
+describe('mergeGateTask rebase of a stale branch (internal executor)', () => {
   beforeEach(() => {
-    mocks.mergePullRequest.mockResolvedValue({ merged: false, conflict: true });
-    mocks.git.mockImplementation(gitWithConflict());
+    mocks.git.mockImplementation(gitWithRebaseConflict());
     mocks.llmCall.mockResolvedValue(JSON.stringify({ content: 'resolved content' }));
   });
 
-  it('resolves conflicts via the LLM, pushes, and re-enqueues to wait for CI', async () => {
+  it('rebases onto main, resolves conflicts via the LLM, force-pushes, and re-enqueues to wait for CI', async () => {
     await seedConflictedWorkdir(gateWorkdir());
     await mergeGateTask('task-1');
 
@@ -361,20 +382,38 @@ describe('mergeGateTask conflict resolution (internal executor)', () => {
       [],
       { shallow: false, auth: { headers: {} } },
     );
-    // The conflicted file was rewritten with the LLM-resolved content.
+    // No provider merge this round: CI must pass on the rebased head first.
+    expect(mocks.mergePullRequest).not.toHaveBeenCalled();
+    // The branch was checked out and rebased onto main.
+    expect(gitCalls('checkout')[0][0]).toEqual(['checkout', '-b', 'lemniscate-rebase', 'FETCH_HEAD']);
+    expect(gitCalls('rebase').some((c) => (c[0] as string[]).includes('main'))).toBe(true);
+    // The conflicted file was rewritten with the LLM-resolved content and
+    // the rebase continued non-interactively.
     const resolved = await fs.readFile(path.join(gateWorkdir(), 'src/a.ts'), 'utf8');
     expect(resolved).toBe('resolved content');
+    const continues = gitCalls('rebase').filter((c) => (c[0] as string[]).includes('--continue'));
+    expect(continues).toHaveLength(1);
+    expect(continues[0][0]).toContain('core.editor=true');
+    // The rebased (linear) branch goes back over the PR head with a lease.
     expect(mocks.git).toHaveBeenCalledWith(
-      ['push', 'origin', `HEAD:${BRANCH}`],
+      ['push', '--force-with-lease', 'origin', `HEAD:${BRANCH}`],
       expect.objectContaining({ cwd: gateWorkdir() }),
     );
     expect(mocks.publishTaskEvent).toHaveBeenCalledWith('task-1', 'diff', {
       path: 'src/a.ts',
       action: 'conflict-resolved',
     });
-    // CI must pass on the resolution commit before the next merge attempt.
+    // CI must pass on the rebased head before the next merge attempt.
     expect(mocks.enqueueMergeGate).toHaveBeenCalledWith('task-1', 1, 0, MERGE_GATE_DELAY_MS);
-    expect(mocks.mergePullRequest).toHaveBeenCalledTimes(1); // no second merge attempt in this job
+  });
+
+  it('rebases without any LLM calls when the rebase applies cleanly', async () => {
+    mocks.git.mockImplementation(gitStaleClean());
+    await mergeGateTask('task-1');
+    expect(mocks.mergePullRequest).not.toHaveBeenCalled();
+    expect(mocks.llmCall).not.toHaveBeenCalled();
+    expect(gitCalls('push')).toHaveLength(1);
+    expect(mocks.enqueueMergeGate).toHaveBeenCalledWith('task-1', 1, 0, MERGE_GATE_DELAY_MS);
   });
 
   it('treats an LLM resolution that keeps conflict markers as a retryable failure', async () => {
@@ -394,25 +433,37 @@ describe('mergeGateTask conflict resolution (internal executor)', () => {
     );
   });
 
-  it('does not resolve conflicts once the attempt cap is reached — manual review', async () => {
+  it('does not rebase once the attempt cap is reached — manual review', async () => {
     await mergeGateTask('task-1', MERGE_GATE_MAX_ATTEMPTS, 0);
-    expect(mocks.cloneRepository).not.toHaveBeenCalled();
+    expect(gitCalls('rebase')).toHaveLength(0);
+    expect(gitCalls('push')).toHaveLength(0);
     expect(mocks.logEvent).toHaveBeenCalledWith(
       'task-1',
       expect.stringContaining('manual review needed'),
     );
     expect(mocks.enqueueMergeGate).not.toHaveBeenCalled();
   });
+
+  it('rebases when the provider reports a conflict despite an up-to-date local check (race)', async () => {
+    // Up-to-date branch: merge-base passes, so the provider merge is
+    // attempted — but main moved in between and it conflicts.
+    mocks.git.mockImplementation(async () => '');
+    mocks.mergePullRequest.mockResolvedValue({ merged: false, conflict: true });
+    await mergeGateTask('task-1');
+    expect(mocks.mergePullRequest).toHaveBeenCalledTimes(1);
+    expect(gitCalls('checkout')).toHaveLength(1);
+    expect(gitCalls('push')).toHaveLength(1);
+    expect(mocks.enqueueMergeGate).toHaveBeenCalledWith('task-1', 1, 0, MERGE_GATE_DELAY_MS);
+  });
 });
 
-describe('mergeGateTask conflict resolution (hermes executor)', () => {
+describe('mergeGateTask rebase of a stale branch (hermes executor)', () => {
   beforeEach(() => {
     mocks.config.AGENT_EXECUTOR = 'hermes';
-    mocks.mergePullRequest.mockResolvedValue({ merged: false, conflict: true });
-    mocks.git.mockImplementation(gitWithConflict());
+    mocks.git.mockImplementation(gitWithRebaseConflict());
   });
 
-  it('lets hermes rewrite conflicted files, then stages, commits, pushes, re-enqueues', async () => {
+  it('lets hermes rewrite conflicted files, then stages, continues the rebase, force-pushes, re-enqueues', async () => {
     await seedConflictedWorkdir(gateWorkdir());
     mocks.runHermesTask.mockImplementation(async (opts: { workdir: string }) => {
       await fs.writeFile(path.join(opts.workdir, 'src/a.ts'), 'hermes resolved');
@@ -422,9 +473,12 @@ describe('mergeGateTask conflict resolution (hermes executor)', () => {
     const opts = mocks.runHermesTask.mock.calls[0]?.[0];
     expect(opts.prompt).toContain('src/a.ts');
     expect(mocks.git).toHaveBeenCalledWith(['add', '--', 'src/a.ts'], { cwd: gateWorkdir() });
-    expect(mocks.git).toHaveBeenCalledWith(['commit', '-m', 'resolve merge conflicts'], {
-      cwd: gateWorkdir(),
-    });
+    const continues = gitCalls('rebase').filter((c) => (c[0] as string[]).includes('--continue'));
+    expect(continues).toHaveLength(1);
+    expect(mocks.git).toHaveBeenCalledWith(
+      ['push', '--force-with-lease', 'origin', `HEAD:${BRANCH}`],
+      expect.objectContaining({ cwd: gateWorkdir() }),
+    );
     expect(mocks.enqueueMergeGate).toHaveBeenCalledWith('task-1', 1, 0, MERGE_GATE_DELAY_MS);
   });
 
@@ -439,6 +493,10 @@ describe('mergeGateTask conflict resolution (hermes executor)', () => {
       [],
     );
     expect(mocks.enqueueMergeGate).not.toHaveBeenCalled();
+    expect(mocks.git).not.toHaveBeenCalledWith(
+      expect.arrayContaining(['push']),
+      expect.anything(),
+    );
   });
 });
 
