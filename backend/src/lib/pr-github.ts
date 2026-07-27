@@ -157,12 +157,28 @@ const githubCheckRunsSchema = z.object({
   check_runs: z.array(z.object({ status: z.string(), conclusion: z.string().nullable() })),
 });
 
+const githubWorkflowRunsSchema = z.object({
+  workflow_runs: z.array(
+    z.object({
+      workflow_id: z.number(),
+      status: z.string(),
+      conclusion: z.string().nullable(),
+    }),
+  ),
+});
+
 export interface GitHubCombinedStatus {
   state: string;
   total_count: number;
 }
 
 export interface GitHubCheckRun {
+  status: string;
+  conclusion: string | null;
+}
+
+export interface GitHubWorkflowRun {
+  workflow_id: number;
   status: string;
   conclusion: string | null;
 }
@@ -175,15 +191,40 @@ function checkRunOutcome(run: GitHubCheckRun): 'pending' | 'failing' | 'ok' {
   return CHECK_RUN_OK_CONCLUSIONS.has(run.conclusion ?? '') ? 'ok' : 'failing';
 }
 
+// Same mapping for workflow RUNS (the actions/runs API). This is the only
+// signal that sees a workflow that fails at STARTUP (invalid YAML, a
+// duplicated job key): such a run reports conclusion 'failure' but produces
+// zero check runs and zero commit statuses — invisible to the other two
+// signals, which read the branch as green and let red CI merge.
+function workflowRunOutcome(run: GitHubWorkflowRun): 'pending' | 'failing' | 'ok' {
+  if (run.status !== 'completed') return 'pending';
+  return CHECK_RUN_OK_CONCLUSIONS.has(run.conclusion ?? '') ? 'ok' : 'failing';
+}
+
+// The runs API returns newest first; per workflow only the latest run
+// matters (a re-run supersedes its earlier failed attempt).
+function latestRunsPerWorkflow(runs: GitHubWorkflowRun[]): GitHubWorkflowRun[] {
+  const seen = new Set<number>();
+  return runs.filter((run) => {
+    if (seen.has(run.workflow_id)) return false;
+    seen.add(run.workflow_id);
+    return true;
+  });
+}
+
 // Gate signal = commit statuses (external CI) AND check runs (GitHub
-// Actions). The combined-status endpoint alone never sees Actions runs —
-// on an Actions-only repo it reports total_count 0, which must NOT read as
-// green on its own. Failing beats pending beats green across both signals.
+// Actions) AND workflow runs (catches Actions startup failures, which
+// produce neither of the first two). The combined-status endpoint alone
+// never sees Actions runs — on an Actions-only repo it reports total_count
+// 0, which must NOT read as green on its own. Failing beats pending beats
+// green across all three signals; no signals at all (a repo genuinely
+// without CI) still reads green.
 export function githubChecksState(
   combined: GitHubCombinedStatus,
   checkRuns: GitHubCheckRun[],
+  workflowRuns: GitHubWorkflowRun[] = [],
 ): PrChecksStatus['state'] {
-  const outcomes = checkRuns.map(checkRunOutcome);
+  const outcomes = [...checkRuns.map(checkRunOutcome), ...workflowRuns.map(workflowRunOutcome)];
   if (outcomes.includes('failing')) return 'failing';
   if (combined.total_count > 0 && combined.state !== 'success' && combined.state !== 'pending') {
     return 'failing';
@@ -194,7 +235,8 @@ export function githubChecksState(
 }
 
 // CI state of the PR head: commit statuses (external CI) plus check runs
-// (GitHub Actions — the only signal Actions produces). filter=latest so a
+// (GitHub Actions jobs) plus workflow runs (the only place a workflow that
+// fails at startup — invalid file, no jobs — shows up). filter=latest so a
 // re-run supersedes its earlier failed attempt.
 async function githubChecksStatus(
   token: string,
@@ -203,7 +245,7 @@ async function githubChecksStatus(
   const repoPath = encodeRepoPath(input.repoFullName);
   const ref = encodeURIComponent(input.headBranch);
   const headers = githubHeaders(token);
-  const [statusRes, runsRes] = await Promise.all([
+  const [statusRes, runsRes, workflowRunsRes] = await Promise.all([
     apiRequest('github', 'GET', `${GITHUB_API}/repos/${repoPath}/commits/${ref}/status`, headers, token),
     apiRequest(
       'github',
@@ -212,10 +254,22 @@ async function githubChecksStatus(
       headers,
       token,
     ),
+    // Tolerated separately: repos with Actions disabled answer non-2xx
+    // here, which must not kill the other two signals.
+    apiRequest(
+      'github',
+      'GET',
+      `${GITHUB_API}/repos/${repoPath}/actions/runs?branch=${ref}&per_page=30`,
+      headers,
+      token,
+    ).catch(() => null),
   ]);
   const combined = githubCombinedStatusSchema.parse(statusRes.body);
   const { check_runs } = githubCheckRunsSchema.parse(runsRes.body);
-  const state = githubChecksState(combined, check_runs);
+  const workflowRuns = workflowRunsRes
+    ? latestRunsPerWorkflow(githubWorkflowRunsSchema.parse(workflowRunsRes.body).workflow_runs)
+    : [];
+  const state = githubChecksState(combined, check_runs, workflowRuns);
   return { supported: true, green: state === 'green', state };
 }
 

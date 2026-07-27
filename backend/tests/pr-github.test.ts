@@ -85,4 +85,51 @@ describe('githubChecksState', () => {
       ]),
     ).toBe('failing');
   });
+
+  // Regression (observed live): a workflow that fails at STARTUP (an
+  // invalid workflow file — e.g. a duplicated job key left by a bad
+  // conflict resolution) completes with conclusion 'failure' but creates
+  // ZERO jobs, hence zero check runs and zero commit statuses. With only
+  // the first two signals the branch read green and red CI merged to main.
+  describe('workflow-runs signal (Actions startup failures)', () => {
+    it('is failing when a workflow run failed with no check runs and no statuses', () => {
+      expect(
+        githubChecksState({ state: 'pending', total_count: 0 }, [], [
+          { workflow_id: 1, status: 'completed', conclusion: 'failure' },
+        ]),
+      ).toBe('failing');
+    });
+
+    it('counts startup_failure, cancelled and timed_out runs as failing', () => {
+      for (const conclusion of ['startup_failure', 'cancelled', 'timed_out']) {
+        expect(
+          githubChecksState({ state: 'pending', total_count: 0 }, [], [
+            { workflow_id: 1, status: 'completed', conclusion },
+          ]),
+        ).toBe('failing');
+      }
+    });
+
+    it('is pending while a workflow run is in progress', () => {
+      expect(
+        githubChecksState({ state: 'pending', total_count: 0 }, [], [
+          { workflow_id: 1, status: 'in_progress', conclusion: null },
+        ]),
+      ).toBe('pending');
+    });
+
+    it('stays green for a repo genuinely without CI (no signals at all)', () => {
+      expect(githubChecksState({ state: 'pending', total_count: 0 }, [], [])).toBe('green');
+    });
+
+    it('a failed workflow run beats green check runs from another workflow', () => {
+      expect(
+        githubChecksState(
+          { state: 'success', total_count: 1 },
+          [{ status: 'completed', conclusion: 'success' }],
+          [{ workflow_id: 2, status: 'completed', conclusion: 'failure' }],
+        ),
+      ).toBe('failing');
+    });
+  });
 });
