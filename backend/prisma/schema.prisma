@@ -31,6 +31,7 @@ enum TaskStatus {
   queued
   running
   awaiting_review
+  reviewing_code
   done
   failed
   closed
@@ -56,6 +57,7 @@ model User {
   devicePairings DevicePairing[]
   notifications  Notification[]
   notificationSettings NotificationSetting[]
+  vpsTargets     VpsTarget[]
 }
 
 model GitConnection {
@@ -411,10 +413,45 @@ enum DeployStatus {
   failed
 }
 
+// Where a Service is deployed. 'lemniscate' runs the app in a container on
+// the platform's isolated apps network (Traefik-routed). 'vps' ships the
+// build over SSH to the user's own server (referenced by vpsTargetId).
+enum DeployTarget {
+  lemniscate
+  vps
+}
+
+// Reusable SSH connection profile for a user's own VPS. One profile can back
+// several services. The credential (password or private key) is AES-256-GCM
+// encrypted at rest and decrypted only into the SSH invocation at deploy time;
+// it is never returned over the API.
+model VpsTarget {
+  id           String   @id @default(cuid())
+  userId       String
+  // Display name the user picks (e.g. "prod-box"); not used for routing.
+  name         String
+  host         String
+  port         Int      @default(22)
+  username     String
+  // 'password' or 'key' — which credential secretEnc holds.
+  authMethod   String   @default("password")
+  // Encrypted password (authMethod='password') or PEM private key
+  // (authMethod='key'). Never returned by the API (only hasSecret: true).
+  secretEnc    String
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  services     Service[]
+
+  @@index([userId])
+}
+
 // One deployable service per repository (v1), reachable at
-// https://apps.grig-teo.space/<connection.username>/<name>. Deployed by the
-// worker's 'deploy-service' job into a container on the isolated apps
-// network; Traefik routes via the backend's dynamic-config endpoint.
+// https://apps.grig-teo.space/<connection.username>/<name> when deployed on
+// Lemniscate. Deployed by the worker's 'deploy-service' job — either into a
+// container on the isolated apps network (lemniscate) or over SSH onto the
+// user's VPS (vps). Traefik routes lemniscate services via the backend's
+// dynamic-config endpoint.
 model Service {
   id           String        @id @default(cuid())
   repositoryId String        @unique
@@ -423,17 +460,29 @@ model Service {
   name         String
   // Container port the app listens on (Traefik target port).
   port         Int           @default(80)
+  // Distinct host port published on a VPS (docker -p left side). Allocated
+  // per-service so two apps with the same container port don't collide on the
+  // host. Null for lemniscate services (Traefik routes by container name).
+  hostPort     Int?
   // Per-service env vars, AES-256-GCM encrypted JSON {KEY: value}; decrypted
   // only into `docker run --env` at deploy time, never logged.
   envEnc       String?
   autoDeploy   Boolean       @default(true)
   status       ServiceStatus @default(stopped)
   // Currently routed container name (blue/green flip target); null when
-  // nothing is deployed.
+  // nothing is deployed. For VPS deploys this holds the remote container name.
   activeContainer String?
+  // Where the service is deployed. Defaults to 'lemniscate' (platform apps
+  // network); 'vps' ships the build to the user's own server over SSH.
+  deployTarget DeployTarget  @default(lemniscate)
+  // Required when deployTarget='vps'; must be null otherwise (enforced in the
+  // route). onDelete: SetNull so deleting a VPS profile falls services back to
+  // the lemniscate target rather than orphaning them.
+  vpsTargetId  String?
   createdAt    DateTime      @default(now())
   updatedAt    DateTime      @updatedAt
   repository   Repository    @relation(fields: [repositoryId], references: [id], onDelete: Cascade)
+  vpsTarget    VpsTarget?    @relation(fields: [vpsTargetId], references: [id], onDelete: SetNull)
   deployments  Deployment[]
 }
 

@@ -20,14 +20,14 @@ describe('startBlocker', () => {
     );
   });
 
-  it.each(['queued', 'running', 'awaiting_review', 'done', 'failed'])(
+  it.each(['queued', 'running', 'reviewing_code', 'awaiting_review', 'done', 'failed'])(
     'rejects proposal tasks that are %s',
     (status) => {
       expect(startBlocker({ kind: 'proposal', status })).toBe(`task is ${status}, not pending`);
     },
   );
 
-  it.each(['queued', 'running', 'awaiting_review', 'done', 'failed'])(
+  it.each(['queued', 'running', 'reviewing_code', 'awaiting_review', 'done', 'failed'])(
     'rejects prompt tasks that are %s',
     (status) => {
       expect(startBlocker({ kind: 'prompt', status })).toBe(`task is ${status}, not pending`);

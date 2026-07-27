@@ -1,7 +1,7 @@
 import type { Repository, Task } from '@/lib/hooks';
 
 /** Statuses shown in the landing "Running processes" section. */
-const RUNNING_STATUSES: ReadonlySet<string> = new Set(['queued', 'running']);
+const RUNNING_STATUSES: ReadonlySet<string> = new Set(['queued', 'running', 'reviewing_code']);
 
 /** A task in flight — queued or running. */
 export function isRunningStatus(status: string): boolean {
@@ -14,7 +14,7 @@ export function isRunningStatus(status: string): boolean {
  * Idle states (pending, done, …) and "queued" (dispatched but not yet
  * running) do NOT animate.
  */
-const ACTIVE_STATUSES: ReadonlySet<string> = new Set(['running', 'awaiting_review']);
+const ACTIVE_STATUSES: ReadonlySet<string> = new Set(['running', 'reviewing_code', 'awaiting_review']);
 
 /** True for statuses that mean work is actively in progress (animate). */
 export function isActiveProcessStatus(status: string): boolean {

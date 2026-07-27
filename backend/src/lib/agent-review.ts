@@ -25,6 +25,7 @@ import {
 } from './agent-runtime.js';
 import { runHermesTask } from './hermes-runner.js';
 import { enqueueMergeGate, enqueueReviewTask } from './proposal-scheduler.js';
+import { setTaskStatus } from './task-events.js';
 import { getPullRequestDiff } from './pull-requests.js';
 import {
   buildFixUserPrompt,
@@ -240,8 +241,10 @@ async function runHermesFixIteration(
 
 // Auto-merge is delegated to the merge-gate job: it waits for green CI,
 // sends hermes to fix failing checks, and resolves conflicts (again waiting
-// for CI on the resolution). The review job ends here.
+// for CI on the resolution). The review job ends here — flip the task back
+// to awaiting_review so the landing page no longer shows it as "reviewing".
 async function finishReview(task: TaskWithRepo, review: PrReview): Promise<void> {
+  await setTaskStatus(task.id, 'awaiting_review');
   if (review.verdict === 'changes_requested') {
     await logEvent(
       task.id,
@@ -291,6 +294,9 @@ async function executeReviewTask(
   workdir: string,
   secrets: string[],
 ): Promise<LlmRuntime> {
+  // Signal that the agent is actively reviewing — this shows the task as
+  // "reviewing code" on the landing page while the review job runs.
+  await setTaskStatus(task.id, 'reviewing_code');
   // The repository's review LLM (when configured) wins over the task's
   // implementation config — review and fix iterations run on it.
   const { cloneUrl, gitAuth, rt } = await prepareAgentRuntime(
@@ -357,7 +363,10 @@ export async function reviewTask(taskId: string, attempt = 0): Promise<void> {
     return;
   }
   // Only review PRs still waiting for review on an opted-in repository.
-  if (task.status !== 'awaiting_review' || !task.repository.autoReviewPr) {
+  // 'reviewing_code' is accepted so re-enqueued review iterations (fix
+  // loop) and BullMQ retries don't bounce on the guard.
+  const inReview = task.status === 'awaiting_review' || task.status === 'reviewing_code';
+  if (!inReview || !task.repository.autoReviewPr) {
     return;
   }
   if (!task.branchName) {
@@ -372,8 +381,8 @@ export async function reviewTask(taskId: string, attempt = 0): Promise<void> {
     rt = await executeReviewTask(task, task.branchName, attempt, workdir, secrets);
   } catch (err) {
     // Record the failure, then rethrow so BullMQ retries the job with
-    // backoff. If the final attempt also fails the PR stays awaiting_review
-    // until pr-state-sync's bounded recovery re-enqueues it.
+    // backoff. If the final attempt also fails the PR stays in
+    // reviewing_code until pr-state-sync's bounded recovery re-enqueues it.
     await recordJobFailure('review-pr', taskId, err, secrets);
     throw err;
   } finally {

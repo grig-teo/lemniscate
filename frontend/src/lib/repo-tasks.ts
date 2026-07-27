@@ -33,9 +33,10 @@ export function showsStatusBadge(task: { kind?: string; status: string }): boole
   return !isStartableTask(task);
 }
 
-/** Tasks the user can archive — anything not running or queued (mirrors the backend). */
+/** Tasks the user can archive — anything not actively in flight
+ *  (mirrors the backend UNARCHIVABLE_STATUSES). */
 export function isArchivable(status: string): boolean {
-  return status !== 'running' && status !== 'queued';
+  return status !== 'running' && status !== 'queued' && status !== 'reviewing_code';
 }
 
 /** Tasks the user can rerun — failed (including user-cancelled) and closed

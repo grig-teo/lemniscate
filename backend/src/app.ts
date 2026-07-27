@@ -18,6 +18,7 @@ import usageRoutes from './routes/usage.js';
 import notificationsRoutes from './routes/notifications.js';
 import devicesRoutes from './routes/devices.js';
 import servicesRoutes, { servicesInternalRoutes, appsIndexRoute } from './routes/services.js';
+import vpsTargetRoutes from './routes/vps-targets.js';
 import webhookRoutes from './routes/webhooks.js';
 
 async function registerPlugins(app: FastifyInstance) {
@@ -47,6 +48,7 @@ async function registerRoutes(app: FastifyInstance) {
   await app.register(usageRoutes, { prefix: '/api' });
   await app.register(notificationsRoutes, { prefix: '/api/notifications' });
   await app.register(servicesRoutes, { prefix: '/api' });
+  await app.register(vpsTargetRoutes, { prefix: '/api' });
   // Traefik's HTTP provider endpoint; token-guarded, no session auth.
   await app.register(servicesInternalRoutes, { prefix: '/api' });
   // Inbound git-provider webhooks (HMAC/token verified, no session auth).

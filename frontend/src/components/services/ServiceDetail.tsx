@@ -15,10 +15,12 @@ import {
   useServices,
   useStopService,
   useUpdateService,
+  useVpsTargets,
 } from '@/lib/hooks';
 import { hasActiveDeployment, serviceStatusColor } from '@/lib/services';
 import { useWorkspaceSelection } from '@/lib/selection';
 import { DeploymentList } from '@/components/services/ServiceDeployments';
+import { DeployTargetFields } from '@/components/services/DeployTargetFields';
 import { EnvEditor } from '@/components/services/ServiceEnvEditor';
 import { Button } from '@/components/ui/button';
 
@@ -32,9 +34,20 @@ export function ServiceDetail({ serviceId }: { serviceId: string }) {
   const [showLogs, setShowLogs] = React.useState(false);
   const [confirmDelete, setConfirmDelete] = React.useState(false);
   const [actionError, setActionError] = React.useState<string | null>(null);
+  const [deployTarget, setDeployTarget] = React.useState<'lemniscate' | 'vps'>('lemniscate');
+  const [vpsTargetId, setVpsTargetId] = React.useState('');
   const logsQuery = useServiceLogs(serviceId, showLogs);
+  const vpsTargetsQuery = useVpsTargets();
 
   const service = (servicesQuery.data ?? []).find((svc) => svc.id === serviceId);
+
+  // Sync local deploy-target state when the server-side value changes.
+  React.useEffect(() => {
+    if (!service) return;
+    setDeployTarget(service.deployTarget);
+    setVpsTargetId(service.vpsTargetId ?? '');
+  }, [service?.deployTarget, service?.vpsTargetId]);
+
   if (!service) {
     if (servicesQuery.isLoading) return null;
     // Deleted elsewhere — close the pane.
@@ -42,6 +55,10 @@ export function ServiceDetail({ serviceId }: { serviceId: string }) {
     return null;
   }
   const deploying = hasActiveDeployment(service.deployments) || service.status === 'deploying';
+
+  // True when the local deploy-target/vpsTargetId differ from the server values.
+  const deployTargetDirty =
+    deployTarget !== service.deployTarget || vpsTargetId !== (service.vpsTargetId ?? '');
 
   const run = async (action: () => Promise<unknown>) => {
     setActionError(null);
@@ -51,6 +68,14 @@ export function ServiceDetail({ serviceId }: { serviceId: string }) {
       setActionError(describeApiError(err as Error));
     }
   };
+
+  const saveDeployTarget = () =>
+    void run(async () => {
+      await updateService.mutateAsync({
+        deployTarget,
+        ...(deployTarget === 'vps' ? { vpsTargetId } : { vpsTargetId: null }),
+      });
+    });
 
   return (
     <section className="relative flex h-full min-w-0 flex-1 flex-col">
@@ -153,6 +178,46 @@ export function ServiceDetail({ serviceId }: { serviceId: string }) {
           />
           Deploy automatically after each merge
         </label>
+
+        <div className="grid gap-2">
+          <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+            Deploy target
+          </span>
+          <DeployTargetFields
+            deployTarget={deployTarget}
+            vpsTargetId={vpsTargetId}
+            vpsTargets={vpsTargetsQuery.data ?? []}
+            onTargetChange={setDeployTarget}
+            onVpsChange={setVpsTargetId}
+          />
+          {deployTargetDirty && (
+            <div className="flex items-center gap-2">
+              <Button
+                size="sm"
+                onClick={saveDeployTarget}
+                disabled={updateService.isPending || (deployTarget === 'vps' && !vpsTargetId)}
+              >
+                {updateService.isPending ? 'Saving…' : 'Apply deploy target'}
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => {
+                  setDeployTarget(service.deployTarget);
+                  setVpsTargetId(service.vpsTargetId ?? '');
+                }}
+                disabled={updateService.isPending}
+              >
+                Reset
+              </Button>
+            </div>
+          )}
+          {service.deployTarget === 'vps' && service.vpsTarget && (
+            <p className="text-xs text-muted-foreground">
+              Deploying to {service.vpsTarget.name} ({service.vpsTarget.host}:{service.vpsTarget.port})
+            </p>
+          )}
+        </div>
 
         <EnvEditor service={service} />
         <DeploymentList serviceId={service.id} />
