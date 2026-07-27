@@ -2,7 +2,13 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
 
 import { api } from '@/lib/api';
-import type { LlmConfig, LlmConfigPayload, LlmTestResult } from '@/lib/api-types';
+import type {
+  LlmConfig,
+  LlmConfigPayload,
+  LlmProviderPreset,
+  LlmQuotaInfo,
+  LlmTestResult,
+} from '@/lib/api-types';
 // Mutations whose callers already render the error inline (dialogs, settings
 // forms) opt out of the global MutationCache error toast with this meta.
 import { SUPPRESS_ERROR_TOAST_META } from '@/lib/mutation-error-toast';
@@ -17,6 +23,39 @@ export function useLlmConfigs() {
     queryKey: ['llm-configs'],
     queryFn: () =>
       api.get<{ configs: LlmConfig[] }>('/api/llm-configs').then((res) => res.configs),
+  });
+}
+
+/** GET /api/llm-configs/presets — the provider registry behind the "Add provider" flows. */
+export function useLlmProviderPresets() {
+  return useQuery({
+    queryKey: ['llm-provider-presets'],
+    queryFn: () =>
+      api
+        .get<{ presets: LlmProviderPreset[] }>('/api/llm-configs/presets')
+        .then((res) => res.presets),
+    staleTime: Infinity, // the registry only changes with a deploy
+  });
+}
+
+/**
+ * GET /api/llm-configs/:id/quota — the latest rate-limit snapshot captured
+ * from the provider's response headers. Null when the provider exposes
+ * nothing (or nothing was recorded yet); the footer shows "n/a" and never
+ * blocks. Disabled until a config id is known.
+ */
+export function useLlmConfigQuota(
+  configId: string | null | undefined,
+  options?: { refetchInterval?: number | false },
+) {
+  return useQuery({
+    queryKey: ['llm-config-quota', configId ?? null],
+    queryFn: () =>
+      api
+        .get<{ quota: LlmQuotaInfo | null }>(`/api/llm-configs/${configId}/quota`)
+        .then((res) => res.quota),
+    enabled: Boolean(configId),
+    refetchInterval: options?.refetchInterval,
   });
 }
 

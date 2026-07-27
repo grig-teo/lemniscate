@@ -77,6 +77,18 @@ export function rerunBlocker(task: { status: string }): string | null {
   return null;
 }
 
+// Mid-run model-switch eligibility for POST /tasks/:id/model: a queued run
+// resolves the new config id at start; a running / reviewing_code run picks
+// it up between LLM calls (applyPendingModelSwitch in agent-runtime.ts).
+const MODEL_SWITCHABLE_STATUSES = ['queued', 'running', 'reviewing_code'] as const;
+
+export function modelSwitchBlocker(task: { status: string }): string | null {
+  if (!(MODEL_SWITCHABLE_STATUSES as readonly string[]).includes(task.status)) {
+    return `task is ${task.status} — the model can only be switched while queued, running, or reviewing code`;
+  }
+  return null;
+}
+
 // Close-PR eligibility for POST /tasks/:id/close-pr: only awaiting_review
 // (or reviewing_code) tasks (an open PR exists on the git host) with a
 // branchName can be closed and have their branch deleted. The provider

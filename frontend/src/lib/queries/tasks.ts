@@ -117,6 +117,21 @@ function useTaskAction(action: 'rerun' | 'cancel' | 'archive' | 'unarchive' | 'c
   });
 }
 
+/**
+ * POST /api/tasks/:id/model — switch the LLM config of an in-flight task
+ * (the console footer's active-model dropdown). Takes effect on the next
+ * LLM call; the conversation history is preserved. Errors surface via the
+ * global mutation error toast (the footer has no inline error slot).
+ */
+export function useSwitchTaskModel() {
+  const invalidate = useInvalidator(['tasks'], ['task']);
+  return useMutation({
+    mutationFn: ({ id, llmConfigId }: { id: string; llmConfigId: string }) =>
+      api.post<{ task: Task }>(`/api/tasks/${id}/model`, { llmConfigId }),
+    onSuccess: invalidate,
+  });
+}
+
 /** Re-queue a failed or closed task with fresh run state. */
 export function useRerunTask() {
   return useTaskAction('rerun');

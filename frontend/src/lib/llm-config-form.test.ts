@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
-import { buildPayload, DEFAULTS, fromConfig, type FormState } from '@/lib/llm-config-form';
-import type { LlmConfig } from '@/lib/hooks';
+import { buildPayload, DEFAULTS, fromConfig, fromPreset, type FormState } from '@/lib/llm-config-form';
+import type { LlmConfig, LlmProviderPreset } from '@/lib/hooks';
 
 const REQUIRED: FormState = {
   ...DEFAULTS,
@@ -17,6 +17,8 @@ function makeConfig(overrides: Partial<LlmConfig> = {}): LlmConfig {
     baseUrl: 'https://api.example.com/v1',
     model: 'gpt-x',
     hasApiKey: true,
+    apiPattern: 'openai',
+    provider: null,
     thinkingLevel: 'low',
     temperature: 0.2,
     maxTokens: 4096,
@@ -45,6 +47,8 @@ describe('fromConfig', () => {
       baseUrl: 'https://api.example.com/v1',
       apiKey: '',
       model: 'gpt-x',
+      apiPattern: 'openai',
+      provider: '',
       thinkingLevel: 'low',
       temperature: '0.2',
       maxTokens: '4096',
@@ -69,6 +73,50 @@ describe('fromConfig', () => {
   });
 });
 
+describe('fromPreset', () => {
+  const anthropicPreset: LlmProviderPreset = {
+    id: 'anthropic',
+    label: 'Anthropic',
+    pattern: 'anthropic',
+    baseUrl: 'https://api.anthropic.com',
+    defaultModel: 'claude-sonnet-4-5',
+    models: ['claude-sonnet-4-5'],
+    contextWindow: 200_000,
+    maxTokens: 8_192,
+    quota: { shortWindow: true, weekly: true },
+  };
+
+  it('seeds the endpoint fields from the preset, leaving the API key blank', () => {
+    const form = fromPreset(anthropicPreset);
+    expect(form).toMatchObject({
+      name: 'Anthropic',
+      baseUrl: 'https://api.anthropic.com',
+      model: 'claude-sonnet-4-5',
+      apiPattern: 'anthropic',
+      provider: 'anthropic',
+      apiKey: '',
+      maxTokens: '8192',
+      contextWindow: '200000',
+      requestsPerMinute: '60',
+    });
+  });
+
+  it('produces a payload carrying apiPattern and provider once the key is typed', () => {
+    const built = buildPayload({ ...fromPreset(anthropicPreset), apiKey: 'sk-ant' });
+    expect(built).toHaveProperty('payload');
+    if ('payload' in built) {
+      expect(built.payload.apiPattern).toBe('anthropic');
+      expect(built.payload.provider).toBe('anthropic');
+      expect(built.payload.apiKey).toBe('sk-ant');
+    }
+  });
+
+  it('omits provider for custom endpoints', () => {
+    const built = buildPayload(REQUIRED);
+    if ('payload' in built) expect(built.payload.provider).toBeUndefined();
+  });
+});
+
 describe('buildPayload', () => {
   it('trims required fields and carries defaults and booleans through', () => {
     const built = buildPayload({ ...REQUIRED, isDefault: true, enabled: false });
@@ -77,6 +125,7 @@ describe('buildPayload', () => {
         name: 'My config',
         baseUrl: 'https://api.example.com/v1',
         model: 'gpt-x',
+        apiPattern: 'openai',
         thinkingLevel: 'off',
         temperature: 0.2,
         timeoutSeconds: 120,

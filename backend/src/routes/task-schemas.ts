@@ -82,4 +82,13 @@ export const improveBodySchema = z
   .strict();
 export type ImproveBody = z.infer<typeof improveBodySchema>;
 
+// POST /tasks/:id/model — switch the LLM config of an in-flight task; the
+// new id is picked up between LLM calls (applyPendingModelSwitch).
+export const modelBodySchema = z
+  .object({
+    llmConfigId: z.string().min(1),
+  })
+  .strict();
+export type ModelBody = z.infer<typeof modelBodySchema>;
+
 export const idParamsSchema = z.object({ id: z.string().min(1) });

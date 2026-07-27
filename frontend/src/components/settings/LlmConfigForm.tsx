@@ -2,7 +2,7 @@ import { Button } from '@/components/ui/button';
 import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
 import { FormField } from '@/components/ui/form-field';
-import type { LlmConfig } from '@/lib/hooks';
+import type { LlmConfig, LlmProviderPreset } from '@/lib/hooks';
 import { describeApiError } from '@/lib/api';
 import type { FormState } from '@/lib/llm-config-form';
 
@@ -87,10 +87,19 @@ function FormActions({
 /**
  * Add/edit form for one LLM config. Includes the "Test connection" button:
  * it tests a saved config by id (stored API key) when the key field is left
- * untouched, otherwise it posts the unsaved form payload.
+ * untouched, otherwise it posts the unsaved form payload. `preset` seeds the
+ * add form from a provider preset (the settings "Add provider" buttons).
  */
-export function LlmConfigForm({ initial, onDone }: { initial?: LlmConfig; onDone: () => void }) {
-  const state = useLlmConfigForm(initial, onDone);
+export function LlmConfigForm({
+  initial,
+  preset,
+  onDone,
+}: {
+  initial?: LlmConfig;
+  preset?: LlmProviderPreset;
+  onDone: () => void;
+}) {
+  const state = useLlmConfigForm(initial, onDone, preset);
   const editing = initial !== undefined;
 
   return (

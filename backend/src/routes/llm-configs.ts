@@ -2,8 +2,8 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type { Prisma } from '@prisma/client';
 import { z } from 'zod';
 import { encrypt, decrypt } from '../lib/crypto.js';
-import { LlmError } from '../lib/llm-client.js';
 import { chatCompletion, type DispatchChatParams } from '../lib/llm-dispatch.js';
+import { runConnectionTest, type ConnectionTestParams } from '../lib/llm-connection-test.js';
 import { LLM_PROVIDER_PRESETS, apiPatternOf } from '../lib/llm-providers.js';
 import { quotaHeaderRecorder, readLlmQuota } from '../lib/llm-quota.js';
 import { prisma } from '../lib/prisma.js';
@@ -116,57 +116,6 @@ async function clearOtherDefaults(
     where: { userId, isDefault: true, ...(excludeId ? { id: { not: excludeId } } : {}) },
     data: { isDefault: false },
   });
-}
-
-interface ConnectionTestParams {
-  baseUrl: string;
-  apiKey: string;
-  model: string;
-  apiPattern?: string;
-  thinkingLevel?: 'low' | 'medium' | 'high';
-  timeoutSeconds?: number;
-  maxRetries?: number;
-  customHeaders?: Record<string, string>;
-}
-
-function buildTestParams(params: ConnectionTestParams): DispatchChatParams {
-  return {
-    baseUrl: params.baseUrl,
-    apiKey: params.apiKey,
-    model: params.model,
-    apiPattern: params.apiPattern ?? 'openai',
-    messages: [{ role: 'user', content: TEST_PROMPT }],
-    maxTokens: TEST_MAX_TOKENS,
-    allowTruncated: true,
-    ...(params.thinkingLevel ? { thinkingLevel: params.thinkingLevel } : {}),
-    // Timeout capped at 30s regardless of the configured value.
-    timeoutSeconds: Math.min(
-      params.timeoutSeconds ?? TEST_TIMEOUT_CAP_SECONDS,
-      TEST_TIMEOUT_CAP_SECONDS,
-    ),
-    maxRetries: params.maxRetries,
-    ...(params.customHeaders ? { customHeaders: params.customHeaders } : {}),
-  };
-}
-
-async function runConnectionTest(params: ConnectionTestParams) {
-  try {
-    const result = await chatCompletion(buildTestParams(params));
-    return {
-      ok: true as const,
-      latencyMs: result.latencyMs,
-      modelEcho: result.model,
-      reply: result.content,
-      ...(result.truncated ? { truncated: true } : {}),
-    };
-  } catch (err) {
-    // Errors from llm-client are already scrubbed of the API key.
-    const error =
-      err instanceof LlmError || err instanceof Error
-        ? err.message
-        : 'Unknown error';
-    return { ok: false as const, error };
-  }
 }
 
 // --- Plugin ---

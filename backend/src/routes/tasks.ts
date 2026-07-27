@@ -9,6 +9,7 @@ import {
   patchTask,
   rerunTask,
   startTask,
+  switchTaskModel,
   unarchiveTask,
 } from './task-action-handlers.js';
 import { getTaskRunTargets } from './task-run-targets.js';
@@ -34,6 +35,7 @@ const tasksRoutes: FastifyPluginAsync = async (app) => {
   app.get('/tasks/:id/run-targets', getTaskRunTargets);
   app.post('/tasks/:id/start', startTask);
   app.patch('/tasks/:id', patchTask);
+  app.post('/tasks/:id/model', switchTaskModel);
   app.post('/tasks/:id/improve', improveTask);
   app.post('/tasks/:id/rerun', rerunTask);
   app.post('/tasks/:id/cancel', cancelTask);
@@ -46,9 +48,11 @@ const tasksRoutes: FastifyPluginAsync = async (app) => {
 // Re-exports so existing consumers (tests) keep a single import site.
 export {
   improveBodySchema,
+  modelBodySchema,
   patchBodySchema,
   startBodySchema,
   type ImproveBody,
+  type ModelBody,
   type PatchBody,
   type StartBody,
 } from './task-schemas.js';
@@ -60,6 +64,7 @@ export {
   closePrBlocker,
   initialTaskStatus,
   isArchivable,
+  modelSwitchBlocker,
   resolveAttachmentUpdate,
   rerunBlocker,
   startBlocker,

@@ -32,6 +32,45 @@ export type ConnectionPayload = {
 
 export type ThinkingLevel = 'off' | 'low' | 'medium' | 'high';
 
+/** Transport pattern of an LLM config (mirrors backend lib/llm-providers.ts). */
+export type LlmApiPattern = 'openai' | 'anthropic';
+
+/**
+ * Provider preset from GET /api/llm-configs/presets — the settings
+ * "Add provider" flows seed the config form from these (OpenAI, Anthropic,
+ * z.ai, Kimi/Moonshot, Grok/xAI).
+ */
+export type LlmProviderPreset = {
+  id: string;
+  label: string;
+  pattern: LlmApiPattern;
+  baseUrl: string;
+  defaultModel: string;
+  models: string[];
+  contextWindow: number;
+  maxTokens: number;
+  /** Which quota windows this provider can ever report (5h / weekly). */
+  quota: { shortWindow: boolean; weekly: boolean };
+};
+
+/** One rate-limit window parsed from provider response headers. */
+export type QuotaWindow = {
+  /** Display label: '5-hour', 'weekly', 'per-minute (tokens)', … */
+  label: string;
+  limit: number | null;
+  remaining: number | null;
+  /** ISO reset timestamp; null when the provider does not state one. */
+  resetsAt: string | null;
+};
+
+/** GET /api/llm-configs/:id/quota payload — null when nothing was recorded. */
+export type LlmQuotaInfo = {
+  pattern: LlmApiPattern;
+  capturedAt: string;
+  shortWindow: QuotaWindow | null;
+  weekly: QuotaWindow | null;
+};
+
 /** LLM config as returned by the API — `apiKey` is never included. */
 export type LlmConfig = {
   id: string;
@@ -39,6 +78,10 @@ export type LlmConfig = {
   baseUrl: string;
   model: string;
   hasApiKey: boolean;
+  /** Transport pattern; rows predating the column read as 'openai'. */
+  apiPattern: LlmApiPattern;
+  /** Provider preset id the config was added from; null for custom endpoints. */
+  provider: string | null;
   thinkingLevel: ThinkingLevel;
   temperature: number;
   maxTokens: number;
@@ -64,6 +107,8 @@ export type LlmConfigPayload = {
   baseUrl: string;
   model: string;
   apiKey?: string;
+  apiPattern?: LlmApiPattern;
+  provider?: string;
   thinkingLevel?: ThinkingLevel;
   temperature?: number;
   maxTokens?: number;
@@ -213,6 +258,14 @@ export type Task = {
   maxTokensPerRun?: number | null;
   /** Estimated USD at the effective config's prices; absent when unpriced or split unknown. */
   estimatedCostUsd?: number;
+  /** Effective LLM config (task → repo → user default) backing this task. */
+  effectiveLlmConfigId?: string | null;
+  /** Effective config's display name — the console footer's active-model label. */
+  llmConfigName?: string | null;
+  /** Effective config's model id. */
+  llmModel?: string | null;
+  /** Effective config's context window — the session context indicator's 100%. */
+  contextWindow?: number | null;
   createdAt: string;
   updatedAt: string;
 };
