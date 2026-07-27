@@ -3,6 +3,7 @@ import { LandingHeader } from '@/components/landing/LandingHeader';
 import { LoggedInSections } from '@/components/landing/LoggedInSections';
 import { LemniscateSwarm } from '@/components/LemniscateSwarm';
 import { useMe } from '@/lib/hooks';
+import { Github } from 'lucide-react';
 
 /** Hero lemniscate: same mark as the nav logo, hand-tuned for 72×40. */
 const HERO_PATH = 'M36 20 C36 8 14 4 8 14 C2 24 20 36 36 20 C52 4 70 16 64 26 C58 36 36 32 36 20 Z';
@@ -84,13 +85,29 @@ export function LandingPage() {
         <FeaturesSection />
         {me.data && <LoggedInSections />}
       </main>
-      <footer className="border-t px-6 py-6 text-center font-mono text-sm text-muted-foreground">
-        <a
-          href="https://github.com/grig-teo/lemniscate"
-          className="border-b border-border text-foreground hover:border-foreground"
-        >
-          github.com/grig-teo/lemniscate
-        </a>
+      <footer className="border-t px-6 py-6">
+        <div className="flex items-center justify-center gap-5 text-muted-foreground">
+          <a
+            href="https://x.com/lemniscate_app"
+            target="_blank"
+            rel="noopener noreferrer"
+            aria-label="Lemniscate on X"
+            className="transition-colors hover:text-foreground"
+          >
+            <svg viewBox="0 0 24 24" className="h-5 w-5" fill="currentColor" aria-hidden>
+              <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z" />
+            </svg>
+          </a>
+          <a
+            href="https://github.com/grig-teo/lemniscate"
+            target="_blank"
+            rel="noopener noreferrer"
+            aria-label="Lemniscate on GitHub"
+            className="transition-colors hover:text-foreground"
+          >
+            <Github className="h-5 w-5" aria-hidden />
+          </a>
+        </div>
       </footer>
     </div>
   );
