@@ -286,6 +286,31 @@ describe('mergeGateTask failing CI', () => {
     expect(mocks.mergePullRequest).not.toHaveBeenCalled(); // never merge on red CI
   });
 
+  it('rebases a stale branch instead of burning a CI-fix attempt on red CI', async () => {
+    mocks.config.AGENT_EXECUTOR = 'hermes';
+    mocks.pullRequestChecksStatus.mockResolvedValue(failing);
+    // Stale: merge-base check fails; the rebase itself applies cleanly.
+    mocks.git.mockImplementation(async (args: string[]) => {
+      if (args[0] === 'merge-base') throw new Error('not an ancestor');
+      return '';
+    });
+    await mergeGateTask('task-1', 0, 1);
+
+    // No hermes CI fix on a stale branch — the rebase IS the fix attempt.
+    expect(mocks.runHermesTask).not.toHaveBeenCalled();
+    expect(mocks.commitAndPush).not.toHaveBeenCalled();
+    const pushes = mocks.git.mock.calls.filter((c) => (c[0] as string[]).includes('push'));
+    expect(pushes).toHaveLength(1);
+    expect(pushes[0][0]).toEqual(['push', '--force-with-lease', 'origin', `HEAD:${BRANCH}`]);
+    expect(mocks.logEvent).toHaveBeenCalledWith(
+      'task-1',
+      expect.stringContaining('rebasing the task branch onto it before diagnosing further'),
+    );
+    // Re-enqueued WITHOUT consuming a ciFix — the rebase is not a fix attempt.
+    expect(mocks.enqueueMergeGate).toHaveBeenCalledWith('task-1', 1, 1, MERGE_GATE_DELAY_MS);
+    expect(mocks.mergePullRequest).not.toHaveBeenCalled();
+  });
+
   it('gives up to manual after MAX_CI_FIX_ATTEMPTS fixes', async () => {
     mocks.config.AGENT_EXECUTOR = 'hermes';
     mocks.pullRequestChecksStatus.mockResolvedValue(failing);
