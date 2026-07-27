@@ -19,6 +19,10 @@ const priced: UsageConfigInfo = {
   maxTokensPerRun: 500_000,
   inputPricePerMillion: 2,
   outputPricePerMillion: 10,
+  name: 'OpenAI prod',
+  model: 'gpt-4o',
+  contextWindow: 128_000,
+  apiPattern: 'openai',
 };
 
 const unpriced: UsageConfigInfo = {
@@ -27,6 +31,10 @@ const unpriced: UsageConfigInfo = {
   maxTokensPerRun: null,
   inputPricePerMillion: null,
   outputPricePerMillion: null,
+  name: 'Anthropic backup',
+  model: 'claude-sonnet-4',
+  contextWindow: 200_000,
+  apiPattern: 'anthropic',
 };
 
 function taskRow(overrides: Partial<UsageTaskRow> = {}): UsageTaskRow {
@@ -87,6 +95,10 @@ describe('taskUsagePayload', () => {
       llmCompletionTokens: 500,
       maxTokensPerRun: 500_000,
       estimatedCostUsd: 0.007,
+      effectiveLlmConfigId: 'cfg-priced',
+      llmConfigName: 'OpenAI prod',
+      llmModel: 'gpt-4o',
+      contextWindow: 128_000,
     });
   });
 
@@ -100,6 +112,10 @@ describe('taskUsagePayload', () => {
       llmPromptTokens: null,
       llmCompletionTokens: null,
       maxTokensPerRun: 500_000,
+      effectiveLlmConfigId: 'cfg-priced',
+      llmConfigName: 'OpenAI prod',
+      llmModel: 'gpt-4o',
+      contextWindow: 128_000,
     });
     expect('estimatedCostUsd' in payload).toBe(false);
   });

@@ -22,6 +22,8 @@ function makeConfig(id: string, over: Partial<LlmConfig> = {}): LlmConfig {
     baseUrl: 'https://llm.example.com/v1',
     model: 'm',
     hasApiKey: true,
+    apiPattern: 'openai',
+    provider: null,
     thinkingLevel: 'off',
     temperature: 0.2,
     maxTokens: 4096,

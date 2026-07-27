@@ -3,13 +3,17 @@
  * The form keeps every value as a string (except booleans); buildPayload
  * validates and converts into the API payload shape.
  */
-import type { LlmConfig, LlmConfigPayload, ThinkingLevel } from '@/lib/hooks';
+import type { LlmApiPattern, LlmConfig, LlmConfigPayload, LlmProviderPreset, ThinkingLevel } from '@/lib/hooks';
 
 export type FormState = {
   name: string;
   baseUrl: string;
   apiKey: string;
   model: string;
+  /** Transport pattern; preset add-flows seed it, custom endpoints choose it. */
+  apiPattern: LlmApiPattern;
+  /** Provider preset id the form was seeded from ('' = custom endpoint). */
+  provider: string;
   thinkingLevel: ThinkingLevel;
   temperature: string;
   maxTokens: string;
@@ -31,6 +35,8 @@ export const DEFAULTS: FormState = {
   baseUrl: '',
   apiKey: '',
   model: '',
+  apiPattern: 'openai',
+  provider: '',
   thinkingLevel: 'off',
   temperature: '0.2',
   maxTokens: '',
@@ -81,6 +87,8 @@ export function fromConfig(config: LlmConfig): FormState {
     baseUrl: config.baseUrl,
     apiKey: '',
     model: config.model,
+    apiPattern: config.apiPattern ?? 'openai',
+    provider: config.provider ?? '',
     thinkingLevel: config.thinkingLevel,
     temperature: numToInput(config.temperature),
     maxTokens: numToInput(config.maxTokens),
@@ -95,6 +103,25 @@ export function fromConfig(config: LlmConfig): FormState {
     customHeaders: config.customHeaders ? JSON.stringify(config.customHeaders, null, 2) : '',
     isDefault: config.isDefault,
     enabled: config.enabled,
+  };
+}
+
+/**
+ * Form state seeded from a provider preset — the settings "Add provider"
+ * flows (Add OpenAI / Add Anthropic / …). Only the API key is left for the
+ * user; every endpoint field comes from the preset registry.
+ */
+export function fromPreset(preset: LlmProviderPreset): FormState {
+  return {
+    ...DEFAULTS,
+    name: preset.label,
+    baseUrl: preset.baseUrl,
+    model: preset.defaultModel,
+    apiPattern: preset.pattern,
+    provider: preset.id,
+    maxTokens: String(preset.maxTokens),
+    contextWindow: String(preset.contextWindow),
+    requestsPerMinute: '60',
   };
 }
 
@@ -132,6 +159,7 @@ export function buildPayload(form: FormState): BuildResult {
     name: form.name.trim(),
     baseUrl: form.baseUrl.trim(),
     model: form.model.trim(),
+    apiPattern: form.apiPattern,
     thinkingLevel: form.thinkingLevel,
     isDefault: form.isDefault,
     enabled: form.enabled,
@@ -139,6 +167,7 @@ export function buildPayload(form: FormState): BuildResult {
   if (!payload.name || !payload.baseUrl || !payload.model) {
     return { error: 'Name, base URL and model are required.' };
   }
+  if (form.provider) payload.provider = form.provider;
   if (form.apiKey) payload.apiKey = form.apiKey;
   const numericError = applyNumericFields(form, payload);
   if (numericError) return { error: numericError };

@@ -16,11 +16,11 @@ import { chatCompletion } from './llm-dispatch.js';
 import { apiPatternOf } from './llm-providers.js';
 import { quotaHeaderRecorder } from './llm-quota.js';
 import {
+  applyPendingModelSwitch,
   chatParams,
   llmCallWithFailover,
   logLlmDone,
   logLlmStart,
-  switchRuntimeConfig,
 } from './llm-failover.js';
 import { parseTaskThinkingLevel } from './task-attachments.js';
 import { prisma } from './prisma.js';
@@ -168,30 +168,6 @@ export function sumMessageChars(messages: ChatMessage[]): number {
 // ---------------------------------------------------------------------------
 // The call wrapper: one metered attempt + cross-config failover
 // ---------------------------------------------------------------------------
-
-// Mid-run model switch (POST /tasks/:id/model): the user picked another
-// config while this run is in flight. The in-flight request already finished
-// (this runs BETWEEN calls); the conversation history is preserved in
-// `messages` and re-sent under the new config — possibly translated across
-// patterns by llm-dispatch. Advisory: any lookup failure keeps the current
-// config rather than breaking the run.
-async function applyPendingModelSwitch(rt: LlmRuntime): Promise<void> {
-  if (!rt.taskId || !rt.userId) return;
-  try {
-    const task = await prisma.task.findUnique({
-      where: { id: rt.taskId },
-      select: { llmConfigId: true },
-    });
-    if (!task?.llmConfigId || task.llmConfigId === rt.cfg.id) return;
-    const next = await findEnabledById(task.llmConfigId, rt.userId);
-    if (!next) return;
-    await assertSafeLlmBaseUrl(next.baseUrl);
-    const line = `⇄ model switched to ${next.model} [${next.name}] — continuing task`;
-    switchRuntimeConfig(rt, next, line);
-  } catch {
-    // Never let switch bookkeeping break an in-flight run.
-  }
-}
 
 function dispatchParams(rt: LlmRuntime, messages: ChatMessage[]) {
   const pattern = apiPatternOf(rt.cfg);
