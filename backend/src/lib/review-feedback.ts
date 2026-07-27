@@ -78,9 +78,10 @@ export const reviewFeedbackCommentSchema = z.object({
   line: z.number().int().optional(),
 });
 
-// GitHub-shaped review-comment payload (GitHub pulls/{n}/comments, also
-// Gitea/GitVerse) — ONE schema + mapper shared by those providers
-// (AGENTS.md §6), not three copies.
+// GitHub-shaped review-comment payload — GitHub pulls/{n}/comments, and
+// GitVerse/Gitea pulls/{n}/reviews/{id}/comments (the Gitea flavor has no
+// pulls-level comments endpoint). ONE schema + mapper shared by those
+// providers (AGENTS.md §6), not three copies.
 export const githubPrReviewCommentListSchema = z.array(
   z.object({
     id: z.number(),

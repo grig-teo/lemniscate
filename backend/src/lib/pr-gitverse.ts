@@ -225,17 +225,43 @@ async function gitverseListPullRequests(
   }));
 }
 
-// Human review comments on the PR (GitHub-shaped payload — the schema and
-// mapper are shared with pr-github.ts via pr-shared.ts).
+// Human review comments on the PR. The Gitea-flavored API has no
+// GET /pulls/{n}/comments (404 on gitea/gitea:1.26.4): comments live under
+// their review, so list the reviews and fetch each one's comments. The
+// payload is GitHub-shaped — schema and mapper are shared with pr-github.ts
+// via review-feedback.ts.
+const gitverseReviewListSchema = z.array(z.object({ id: z.number() }));
+
+async function gitverseReviewComments(
+  connection: PrConnectionInput,
+  token: string,
+  pullBaseUrl: string,
+  reviewId: number,
+): Promise<z.infer<typeof githubPrReviewCommentListSchema>> {
+  const url = `${pullBaseUrl}/reviews/${reviewId}/comments?per_page=100`;
+  const { body } = await apiRequest('gitverse', 'GET', url, gitverseHeaders(token), token);
+  return githubPrReviewCommentListSchema.parse(body);
+}
+
 async function gitversePullReviewComments(
   connection: PrConnectionInput,
   token: string,
   input: PullRequestRefInput,
 ): Promise<PrReviewComment[]> {
   const { number } = await gitverseLookupPullNumber(connection, token, input);
-  const url = `${gitversePullsUrl(connection, input.repoFullName)}/${number}/comments?per_page=100`;
-  const { body } = await apiRequest('gitverse', 'GET', url, gitverseHeaders(token), token);
-  return mapGithubPrReviewComments(githubPrReviewCommentListSchema.parse(body));
+  const pullBaseUrl = `${gitversePullsUrl(connection, input.repoFullName)}/${number}`;
+  const { body } = await apiRequest(
+    'gitverse',
+    'GET',
+    `${pullBaseUrl}/reviews?per_page=100`,
+    gitverseHeaders(token),
+    token,
+  );
+  const comments: z.infer<typeof githubPrReviewCommentListSchema> = [];
+  for (const review of gitverseReviewListSchema.parse(body)) {
+    comments.push(...(await gitverseReviewComments(connection, token, pullBaseUrl, review.id)));
+  }
+  return mapGithubPrReviewComments(comments);
 }
 
 export function gitversePrApi(connection: PrConnectionInput, token: string): ProviderPrApi {
