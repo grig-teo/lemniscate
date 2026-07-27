@@ -24,8 +24,16 @@ export function useServices() {
 export function useCreateService() {
   const invalidate = useInvalidateServices();
   return useMutation({
-    mutationFn: (input: { repositoryId: string; name?: string; port?: number; autoDeploy?: boolean }) =>
-      api.post<{ service: AppService }>('/api/services', input).then((res) => res.service),
+    mutationFn: (
+      input: {
+        repositoryId: string;
+        name?: string;
+        port?: number;
+        autoDeploy?: boolean;
+        deployTarget?: 'lemniscate' | 'vps';
+        vpsTargetId?: string;
+      },
+    ) => api.post<{ service: AppService }>('/api/services', input).then((res) => res.service),
     onSuccess: invalidate,
     meta: SUPPRESS_ERROR_TOAST_META, // CreateServiceDialog renders the error inline
   });
@@ -34,8 +42,13 @@ export function useCreateService() {
 export function useUpdateService(serviceId: string) {
   const invalidate = useInvalidateServices();
   return useMutation({
-    mutationFn: (patch: { name?: string; port?: number; autoDeploy?: boolean }) =>
-      api.patch<{ service: AppService }>(`/api/services/${serviceId}`, patch),
+    mutationFn: (patch: {
+      name?: string;
+      port?: number;
+      autoDeploy?: boolean;
+      deployTarget?: 'lemniscate' | 'vps';
+      vpsTargetId?: string | null;
+    }) => api.patch<{ service: AppService }>(`/api/services/${serviceId}`, patch),
     onSuccess: invalidate,
     meta: SUPPRESS_ERROR_TOAST_META, // ServiceDetail renders the error inline
   });

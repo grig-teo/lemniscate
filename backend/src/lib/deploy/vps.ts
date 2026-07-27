@@ -84,9 +84,11 @@ export function buildSshArgs(target: VpsTargetConfig, identityFile?: string): st
 export function buildRemoteDeployScript(spec: RemoteDeploySpec): string {
   const envB64 = encodeEnvB64(spec.env);
   const tokenB64 = Buffer.from(spec.gitToken, 'utf8').toString('base64');
-  // Two named FIFO-less stdin reads: env payload first, then the token. We
-  // instead embed both as base64 here (transported over the encrypted SSH
-  // channel) and decode locally — simpler and order-independent.
+  // Both secrets (env vars + git token) are embedded as base64 literals in
+  // the script body. They are transported over the encrypted SSH channel
+  // (stdin, never argv) and decoded locally at the top of the script —
+  // simpler and order-independent compared to piping them via separate
+  // stdin reads.
   return `set -euo pipefail
 GIT_TOKEN="$(echo '${tokenB64}' | base64 -d)"
 export GIT_TOKEN

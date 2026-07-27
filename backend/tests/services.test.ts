@@ -14,6 +14,7 @@ const mocks = vi.hoisted(() => ({
   serviceUpdate: vi.fn(),
   serviceDelete: vi.fn(),
   repositoryFindFirst: vi.fn(),
+  vpsTargetFindFirst: vi.fn(),
   deploymentFindMany: vi.fn(),
   queueDeployment: vi.fn(),
   stopRemoveContainer: vi.fn(),
@@ -31,6 +32,7 @@ vi.mock('../src/lib/prisma.js', () => ({
       delete: mocks.serviceDelete,
     },
     repository: { findFirst: mocks.repositoryFindFirst },
+    vpsTarget: { findFirst: mocks.vpsTargetFindFirst },
     deployment: { findMany: mocks.deploymentFindMany },
   },
 }));
@@ -80,6 +82,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   mocks.userFindUnique.mockResolvedValue({ id: 'user-1', sessionVersion: 0 });
   mocks.repositoryFindFirst.mockResolvedValue(REPO);
+  mocks.vpsTargetFindFirst.mockResolvedValue(null);
   mocks.serviceFindFirst.mockResolvedValue(null); // slug check: free
   mocks.serviceCreate.mockImplementation(async ({ data }: { data: object }) => ({
     id: 'svc-1',
@@ -108,7 +111,7 @@ describe('POST /api/services', () => {
     });
     expect(response.statusCode).toBe(201);
     expect(mocks.serviceCreate).toHaveBeenCalledWith({
-      data: { repositoryId: 'repo-1', name: 'my-app' },
+      data: { repositoryId: 'repo-1', name: 'my-app', deployTarget: 'lemniscate', vpsTargetId: null },
     });
     expect(response.json().service.url).toBe('https://apps.grig-teo.space/grig-teo/my-app');
   });

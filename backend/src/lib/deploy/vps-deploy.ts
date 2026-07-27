@@ -65,9 +65,6 @@ export function vpsContainerName(serviceId: string): string {
 }
 
 // Host port the app is published on; reuses the service's container port.
-function hostPort(port: number): number {
-  return port;
-}
 
 export async function deployToVps(
   deployment: VpsDeploymentPayload,
@@ -89,7 +86,7 @@ export async function deployToVps(
     branch: service.repository.defaultBranch,
     image,
     container,
-    port: hostPort(service.port),
+    port: service.port,
     env: parseServiceEnv(service.envEnc, secrets),
     gitToken: token,
   });
@@ -107,7 +104,7 @@ export async function deployToVps(
     data: { activeContainer: container, status: 'online' },
   });
   await setDeployStatus(deployment.id, 'online', true);
-  await appendLog(deployment.id, `live at http://${vpsConfig.host}:${hostPort(service.port)}`);
+  await appendLog(deployment.id, `live at http://${vpsConfig.host}:${service.port}`);
 }
 
 // Stops + removes the remote container (stop endpoint). Best-effort: a

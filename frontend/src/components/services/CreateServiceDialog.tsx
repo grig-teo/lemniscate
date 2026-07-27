@@ -1,10 +1,11 @@
 import * as React from 'react';
 
-import { useCreateService, useRepositories, useServices } from '@/lib/hooks';
+import { useCreateService, useRepositories, useServices, useVpsTargets } from '@/lib/hooks';
 import { useWorkspaceSelection } from '@/lib/selection';
 import { describeApiError } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { DeployTargetFields } from '@/components/services/DeployTargetFields';
 import {
   Dialog,
   DialogContent,
@@ -34,7 +35,11 @@ export function CreateServiceDialog({
   const [name, setName] = React.useState('');
   const [port, setPort] = React.useState('80');
   const [autoDeploy, setAutoDeploy] = React.useState(true);
+  const [deployTarget, setDeployTarget] = React.useState<'lemniscate' | 'vps'>('lemniscate');
+  const [vpsTargetId, setVpsTargetId] = React.useState('');
   const [error, setError] = React.useState<string | null>(null);
+
+  const vpsTargetsQuery = useVpsTargets();
 
   const available = React.useMemo(() => {
     const usedRepoIds = new Set((servicesQuery.data ?? []).map((svc) => svc.repositoryId));
@@ -49,6 +54,8 @@ export function CreateServiceDialog({
 
   const selectedRepo = available.find((repo) => repo.id === repositoryId);
 
+  const vpsTargets = vpsTargetsQuery.data ?? [];
+
   const submit = async () => {
     if (!repositoryId) return;
     setError(null);
@@ -58,6 +65,7 @@ export function CreateServiceDialog({
         ...(name.trim() ? { name: name.trim() } : {}),
         port: Number(port) || 80,
         autoDeploy,
+        ...(deployTarget === 'vps' && vpsTargetId ? { deployTarget: 'vps', vpsTargetId } : {}),
       });
       onOpenChange(false);
       selectService(service.id);
@@ -116,9 +124,17 @@ export function CreateServiceDialog({
               />
               Deploy automatically after each merge
             </label>
+            <DeployTargetFields
+              deployTarget={deployTarget}
+              vpsTargetId={vpsTargetId}
+              vpsTargets={vpsTargets}
+              onTargetChange={setDeployTarget}
+              onVpsChange={setVpsTargetId}
+            />
             <p className="text-xs text-muted-foreground">
-              The repository needs a Dockerfile at its root. The service will live at
-              apps.grig-teo.space/&lt;user&gt;/&lt;name&gt;.
+              {deployTarget === 'lemniscate'
+                ? 'The repository needs a Dockerfile at its root. The service will live at apps.grig-teo.space/<user>/<name>.'
+                : 'Deploys onto your VPS over SSH. The app is reachable at http://<vps-host>:<container-port>. Docker must be installed on the remote host.'}
             </p>
             {error && <p className="text-sm text-destructive">{error}</p>}
           </div>
@@ -126,7 +142,7 @@ export function CreateServiceDialog({
         <DialogFooter>
           <Button
             onClick={() => void submit()}
-            disabled={!repositoryId || createService.isPending || available.length === 0}
+            disabled={!repositoryId || createService.isPending || available.length === 0 || (deployTarget === 'vps' && !vpsTargetId)}
           >
             {createService.isPending ? 'Creating…' : 'Create service'}
           </Button>
