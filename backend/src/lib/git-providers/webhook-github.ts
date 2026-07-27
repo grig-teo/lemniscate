@@ -81,6 +81,29 @@ function parseGithubCheckEvent(
   return { kind: 'ci_status', repoFullName, headBranch, deliveryId };
 }
 
+// Maps a GitHub check_run with conclusion=failure to ci_failed (event trigger).
+function parseGithubCheckRunFailure(
+  payload: { check_run?: { conclusion?: unknown; check_suite?: { head_branch?: string } } },
+  deliveryId: string | null,
+  repoFullName: string,
+): WebhookEvent | null {
+  if (payload.check_run?.conclusion !== 'failure') return null;
+  const headBranch = payload.check_run?.check_suite?.head_branch;
+  if (typeof headBranch !== 'string' || !headBranch) return null;
+  return { kind: 'ci_failed', repoFullName, headBranch, deliveryId };
+}
+
+// Maps a GitHub issues event with action=opened to issue_opened (event trigger).
+function parseGithubIssueEvent(
+  payload: { action?: unknown },
+  deliveryId: string | null,
+  repoFullName: string,
+): WebhookEvent | null {
+  if (payload.action !== 'opened') return null;
+  // Issues have no branch — empty string is the convention for branchless events.
+  return { kind: 'issue_opened', repoFullName, headBranch: '', deliveryId };
+}
+
 /** Parses a verified GitHub webhook payload into a normalized event. */
 export function parseGithubWebhook(
   payload: unknown,
@@ -98,12 +121,29 @@ export function parseGithubWebhook(
     if (!headBranch) return null;
     return parseGithubPullRequest(body as { action?: unknown; pull_request?: { merged?: unknown } }, deliveryId, repoFullName, headBranch);
   }
-  if (eventType === 'check_suite' || eventType === 'check_run') {
+  if (eventType === 'check_run') {
+    const checkRunBody = body as {
+      check_run?: { conclusion?: unknown; check_suite?: { head_branch?: string } };
+    };
+    // check_run with conclusion=failure emits ci_failed (event trigger) BEFORE
+    // the generic ci_status mapping — a failed check is actionable on its own.
+    const failed = parseGithubCheckRunFailure(checkRunBody, deliveryId, repoFullName);
+    if (failed) return failed;
     return parseGithubCheckEvent(
       body as { check_suite?: { head_branch?: string }; check_run?: { check_suite?: { head_branch?: string } } },
       deliveryId,
       repoFullName,
     );
+  }
+  if (eventType === 'check_suite') {
+    return parseGithubCheckEvent(
+      body as { check_suite?: { head_branch?: string }; check_run?: { check_suite?: { head_branch?: string } } },
+      deliveryId,
+      repoFullName,
+    );
+  }
+  if (eventType === 'issues') {
+    return parseGithubIssueEvent(body as { action?: unknown }, deliveryId, repoFullName);
   }
   return null;
 }

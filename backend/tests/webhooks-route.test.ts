@@ -10,6 +10,8 @@ const mocks = vi.hoisted(() => ({
   taskFindFirst: vi.fn(),
   applyTaskPrStateSafe: vi.fn().mockResolvedValue(true),
   enqueueMergeGate: vi.fn().mockResolvedValue(undefined),
+  enqueueRunTask: vi.fn().mockResolvedValue(undefined),
+  fireEventTrigger: vi.fn().mockResolvedValue({ fired: false, reason: 'not_triggerable' }),
   redisSet: vi.fn().mockResolvedValue('OK'),
   decrypt: vi.fn().mockReturnValue('super-secret-webhook-key'),
 }));
@@ -44,7 +46,12 @@ vi.mock('../src/lib/pr-merged-handler.js', () => ({
 
 vi.mock('../src/lib/proposal-scheduler.js', () => ({
   enqueueMergeGate: mocks.enqueueMergeGate,
+  enqueueRunTask: mocks.enqueueRunTask,
   getAgentTasksQueue: vi.fn(),
+}));
+
+vi.mock('../src/lib/event-trigger-handler.js', () => ({
+  fireEventTrigger: mocks.fireEventTrigger,
 }));
 
 vi.mock('../src/lib/redis.js', () => ({
@@ -318,6 +325,63 @@ describe('POST /api/webhooks/:connectionId', () => {
     expect(res.statusCode).toBe(200);
     expect(res.json().event).toBe('pr_merged');
     expect(mocks.applyTaskPrStateSafe).toHaveBeenCalled();
+    await app.close();
+  });
+
+  // -----------------------------------------------------------------------
+  // Event-driven trigger dispatch
+  // -----------------------------------------------------------------------
+
+  const CHECK_RUN_FAILURE_BODY = JSON.stringify({
+    action: 'completed',
+    check_run: {
+      name: 'CI',
+      conclusion: 'failure',
+      check_suite: { head_branch: 'main' },
+    },
+    repository: { full_name: 'org/demo' },
+  });
+
+  it('fires the event trigger for a check_run:failure on the default branch', async () => {
+    mocks.taskFindFirst.mockResolvedValue(null);
+    mocks.fireEventTrigger.mockResolvedValue({ fired: true, reason: 'created' });
+    const app = await buildApp();
+    const res = await app.inject({
+      method: 'POST',
+      url: `/api/webhooks/${CONNECTION_ID}`,
+      headers: {
+        'content-type': 'application/json',
+        'x-github-event': 'check_run',
+        'x-hub-signature-256': githubSig(CHECK_RUN_FAILURE_BODY),
+        'x-github-delivery': 'deliv-trigger-1',
+      },
+      payload: CHECK_RUN_FAILURE_BODY,
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().event).toBe('ci_failed');
+    expect(mocks.fireEventTrigger).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'ci_failed', headBranch: 'main' }),
+    );
+    await app.close();
+  });
+
+  it('returns no_task when the event trigger does not fire', async () => {
+    mocks.taskFindFirst.mockResolvedValue(null);
+    mocks.fireEventTrigger.mockResolvedValue({ fired: false, reason: 'no_trigger' });
+    const app = await buildApp();
+    const res = await app.inject({
+      method: 'POST',
+      url: `/api/webhooks/${CONNECTION_ID}`,
+      headers: {
+        'content-type': 'application/json',
+        'x-github-event': 'check_run',
+        'x-hub-signature-256': githubSig(CHECK_RUN_FAILURE_BODY),
+        'x-github-delivery': 'deliv-trigger-2',
+      },
+      payload: CHECK_RUN_FAILURE_BODY,
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().event).toBe('no_task');
     await app.close();
   });
 });

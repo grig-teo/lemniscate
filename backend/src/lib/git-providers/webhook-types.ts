@@ -4,7 +4,12 @@
 // The provider selection happens in webhook-registry.ts (the single switch —
 // AGENTS.md §4).
 
-export type WebhookEventKind = 'pr_merged' | 'pr_closed' | 'ci_status';
+export type WebhookEventKind =
+  | 'pr_merged'
+  | 'pr_closed'
+  | 'ci_status'
+  | 'ci_failed'
+  | 'issue_opened';
 
 /** A normalized webhook event the receiver dispatches on. */
 export interface WebhookEvent {
