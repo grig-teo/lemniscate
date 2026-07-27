@@ -36,6 +36,7 @@ const mocks = vi.hoisted(() => ({
   loadAgentsMdTemplate: vi.fn(),
   loadTaskSkills: vi.fn(),
   setTaskStatus: vi.fn(),
+  prismaTaskEventCount: vi.fn(),
   logger: { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn(), child: vi.fn() },
 }));
 
@@ -79,6 +80,9 @@ vi.mock('../src/lib/task-skills.js', () => ({
   loadTaskSkills: mocks.loadTaskSkills,
 }));
 vi.mock('../src/lib/task-events.js', () => ({ setTaskStatus: mocks.setTaskStatus }));
+vi.mock('../src/lib/prisma.js', () => ({
+  prisma: { taskEvent: { count: mocks.prismaTaskEventCount } },
+}));
 
 // pr-review.js (parsePrReview, prompt builders) is intentionally NOT mocked:
 // verdict parsing is the behavior under test.
@@ -168,6 +172,7 @@ beforeEach(() => {
   mocks.recordJobFailure.mockResolvedValue('recorded failure');
   mocks.runHermesTask.mockResolvedValue(undefined);
   mocks.setTaskStatus.mockResolvedValue(undefined);
+  mocks.prismaTaskEventCount.mockResolvedValue(0);
 });
 
 afterEach(async () => {
@@ -347,12 +352,81 @@ describe('reviewTask verdict parsing and failure path', () => {
   });
 
   it('rethrows LLM errors for BullMQ retry and still cleans up the workdir', async () => {
-    const boom = new Error('LLM rate limited');
+    const boom = new Error('LLM endpoint exploded');
     mocks.llmCall.mockRejectedValue(boom);
     await expect(reviewTask('task-1')).rejects.toBe(boom);
     expect(mocks.recordJobFailure).toHaveBeenCalledWith('review-pr', 'task-1', boom, []);
     expect(mocks.persistTokenUsage).toHaveBeenCalledWith('task-1', 0, undefined);
     expect(mocks.cleanupWorkdir).toHaveBeenCalledWith(workdirFor(0));
+  });
+});
+
+// Rate-limit failures (HTTP 429, provider quota windows of hours) must NOT
+// burn BullMQ's 60s-backoff attempts: the job records the failure, parks the
+// task back in awaiting_review, and re-enqueues itself past the reset
+// window. Bounded — an endlessly quota-dead config eventually rethrows.
+describe('reviewTask rate-limit deferral', () => {
+  const quotaError = () =>
+    new Error(
+      'LLM endpoint returned HTTP 429: {"error":{"message":"Usage limit reached for 5 hour. Your limit will reset at 2026-07-27 19:07:44"}}',
+    );
+
+  it('defers a rate-limited review instead of rethrowing', async () => {
+    mocks.llmCall.mockRejectedValue(quotaError());
+    await expect(reviewTask('task-1')).resolves.toBeUndefined();
+    expect(mocks.recordJobFailure).toHaveBeenCalledWith(
+      'review-pr',
+      'task-1',
+      expect.any(Error),
+      [],
+    );
+    // Task is parked (not left in reviewing_code), the pause line is the
+    // last log, and a delayed review job takes over.
+    expect(mocks.setTaskStatus).toHaveBeenCalledWith('task-1', 'awaiting_review');
+    expect(mocks.logEvent).toHaveBeenCalledWith(
+      'task-1',
+      expect.stringContaining('review paused: LLM rate limit reached'),
+    );
+    expect(mocks.enqueueReviewTask).toHaveBeenCalledWith(
+      'task-1',
+      0,
+      expect.any(Number),
+      1,
+    );
+    const delay = mocks.enqueueReviewTask.mock.calls[0][2] as number;
+    expect(delay).toBeGreaterThanOrEqual(10 * 60_000);
+    expect(delay).toBeLessThanOrEqual(6 * 60 * 60_000);
+    expect(mocks.cleanupWorkdir).toHaveBeenCalledWith(workdirFor(0));
+  });
+
+  it('sequences defer jobIds so repeated pauses are never deduped away', async () => {
+    mocks.prismaTaskEventCount.mockResolvedValue(3);
+    mocks.llmCall.mockRejectedValue(quotaError());
+    await reviewTask('task-1');
+    expect(mocks.enqueueReviewTask).toHaveBeenCalledWith(
+      'task-1',
+      0,
+      expect.any(Number),
+      4,
+    );
+  });
+
+  it('rethrows once the defer budget is exhausted', async () => {
+    mocks.prismaTaskEventCount.mockResolvedValue(12);
+    const boom = quotaError();
+    mocks.llmCall.mockRejectedValue(boom);
+    await expect(reviewTask('task-1')).rejects.toBe(boom);
+    expect(mocks.enqueueReviewTask).not.toHaveBeenCalled();
+  });
+
+  it('does not defer non-rate-limit failures', async () => {
+    const boom = new Error('git push failed');
+    mocks.llmCall.mockRejectedValue(boom);
+    await expect(reviewTask('task-1')).rejects.toBe(boom);
+    expect(mocks.logEvent).not.toHaveBeenCalledWith(
+      'task-1',
+      expect.stringContaining('review paused'),
+    );
   });
 });
 

@@ -25,6 +25,7 @@ import {
 } from './agent-runtime.js';
 import { runHermesTask } from './hermes-runner.js';
 import { enqueueMergeGate, enqueueReviewTask } from './proposal-scheduler.js';
+import { deferRateLimitedReview } from './review-defer.js';
 import { setTaskStatus } from './task-events.js';
 import { getPullRequestDiff } from './pull-requests.js';
 import {
@@ -380,10 +381,15 @@ export async function reviewTask(taskId: string, attempt = 0): Promise<void> {
   try {
     rt = await executeReviewTask(task, task.branchName, attempt, workdir, secrets);
   } catch (err) {
-    // Record the failure, then rethrow so BullMQ retries the job with
-    // backoff. If the final attempt also fails the PR stays in
-    // reviewing_code until pr-state-sync's bounded recovery re-enqueues it.
+    // Record the failure. A rate-limited review defers itself past the
+    // provider's quota window and completes the job instead of rethrowing —
+    // BullMQ's 60s backoff is useless against a multi-hour 429 and the old
+    // path stranded the PR after the bounded recovery budget ran out. Other
+    // failures rethrow so BullMQ retries the job with backoff; if the final
+    // attempt also fails the PR stays in reviewing_code until
+    // pr-state-sync's bounded recovery re-enqueues it.
     await recordJobFailure('review-pr', taskId, err, secrets);
+    if (await deferRateLimitedReview(taskId, err)) return;
     throw err;
   } finally {
     await persistTokenUsage(

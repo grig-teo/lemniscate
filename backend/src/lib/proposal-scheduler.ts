@@ -254,17 +254,26 @@ export async function enqueueMergeGate(
 // Finished jobs are removed immediately (same rerun-swallow rule as run-task).
 // BullMQ retries a failed job with backoff — transient LLM/git failures used
 // to strand the task in awaiting_review forever with the PR never merging.
-export async function enqueueReviewTask(taskId: string, attempt = 0): Promise<void> {
+// Rate-limited reviews are deferred instead (agent-review.ts): `deferSeq`
+// keeps each deferred jobId unique and `delayMs` waits out the provider's
+// quota window instead of burning the 60s-backoff attempts against it.
+export async function enqueueReviewTask(
+  taskId: string,
+  attempt = 0,
+  delayMs = 0,
+  deferSeq?: number,
+): Promise<void> {
   await getAgentTasksQueue().add(
     'review-pr',
     { taskId, attempt },
     {
-      jobId: `review-pr-${taskId}-${attempt}`,
+      jobId: deferSeq ? `review-pr-${taskId}-defer-${deferSeq}` : `review-pr-${taskId}-${attempt}`,
       removeOnComplete: true,
       removeOnFail: true,
       priority: JOB_PRIORITY.review,
       attempts: 3,
       backoff: { type: 'exponential', delay: 60_000 },
+      ...(delayMs > 0 ? { delay: delayMs } : {}),
     },
   );
 }
