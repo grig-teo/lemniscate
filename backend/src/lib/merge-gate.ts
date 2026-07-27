@@ -210,9 +210,27 @@ function manualGateMessage(checks: PrChecksStatus, ciFixes: number): string {
 }
 
 // fix-ci: hermes fixes the branch, then the gate re-enqueues — CI must pass
-// on the fix commit before the next merge attempt.
+// on the fix commit before the next merge attempt. Rebase-first: when main
+// moved, red CI is often unfixable by a branch-local patch (broken workflow
+// files, guard regressions already fixed on main, divergent test setup) —
+// hermes fixes are only worth their tokens on an up-to-date branch.
 async function runCiFixAndRequeue(ctx: GateContext): Promise<void> {
   const { task, rt } = ctx;
+  if (await prepareMergeCheckout(ctx)) {
+    await logEvent(
+      task.id,
+      'CI is failing and main moved — rebasing the task branch onto it before diagnosing further',
+    );
+    if (config.AGENT_EXECUTOR === 'hermes') {
+      await rebaseHeadBranchViaHermes(ctx);
+    } else {
+      await rebaseHeadBranchWithLlm(ctx);
+    }
+    await persistTokenUsage(task.id, rt.usedTokens, tokenSplit(rt));
+    await logEvent(task.id, 'pushed the rebased branch; waiting for CI before the next merge attempt');
+    await enqueueMergeGate(task.id, ctx.attempt + 1, ctx.ciFixes, MERGE_GATE_DELAY_MS);
+    return;
+  }
   await logEvent(
     task.id,
     `CI checks are failing — fixing with the hermes agent (attempt ${ctx.ciFixes + 1}/${MAX_CI_FIX_ATTEMPTS})`,

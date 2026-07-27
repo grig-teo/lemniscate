@@ -271,6 +271,8 @@ export function buildHermesCiFixPrompt(input: {
     '2. Reproduce the failure locally: install dependencies if needed, then run the same build/test commands.',
     '3. Fix the root cause with minimal, focused edits, and re-run the commands until they pass locally.',
     '',
+    'If the failure comes from a repository guard (lint, file-size, formatting, audit), change the CODE to satisfy the guard — never weaken, skip, or delete the guard or its config to make it pass.',
+    '',
     'Do NOT git commit, push, or create branches — git is handled externally.',
     ...(input.systemPromptExtra
       ? ['', 'Additional instructions from the repository owner:', input.systemPromptExtra]

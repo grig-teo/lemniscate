@@ -6,7 +6,7 @@ import { runHermesTask } from './hermes-runner.js';
 // Hermes executor plumbing for the run-task job. Extracted from agent-run.ts.
 
 const HERMES_INSTRUCTIONS =
-  'Work in the current directory (a freshly cloned repository). Implement the task completely, including tests if the project has a test setup. Do NOT git commit, push, or create branches — git is handled externally.';
+  'Work in the current directory (a freshly cloned repository). Implement the task completely, including tests if the project has a test setup. Respect the repository’s own rules (AGENTS.md, lint/size guards) and keep any repo-provided checks (e.g. check:max-lines, lint scripts) passing — split modules instead of growing files past a size limit. Do NOT git commit, push, or create branches — git is handled externally.';
 
 const RESUME_INSTRUCTIONS =
   'RESUMED RUN: a previous attempt was interrupted (redeploy). The current directory already contains the task branch with its uncommitted work — inspect the current state and CONTINUE the implementation from where it stopped; do not start over or redo completed work.';
