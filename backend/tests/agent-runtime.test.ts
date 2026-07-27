@@ -10,12 +10,12 @@ import {
   billedTokens,
   llmCall,
   minCallIntervalMs,
-  parseCustomHeaders,
   sumMessageChars,
   throttleDelayMs,
   TokenBudgetExceededError,
   type LlmRuntime,
 } from '../src/lib/agent-runtime.js';
+import { parseCustomHeaders } from '../src/lib/llm-failover.js';
 
 // Locking tests for the LLM runtime primitives extracted from agent-loop.ts:
 // the requestsPerMinute throttle, the token-budget accounting (with the
