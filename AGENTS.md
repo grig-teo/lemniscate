@@ -93,6 +93,19 @@ that was red is now green, alongside the whole suite. Refactors specifically
 (per section 6) MUST land a locking test against the current code before any
 production line is deleted or rewritten.
 
+## 8. Git workflow
+
+* **Every task gets its own branch and pull request.** Work never goes
+  directly onto the default branch: create a short-lived branch
+  (`lemniscate/<slug>` for agent runs), open a PR for it, and merge through
+  the PR once CI is green.
+* **Keep local `main` in sync with remote `main`.** Before starting a task,
+  and again before merging one, fast-forward local `main` to the remote
+  (`git pull --ff-only`). If the default branch moved while the task branch
+  was in flight, rebase the task branch onto the fresh `main` (resolving
+  conflicts on the branch, never by merging `main` into it), push with
+  `--force-with-lease`, and let CI verify the rebased head before merging.
+
 ---
 
 ## Project layout
