@@ -132,6 +132,10 @@ const envSchema = z.object({
   // Queued+running tasks a single user may have at once; the 6th concurrent
   // create is rejected with 429.
   TASK_MAX_ACTIVE_PER_USER: z.coerce.number().int().positive().default(5),
+  // Maximum concurrent SSE event streams a single user may hold open at once
+  // (across all tasks/tabs). The (N+1)th stream is rejected with 429. Prevents
+  // one user — or a reconnect storm — from exhausting resources.
+  SSE_MAX_PER_USER: z.coerce.number().int().positive().default(10),
 
   // --- Observability ---
   // Bearer token guarding GET /metrics (Prometheus). Unset = the endpoint

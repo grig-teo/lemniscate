@@ -1,8 +1,7 @@
 import type { FastifyReply, FastifyRequest } from 'fastify';
-import { Redis } from 'ioredis';
-import { config } from '../config.js';
 import { prisma } from '../lib/prisma.js';
 import { serializeTaskEvent } from '../lib/task-events.js';
+import { sseHub } from '../lib/sse-hub.js';
 import { authenticatedUserId } from '../plugins/auth.js';
 import { parseOrReply } from './helpers.js';
 import { ownedTaskWhere, wantsSse } from './task-lifecycle.js';
@@ -15,8 +14,12 @@ import { idParamsSchema } from './task-schemas.js';
 //   log    → { line: string } | { lines: string[] }
 //   status → { status: 'pending'|'queued'|'running'|'reviewing_code'|'awaiting_review'|'done'|'failed'|'closed' }
 //   diff   → { path: string, diff: string } | { path: string, action: 'created'|'modified'|'deleted' }
+//
+// Live events are delivered through a shared SSE multiplexer (sseHub) that
+// uses a single Redis psubscribe connection for all viewers, rather than one
+// Redis connection per browser tab. The hub also enforces a per-user
+// concurrent-stream cap (SSE_MAX_PER_USER) and an idle-timeout safety close.
 
-const SSE_HEARTBEAT_MS = 15_000;
 // Maximum events returned in a single JSON or SSE-replay response. Bounds
 // response size and latency regardless of how many events a task accumulated.
 const HISTORY_TAKE = 1_000;
@@ -46,7 +49,7 @@ export async function getTaskEvents(request: FastifyRequest, reply: FastifyReply
     return events.reverse().map(serializeTaskEvent);
   }
 
-  return streamTaskEvents(request, reply, task.id);
+  return streamTaskEvents(request, reply, task.id, userId);
 }
 
 // Replay the most recent N persisted events (descending query, reversed so
@@ -62,40 +65,31 @@ async function replayHistory(reply: FastifyReply, taskId: string): Promise<void>
   }
 }
 
-// Dedicated connection: a Redis client in subscribe mode cannot run other
-// commands, so it must not be the shared publisher.
-async function followLiveEvents(
-  request: FastifyRequest,
-  reply: FastifyReply,
-  taskId: string,
-): Promise<void> {
-  const subscriber = new Redis(config.REDIS_URL, { maxRetriesPerRequest: null });
-  subscriber.on('message', (_channel: string, message: string) => {
-    reply.raw.write(`data: ${message}\n\n`);
-  });
-  await subscriber.subscribe(`task-events:${taskId}`);
-
-  const heartbeat = setInterval(() => {
-    reply.raw.write(': ping\n\n');
-  }, SSE_HEARTBEAT_MS);
-
-  request.raw.on('close', () => {
-    clearInterval(heartbeat);
-    void subscriber.unsubscribe().finally(() => subscriber.quit());
-  });
-}
-
+// Registers the response with the shared SSE hub (which holds a single Redis
+// psubscribe connection for all viewers), then replays history. Heartbeats
+// and idle-timeout cleanup are handled by the hub's sweep timer.
 async function streamTaskEvents(
   request: FastifyRequest,
   reply: FastifyReply,
   taskId: string,
+  userId: string,
 ): Promise<void> {
+  // Per-user cap must be checked (and the response registered) BEFORE
+  // hijacking — a rejected stream returns a normal HTTP 429.
+  if (!sseHub.register(taskId, userId, reply.raw)) {
+    return reply.code(429).send({ error: 'Too many concurrent event streams' });
+  }
+
   reply.hijack();
   reply.raw.writeHead(200, {
     'content-type': 'text/event-stream',
     'cache-control': 'no-cache',
     connection: 'keep-alive',
   });
+
+  // Attach the cleanup handler before the first await so a disconnect during
+  // history replay is caught immediately.
+  request.raw.on('close', () => sseHub.unregister(taskId, reply.raw));
+
   await replayHistory(reply, taskId);
-  await followLiveEvents(request, reply, taskId);
 }
