@@ -1,10 +1,12 @@
 import { z } from 'zod';
+import { gitverseApiBase, gitverseHeaders, ProviderError } from './git-providers.js';
 import {
-  gitverseApiBase,
-  gitverseBase,
-  gitverseHeaders,
-  ProviderError,
-} from './git-providers.js';
+  gitverseAllPullsQueryUrl,
+  gitverseMergeFailure,
+  gitverseOpenPullsQueryUrl,
+  gitversePrWebUrl,
+  gitversePullsUrl,
+} from './pr-gitverse-http.js';
 import {
   apiRequest,
   assembleUnifiedDiff,
@@ -27,12 +29,8 @@ import {
 
 // GitVerse pull-request operations (public API: api.<host>, GitHub-shaped
 // pulls). The public API exposes no check-status endpoint, so the returned
-// ProviderPrApi has no `checks` operation.
-
-// Merge execution is not part of the documented public API — the message the
-// agent loop records so the task stays awaiting_review for a human.
-const GITVERSE_MERGE_UNSUPPORTED =
-  'gitverse: merge via API is not supported by the public API — merge manually';
+// ProviderPrApi has no `checks` operation. URL builders and merge-failure
+// classification live in pr-gitverse-http.ts.
 
 const gitversePullSchema = z.object({
   number: z.number(),
@@ -48,35 +46,6 @@ const gitverseCreatedPullSchema = z.object({
 
 const gitverseCompareSchema = z.object({ files: z.array(gitverseDiffFileSchema) });
 const gitverseFilesSchema = z.array(gitverseDiffFileSchema);
-
-// True only when a payload clearly says the PR is not mergeable.
-function indicatesUnmergeable(body: unknown): boolean {
-  if (!body || typeof body !== 'object') return false;
-  const state = body as { mergeable?: unknown; mergeable_state?: unknown };
-  return state.mergeable === false || state.mergeable_state === 'dirty';
-}
-
-function gitversePullsUrl(connection: PrConnectionInput, repoFullName: string): string {
-  return `${gitverseApiBase(connection.baseUrl)}/repos/${encodeRepoPath(repoFullName)}/pulls`;
-}
-
-function gitverseOpenPullsQueryUrl(
-  connection: PrConnectionInput,
-  input: PullRequestRefInput,
-): string {
-  return (
-    `${gitversePullsUrl(connection, input.repoFullName)}?state=open` +
-    `&head=${encodeURIComponent(input.headBranch)}&per_page=100`
-  );
-}
-
-function gitversePrWebUrl(
-  connection: PrConnectionInput,
-  repoFullName: string,
-  pull: { number: number; html_url?: string },
-): string {
-  return pull.html_url ?? `${gitverseBase(connection.baseUrl)}/${repoFullName}/pulls/${pull.number}`;
-}
 
 // Finds the open PR number for the head branch (numbers are not stored).
 async function gitverseLookupPullNumber(
@@ -104,39 +73,6 @@ async function gitverseFindExistingPrUrl(
   const { body } = await apiRequest('gitverse', 'GET', url, gitverseHeaders(token), token);
   const match = gitversePullListSchema.parse(body).find((pull) => matchesHeadBaseRef(pull, input));
   return match ? gitversePrWebUrl(connection, input.repoFullName, match) : null;
-}
-
-// A 409 counts as a conflict only when something clearly says mergeable=false:
-// the error body itself, or the documented GET /pulls/{n}/merge status check.
-async function gitverseConfirmsConflict(
-  mergeUrl: string,
-  token: string,
-  err: ProviderError,
-): Promise<boolean> {
-  if (/conflict|mergeable["']?\s*:\s*false/i.test(err.message)) return true;
-  try {
-    const { body } = await apiRequest('gitverse', 'GET', mergeUrl, gitverseHeaders(token), token);
-    return indicatesUnmergeable(body);
-  } catch {
-    return false; // status check unavailable — cannot confirm a conflict
-  }
-}
-
-async function gitverseMergeFailure(
-  mergeUrl: string,
-  token: string,
-  prUrl: string,
-  err: unknown,
-): Promise<MergePullRequestResult> {
-  if (!(err instanceof ProviderError)) throw err;
-  // 404/405 = the public API has no merge-execution endpoint.
-  if (err.status === 404 || err.status === 405) {
-    throw new ProviderError(GITVERSE_MERGE_UNSUPPORTED, err.status);
-  }
-  if (err.status === 409 && (await gitverseConfirmsConflict(mergeUrl, token, err))) {
-    return { merged: false, conflict: true, prUrl };
-  }
-  throw err;
 }
 
 async function gitverseMergePullRequest(
@@ -237,16 +173,6 @@ const gitversePullDetailStateSchema = z.object({
   merged: z.boolean().optional(),
   merged_at: z.string().nullable().optional(),
 });
-
-function gitverseAllPullsQueryUrl(
-  connection: PrConnectionInput,
-  input: PullRequestRefInput,
-): string {
-  return (
-    `${gitversePullsUrl(connection, input.repoFullName)}?state=all` +
-    `&head=${encodeURIComponent(input.headBranch)}&per_page=100`
-  );
-}
 
 async function gitversePullRequestState(
   connection: PrConnectionInput,

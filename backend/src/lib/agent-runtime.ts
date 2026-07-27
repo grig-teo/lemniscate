@@ -22,7 +22,7 @@ import {
 import { parseTaskThinkingLevel } from './task-attachments.js';
 import { prisma } from './prisma.js';
 import { withGitlabRefreshRetry } from './token-refresh.js';
-import { assertPublicHttpUrl } from './url-safety.js';
+import { assertSafeCloneUrl, assertSafeLlmBaseUrl } from './agent-runtime-gates.js';
 import { sleep } from './utils.js';
 
 // LLM runtime for the agent loop: per-run state (token usage + throttle
@@ -257,24 +257,6 @@ export interface AgentRunContext {
   /** Per-invocation credentials for the worker's own git child processes. */
   gitAuth: GitAuth;
   rt: LlmRuntime;
-}
-
-// Clone URL gate: https-only and publicly routable, checked before any token
-// is decrypted or any clone runs — a stored cloneUrl must never turn the
-// worker into an SSRF client (or read local services via file/http).
-async function assertSafeCloneUrl(cloneUrl: string): Promise<void> {
-  const url = await assertPublicHttpUrl(cloneUrl);
-  if (url.protocol !== 'https:') {
-    throw new Error(`repository cloneUrl must use https (got ${url.protocol})`);
-  }
-}
-
-// LLM endpoint gate: the saved-config baseUrl is asserted once here, at
-// runtime construction — not on the per-request hot path in llm-client.ts.
-async function assertSafeLlmBaseUrl(baseUrl: string): Promise<void> {
-  await assertPublicHttpUrl(baseUrl).catch((err: unknown) => {
-    throw new Error(`LLM baseUrl is not allowed: ${(err as Error).message}`);
-  });
 }
 
 // Decrypts the connection token + LLM key (recording both as secrets to
