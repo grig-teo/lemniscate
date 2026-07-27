@@ -1,7 +1,6 @@
 import * as React from 'react';
-import { Pencil, Plus, Trash2 } from 'lucide-react';
+import { Plus } from 'lucide-react';
 
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { FormField } from '@/components/ui/form-field';
 import {
@@ -14,7 +13,6 @@ import {
 import { Textarea } from '@/components/ui/textarea';
 import {
   useCreateEventTrigger,
-  useDeleteEventTrigger,
   useEventTriggers,
   useRepositories,
   useUpdateEventTrigger,
@@ -23,21 +21,12 @@ import {
   type Repository,
 } from '@/lib/hooks';
 
-import { FlagSwitch } from '@/components/repo-tree/FlagSwitch';
-
-const EVENT_KIND_LABELS: Record<EventTriggerKind, string> = {
-  ci_failed: 'CI failed',
-  issue_opened: 'Issue opened',
-};
-
-const EVENT_KIND_DESCRIPTIONS: Record<EventTriggerKind, string> = {
-  ci_failed: 'A CI check run / pipeline fails on the default branch.',
-  issue_opened: 'A new issue is opened on the repository.',
-};
-
-function eventKindLabel(kind: EventTriggerKind): string {
-  return EVENT_KIND_LABELS[kind];
-}
+import { TriggerList } from './EventTriggerList';
+import {
+  EVENT_KIND_DESCRIPTIONS,
+  availableKinds,
+  eventKindLabel,
+} from './event-triggers-utils';
 
 /** Repository picker: triggers are configured per repository. */
 function RepoSelect({
@@ -136,97 +125,6 @@ function TriggerForm({
         </Button>
       </div>
     </div>
-  );
-}
-
-/** Kinds still available for a new trigger (one per kind per repository). */
-function availableKinds(usedKinds: EventTriggerKind[]): EventTriggerKind[] {
-  return (Object.keys(EVENT_KIND_LABELS) as EventTriggerKind[]).filter(
-    (kind) => !usedKinds.includes(kind),
-  );
-}
-
-function TriggerRow({
-  trigger,
-  busy,
-  onToggle,
-  onEdit,
-  onDelete,
-}: {
-  trigger: EventTrigger;
-  busy: boolean;
-  onToggle: (enabled: boolean) => void;
-  onEdit: () => void;
-  onDelete: () => void;
-}) {
-  return (
-    <li className="flex items-center justify-between gap-3 rounded-md border px-3 py-2">
-      <div className="flex min-w-0 flex-col gap-0.5">
-        <div className="flex flex-wrap items-center gap-2">
-          <Badge variant="outline">{eventKindLabel(trigger.eventKind)}</Badge>
-          <FlagSwitch
-            label="enabled"
-            ariaLabel={`Enable ${eventKindLabel(trigger.eventKind)} trigger`}
-            checked={trigger.enabled}
-            disabled={busy}
-            onChange={onToggle}
-          />
-        </div>
-        <span className="line-clamp-2 text-xs text-muted-foreground">{trigger.taskPrompt}</span>
-      </div>
-      <div className="flex shrink-0 gap-1">
-        <Button variant="ghost" size="sm" onClick={onEdit}>
-          <Pencil className="h-4 w-4" />
-          Edit
-        </Button>
-        <Button variant="ghost" size="sm" onClick={onDelete} disabled={busy}>
-          <Trash2 className="h-4 w-4" />
-          Delete
-        </Button>
-      </div>
-    </li>
-  );
-}
-
-function TriggerList({
-  repositoryId,
-  triggers,
-  onEdit,
-}: {
-  repositoryId: string;
-  triggers: EventTrigger[];
-  onEdit: (trigger: EventTrigger) => void;
-}) {
-  const updateTrigger = useUpdateEventTrigger(repositoryId);
-  const deleteTrigger = useDeleteEventTrigger(repositoryId);
-  const busy = updateTrigger.isPending || deleteTrigger.isPending;
-
-  function remove(trigger: EventTrigger) {
-    if (window.confirm(`Delete the "${eventKindLabel(trigger.eventKind)}" trigger?`)) {
-      deleteTrigger.mutate(trigger.id);
-    }
-  }
-
-  return (
-    <>
-      <ul className="flex flex-col gap-2">
-        {triggers.map((trigger) => (
-          <TriggerRow
-            key={trigger.id}
-            trigger={trigger}
-            busy={busy}
-            onToggle={(enabled) => updateTrigger.mutate({ triggerId: trigger.id, patch: { enabled } })}
-            onEdit={() => onEdit(trigger)}
-            onDelete={() => remove(trigger)}
-          />
-        ))}
-      </ul>
-      {(updateTrigger.isError || deleteTrigger.isError) && (
-        <p className="text-sm text-destructive">
-          {updateTrigger.error?.message ?? deleteTrigger.error?.message}
-        </p>
-      )}
-    </>
   );
 }
 
