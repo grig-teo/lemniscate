@@ -5,8 +5,20 @@
  * flags whether one is stored).
  *
  * Device-domain types live next to their hooks in queries/devices.ts; service
- * types in lib/services.ts.
+ * types in lib/services.ts; task-domain types in lib/task-types.ts
+ * (re-exported below to keep existing api-types imports valid).
  */
+
+export type {
+  CreateTaskBody,
+  StartTaskBody,
+  Task,
+  TaskEventItem,
+  TaskEventKind,
+  TaskImage,
+  TaskStatus,
+  TaskThinkingLevel,
+} from './task-types';
 
 export type Me = {
   id: string;
@@ -206,101 +218,6 @@ export type SkillDetail = Skill & {
 export type SkillCategory = {
   name: string;
   count: number;
-};
-
-export type TaskStatus =
-  | 'pending'
-  | 'queued'
-  | 'running'
-  | 'awaiting_review'
-  | 'reviewing_code'
-  | 'done'
-  | 'failed'
-  | 'closed'
-  | (string & {});
-
-/** Per-task thinking-level override accepted by POST /api/tasks. */
-export type TaskThinkingLevel = 'low' | 'medium' | 'high' | 'max';
-
-/** Image attachment sent with a prompt task (data URL, max 3 per task). */
-export type TaskImage = {
-  name: string;
-  dataUrl: string;
-};
-
-export type Task = {
-  id: string;
-  repositoryId: string;
-  kind: string;
-  title: string;
-  /** Proposal category label ('security', 'ux/ui', …); null for prompt tasks. */
-  category?: string | null;
-  /** Proposal priority ('critical'|'high'|'medium'|'low') and effort ('small'|'medium'|'large'). */
-  priority?: string | null;
-  effort?: string | null;
-  status: TaskStatus;
-  /** Full prompt — only included by GET /api/tasks/:id, not by list endpoints. */
-  prompt?: string;
-  /** Structured error code for failed tasks (LLM_AUTH_FAILED, GIT_PERMISSION_DENIED, …). */
-  errorCode?: string | null;
-  branchName?: string | null;
-  prUrl?: string | null;
-  thinkingLevel?: TaskThinkingLevel | null;
-  attachments?: TaskImage[] | null;
-  /** Soft-archive timestamp; null = active. Archived tasks only appear in ?archived=true lists. */
-  archivedAt: string | null;
-  /** Cumulative LLM tokens across run/review/merge jobs of this task. */
-  llmTokensUsed: number;
-  /** Prompt/completion split; null for tasks that predate the split columns. */
-  llmPromptTokens?: number | null;
-  llmCompletionTokens?: number | null;
-  /** Effective run budget (task config → repo config → user default); null = uncapped. */
-  maxTokensPerRun?: number | null;
-  /** Estimated USD at the effective config's prices; absent when unpriced or split unknown. */
-  estimatedCostUsd?: number;
-  /** Effective LLM config (task → repo → user default) backing this task. */
-  effectiveLlmConfigId?: string | null;
-  /** Effective config's display name — the console footer's active-model label. */
-  llmConfigName?: string | null;
-  /** Effective config's model id. */
-  llmModel?: string | null;
-  /** Effective config's context window — the session context indicator's 100%. */
-  contextWindow?: number | null;
-  createdAt: string;
-  updatedAt: string;
-};
-
-/** POST /api/tasks body; optional fields are omitted when unset. */
-export type CreateTaskBody = {
-  repositoryId: string;
-  prompt: string;
-  thinkingLevel?: TaskThinkingLevel;
-  llmConfigId?: string;
-  images?: TaskImage[];
-  /** Save for later: create the task as pending without enqueueing it. */
-  later?: boolean;
-  /** Explicit skill slugs; omitted = inherit the repository's selection. */
-  skills?: string[];
-  /** MCP server slugs materialized as .mcp.json for this run. */
-  mcpServerSlugs?: string[];
-  /** Per-folder AGENTS.md assignments (template skillId or uploaded content). */
-  agentsMdFiles?: { folder: string; skillId?: string; content?: string }[];
-};
-
-/** POST /api/tasks/:id/start body — proposal edits applied before queueing. */
-export type StartTaskBody = {
-  title?: string;
-  prompt?: string;
-  images?: TaskImage[];
-};
-
-export type TaskEventKind = 'log' | 'diff' | 'status' | (string & {});
-
-export type TaskEventItem = {
-  id: string;
-  kind: TaskEventKind;
-  payload: unknown;
-  createdAt: string;
 };
 
 export type UsagePeriod = '7d' | '30d';
