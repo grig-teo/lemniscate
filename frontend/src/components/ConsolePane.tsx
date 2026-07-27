@@ -11,6 +11,7 @@ import { ConsoleFooterStatusBar } from '@/components/console/ConsoleFooterStatus
 import { ConsoleLog } from '@/components/console/ConsoleLog';
 import { ErrorBanner } from '@/components/console/ErrorBanner';
 import { ArchivedPane } from '@/components/console/ArchivedPane';
+import { ArchivedTaskDetail } from '@/components/console/ArchivedTaskDetail';
 import { ProposalDetail } from '@/components/console/ProposalDetail';
 import { ComposerCard, TaskComposerFab } from '@/components/console/TaskComposer';
 import { ServiceDetail } from '@/components/services/ServiceDetail';
@@ -54,12 +55,15 @@ function EmptyConsole() {
  * while the selected task is in flight (queued or running). When the repo tree's
  * "show more" opens a repo's archived view (selection.archivedRepoId),
  * ArchivedPane replaces the console/composer until closed or a task is
- * selected. When a task's live status flips to done, RunTaskDialog
+ * selected. Clicking an archived row (selection.archivedTask) opens the
+ * read-only ArchivedTaskDetail — task details plus the archived console log
+ * history — on top of the list. When a task's live status flips to done, RunTaskDialog
  * auto-opens once (if a run target has an online device); it is also
  * reachable via the header's run-on-device button.
  */
 export function ConsolePane() {
-  const { selectedTask, liveStatus, archivedRepoId, selectedServiceId } = useWorkspaceSelection();
+  const { selectedTask, liveStatus, archivedRepoId, archivedTask, selectedServiceId } =
+    useWorkspaceSelection();
   const taskId = selectedTask?.id ?? null;
   const consoleState = useTaskConsole(taskId);
 
@@ -126,6 +130,7 @@ export function ConsolePane() {
   }, [autoOpenPending, taskId, runTargets.data, runTargets.isError]);
 
   if (selectedServiceId) return <ServiceDetail serviceId={selectedServiceId} />;
+  if (archivedTask) return <ArchivedTaskDetail task={archivedTask} />;
   if (archivedRepoId) return <ArchivedPane repositoryId={archivedRepoId} />;
   if (!selectedTask) return <EmptyConsole />;
 

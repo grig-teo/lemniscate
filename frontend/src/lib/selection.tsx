@@ -32,6 +32,10 @@ interface WorkspaceSelectionValue {
   archivedRepoId: string | null;
   openArchived: (repoId: string) => void;
   closeArchived: () => void;
+  /** Archived task whose read-only detail (details + console history) is open. */
+  archivedTask: SelectedTask | null;
+  openArchivedTask: (task: SelectedTask) => void;
+  closeArchivedTask: () => void;
   /** Service whose detail pane is open in the center pane. */
   selectedServiceId: string | null;
   selectService: (id: string | null) => void;
@@ -52,6 +56,7 @@ export function WorkspaceSelectionProvider({ children }: { children: React.React
     readPersisted<string | null>(SELECTED_REPO_STORAGE_KEY, null),
   );
   const [archivedRepoId, setArchivedRepoId] = React.useState<string | null>(null);
+  const [archivedTask, setArchivedTask] = React.useState<SelectedTask | null>(null);
   const [selectedServiceId, setSelectedServiceId] = React.useState<string | null>(() =>
     readPersisted<string | null>(SELECTED_SERVICE_STORAGE_KEY, null),
   );
@@ -61,6 +66,7 @@ export function WorkspaceSelectionProvider({ children }: { children: React.React
     writePersisted(SELECTED_TASK_STORAGE_KEY, task);
     setLiveStatus(null);
     setArchivedRepoId(null);
+    setArchivedTask(null);
     setSelectedServiceId(null);
     writePersisted(SELECTED_SERVICE_STORAGE_KEY, null);
   }, []);
@@ -70,8 +76,26 @@ export function WorkspaceSelectionProvider({ children }: { children: React.React
     writePersisted(SELECTED_REPO_STORAGE_KEY, id);
   }, []);
 
-  const openArchived = React.useCallback((repoId: string) => setArchivedRepoId(repoId), []);
-  const closeArchived = React.useCallback(() => setArchivedRepoId(null), []);
+  const openArchived = React.useCallback((repoId: string) => {
+    setArchivedRepoId(repoId);
+    setArchivedTask(null);
+  }, []);
+  const closeArchived = React.useCallback(() => {
+    setArchivedRepoId(null);
+    setArchivedTask(null);
+  }, []);
+
+  // The archived detail replaces the live console/service views but keeps the
+  // archived list (archivedRepoId) open underneath for the way back.
+  const openArchivedTask = React.useCallback((task: SelectedTask) => {
+    setArchivedTask(task);
+    setSelectedTask(null);
+    writePersisted(SELECTED_TASK_STORAGE_KEY, null);
+    setLiveStatus(null);
+    setSelectedServiceId(null);
+    writePersisted(SELECTED_SERVICE_STORAGE_KEY, null);
+  }, []);
+  const closeArchivedTask = React.useCallback(() => setArchivedTask(null), []);
 
   const selectService = React.useCallback((id: string | null) => {
     setSelectedServiceId(id);
@@ -81,6 +105,7 @@ export function WorkspaceSelectionProvider({ children }: { children: React.React
       setSelectedTask(null);
       writePersisted(SELECTED_TASK_STORAGE_KEY, null);
       setArchivedRepoId(null);
+      setArchivedTask(null);
       setLiveStatus(null);
     }
   }, []);
@@ -94,6 +119,9 @@ export function WorkspaceSelectionProvider({ children }: { children: React.React
       archivedRepoId,
       openArchived,
       closeArchived,
+      archivedTask,
+      openArchivedTask,
+      closeArchivedTask,
       selectedServiceId,
       selectService,
       liveStatus,
@@ -107,6 +135,9 @@ export function WorkspaceSelectionProvider({ children }: { children: React.React
       archivedRepoId,
       openArchived,
       closeArchived,
+      archivedTask,
+      openArchivedTask,
+      closeArchivedTask,
       selectedServiceId,
       selectService,
       liveStatus,
