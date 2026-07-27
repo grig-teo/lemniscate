@@ -135,6 +135,16 @@ function activateFailoverConfig(rt: LlmRuntime, cfg: LlmConfig, cause: LlmError)
   switchRuntimeConfig(rt, cfg, logFailover(rt, rt.cfg.model, cfg, cause));
 }
 
+// Persisting the promoted config id to the task row keeps
+// applyPendingModelSwitch from reading the pre-failover id as a pending user
+// switch and bouncing the runtime back onto the config that just failed.
+// Advisory: a failed update must not break an in-flight run.
+async function persistPromotedConfig(taskId: string, cfg: LlmConfig): Promise<void> {
+  await prisma.task
+    .update({ where: { id: taskId }, data: { llmConfigId: cfg.id } })
+    .catch(() => {});
+}
+
 // ---------------------------------------------------------------------------
 // Mid-run model switch (POST /tasks/:id/model)
 // ---------------------------------------------------------------------------
@@ -179,6 +189,7 @@ export async function promoteFailoverConfig(rt: LlmRuntime, cause: LlmError): Pr
       continue;
     }
     activateFailoverConfig(rt, candidate, cause);
+    if (rt.taskId) await persistPromotedConfig(rt.taskId, candidate);
     return true;
   }
   return false;
