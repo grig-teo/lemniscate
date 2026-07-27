@@ -27,6 +27,7 @@ vi.mock('../src/config.js', () => ({
   },
 }));
 
+import { config } from '../src/config.js';
 import {
   archiveObjectKey,
   archiveWorkdirToMinio,
@@ -215,5 +216,19 @@ describe('archiveWorkdirToMinio', () => {
     await mkdir(join(workdir, 'src'), { recursive: true });
     await writeFile(join(workdir, 'src', 'big.bin'), big);
     await expect(archiveWorkdirToMinio(workdir)).resolves.toBeUndefined();
+  });
+
+  it('is a no-op when WORKDIR_ARCHIVE_ENABLED=false (no tar, no MinIO call)', async () => {
+    const original = config.WORKDIR_ARCHIVE_ENABLED;
+    config.WORKDIR_ARCHIVE_ENABLED = false;
+    try {
+      await writeFile(join(workdir, 'hello.txt'), 'hello');
+      await archiveWorkdirToMinio(workdir, 'task-disabled');
+      expect(minio.getMinioBucket).not.toHaveBeenCalled();
+      expect(minio.fPutObject).not.toHaveBeenCalled();
+      expect(events.publishTaskEvent).not.toHaveBeenCalled();
+    } finally {
+      config.WORKDIR_ARCHIVE_ENABLED = original;
+    }
   });
 });
