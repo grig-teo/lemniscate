@@ -121,6 +121,20 @@ export type Repository = {
   };
 };
 
+/** Event kinds that can fire a trigger (subset of webhook event kinds). */
+export type EventTriggerKind = 'ci_failed' | 'issue_opened';
+
+/** EventTrigger row: maps an inbound webhook event to a task creation prompt. */
+export type EventTrigger = {
+  id: string;
+  repositoryId: string;
+  eventKind: EventTriggerKind;
+  taskPrompt: string;
+  enabled: boolean;
+  createdAt: string;
+  updatedAt: string;
+};
+
 /** GET /api/skills list item — full content only comes from GET /api/skills/:slug. */
 export type Skill = {
   id: string;

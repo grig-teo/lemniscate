@@ -164,11 +164,33 @@ model Repository {
   llmConfig     LlmConfig?    @relation("RepositoryLlm", fields: [llmConfigId], references: [id], onDelete: SetNull)
   reviewLlmConfig LlmConfig?  @relation("RepositoryReviewLlm", fields: [reviewLlmConfigId], references: [id], onDelete: SetNull)
   tasks         Task[]
+  eventTriggers EventTrigger[]
   service       Service?
 
   @@unique([connectionId, externalId])
   @@index([llmConfigId])
   @@index([reviewLlmConfigId])
+}
+
+// Event-driven task triggers: maps an inbound webhook event kind to a task
+// prompt. When the webhook receiver gets a ci_failed or issue_opened event for
+// a repository, it checks for a matching enabled EventTrigger and creates +
+// enqueues a prompt task using taskPrompt as the instruction.
+model EventTrigger {
+  id           String   @id @default(cuid())
+  repositoryId String
+  // 'ci_failed' | 'issue_opened' — the webhook event kind that fires this trigger.
+  eventKind    String
+  // The prompt injected into the created task (becomes the task.prompt).
+  taskPrompt   String
+  enabled      Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  repository   Repository @relation(fields: [repositoryId], references: [id], onDelete: Cascade)
+
+  // One trigger per event kind per repository.
+  @@unique([repositoryId, eventKind])
+  @@index([repositoryId])
 }
 
 model Task {

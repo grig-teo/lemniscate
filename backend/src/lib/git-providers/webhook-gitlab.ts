@@ -58,6 +58,28 @@ function parseGitlabPipeline(
   return { kind: 'ci_status', repoFullName, headBranch, deliveryId };
 }
 
+// Maps a GitLab pipeline with status=failed to ci_failed (event trigger).
+function parseGitlabPipelineFailure(
+  attrs: { status?: unknown; ref?: unknown },
+  deliveryId: string | null,
+  repoFullName: string,
+): WebhookEvent | null {
+  if (attrs.status !== 'failed') return null;
+  const headBranch = attrs.ref;
+  if (typeof headBranch !== 'string' || !headBranch) return null;
+  return { kind: 'ci_failed', repoFullName, headBranch, deliveryId };
+}
+
+// Maps a GitLab issue event with action=open to issue_opened (event trigger).
+function parseGitlabIssue(
+  attrs: { action?: unknown },
+  deliveryId: string | null,
+  repoFullName: string,
+): WebhookEvent | null {
+  if (attrs.action !== 'open') return null;
+  return { kind: 'issue_opened', repoFullName, headBranch: '', deliveryId };
+}
+
 /** Parses a verified GitLab webhook payload into a normalized event. */
 export function parseGitlabWebhook(
   payload: unknown,
@@ -77,9 +99,18 @@ export function parseGitlabWebhook(
     return parseGitlabMergeRequest(attrs, deliveryId, repoFullName);
   }
   if (eventType === 'pipeline' || eventType === 'Pipeline Hook') {
-    const attrs = body.object_attributes as { ref?: unknown } | undefined;
+    const attrs = body.object_attributes as { status?: unknown; ref?: unknown } | undefined;
     if (!attrs) return null;
+    // pipeline with status=failed emits ci_failed (event trigger) BEFORE the
+    // generic ci_status mapping — a failed pipeline is actionable on its own.
+    const failed = parseGitlabPipelineFailure(attrs, deliveryId, repoFullName);
+    if (failed) return failed;
     return parseGitlabPipeline(attrs, deliveryId, repoFullName);
+  }
+  if (eventType === 'issue' || eventType === 'Issue Hook') {
+    const attrs = body.object_attributes as { action?: unknown } | undefined;
+    if (!attrs) return null;
+    return parseGitlabIssue(attrs, deliveryId, repoFullName);
   }
   return null;
 }

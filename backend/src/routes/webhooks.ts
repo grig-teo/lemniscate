@@ -7,6 +7,7 @@ import { prisma } from '../lib/prisma.js';
 import { enqueueMergeGate } from '../lib/proposal-scheduler.js';
 import { getRedisClient } from '../lib/redis.js';
 import type { WebhookEvent } from '../lib/git-providers/webhook-types.js';
+import { fireEventTrigger } from '../lib/event-trigger-handler.js';
 
 // Inbound git-provider webhook receiver: POST /api/webhooks/:connectionId.
 //
@@ -103,8 +104,26 @@ async function isReplay(deliveryId: string | null): Promise<boolean> {
 
 async function dispatchEvent(event: WebhookEvent) {
   const task = await findAwaitingTask(event.repoFullName, event.headBranch);
-  if (!task) return { ok: true, event: 'no_task' };
+  if (task) {
+    const prStateResult = await dispatchPrStateEvent(event, task);
+    if (prStateResult) return prStateResult;
+  }
 
+  // Event-driven triggers (ci_failed, issue_opened): checked after the existing
+  // PR-state dispatch so both paths can fire for the same event if needed.
+  const triggerResult = await fireEventTrigger(event);
+  if (triggerResult.fired) {
+    return { ok: true, event: event.kind };
+  }
+  return { ok: true, event: task ? event.kind : 'no_task' };
+}
+
+/** Dispatches PR-state transitions (pr_merged, pr_closed, ci_status) and kicks
+ * the merge gate for ci_failed on an awaiting task's branch. */
+async function dispatchPrStateEvent(
+  event: WebhookEvent,
+  task: TaskWithConnection,
+): Promise<{ ok: true; event: string } | null> {
   if (event.kind === 'pr_merged') {
     await applyTaskPrStateSafe(task, 'merged', 'webhook');
     return { ok: true, event: 'pr_merged' };
@@ -113,8 +132,17 @@ async function dispatchEvent(event: WebhookEvent) {
     await applyTaskPrStateSafe(task, 'closed', 'webhook');
     return { ok: true, event: 'pr_closed' };
   }
-  await enqueueMergeGate(task.id);
-  return { ok: true, event: 'ci_status' };
+  if (event.kind === 'ci_status') {
+    await enqueueMergeGate(task.id);
+    return { ok: true, event: 'ci_status' };
+  }
+  // A failed check on an awaiting task's branch is still a CI signal: kick the
+  // merge gate so its CI-fix loop runs. Falls through (returns null) so the
+  // event trigger can also fire for the same delivery.
+  if (event.kind === 'ci_failed') {
+    await enqueueMergeGate(task.id);
+  }
+  return null;
 }
 
 async function findAwaitingTask(

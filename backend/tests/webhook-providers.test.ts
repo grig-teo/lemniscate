@@ -286,6 +286,139 @@ describe('parseGitlabWebhook', () => {
 });
 
 // ---------------------------------------------------------------------------
+// GitHub event-driven triggers (ci_failed, issue_opened)
+// ---------------------------------------------------------------------------
+
+const GITHUB_CHECK_RUN_FAILURE = {
+  action: 'completed',
+  check_run: {
+    name: 'CI',
+    conclusion: 'failure',
+    check_suite: { head_branch: 'main' },
+  },
+  repository: { full_name: 'org/demo' },
+};
+
+const GITHUB_CHECK_RUN_SUCCESS = {
+  action: 'completed',
+  check_run: {
+    name: 'CI',
+    conclusion: 'success',
+    check_suite: { head_branch: 'main' },
+  },
+  repository: { full_name: 'org/demo' },
+};
+
+const GITHUB_ISSUE_OPENED = {
+  action: 'opened',
+  issue: { number: 7, title: 'Bug: login fails', body: 'Steps to reproduce…' },
+  repository: { full_name: 'org/demo' },
+};
+
+const GITHUB_ISSUE_CLOSED = {
+  action: 'closed',
+  issue: { number: 7, title: 'Bug: login fails', body: '' },
+  repository: { full_name: 'org/demo' },
+};
+
+describe('parseGithubWebhook — event-driven triggers', () => {
+  it('maps check_run conclusion=failure to ci_failed', () => {
+    const headers = { 'x-github-event': 'check_run', 'x-github-delivery': 'd-ci-fail' };
+    const event = parseGithubWebhook(GITHUB_CHECK_RUN_FAILURE, headers);
+    expect(event).toEqual<WebhookEvent>({
+      kind: 'ci_failed',
+      repoFullName: 'org/demo',
+      headBranch: 'main',
+      deliveryId: 'd-ci-fail',
+    });
+  });
+
+  it('does NOT map check_run conclusion=success to ci_failed', () => {
+    const headers = { 'x-github-event': 'check_run', 'x-github-delivery': 'd-ci-ok' };
+    const event = parseGithubWebhook(GITHUB_CHECK_RUN_SUCCESS, headers);
+    expect(event?.kind).not.toBe('ci_failed');
+  });
+
+  it('maps issues action=opened to issue_opened', () => {
+    const headers = { 'x-github-event': 'issues', 'x-github-delivery': 'd-issue-1' };
+    const event = parseGithubWebhook(GITHUB_ISSUE_OPENED, headers);
+    expect(event).toEqual<WebhookEvent>({
+      kind: 'issue_opened',
+      repoFullName: 'org/demo',
+      headBranch: '',
+      deliveryId: 'd-issue-1',
+    });
+  });
+
+  it('does NOT map issues action=closed to issue_opened', () => {
+    const headers = { 'x-github-event': 'issues', 'x-github-delivery': 'd-issue-2' };
+    const event = parseGithubWebhook(GITHUB_ISSUE_CLOSED, headers);
+    expect(event?.kind).not.toBe('issue_opened');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// GitLab event-driven triggers (ci_failed, issue_opened)
+// ---------------------------------------------------------------------------
+
+const GITLAB_PIPELINE_FAILED = {
+  object_kind: 'pipeline',
+  object_attributes: {
+    status: 'failed',
+    ref: 'main',
+  },
+  project: { path_with_namespace: 'org/demo' },
+};
+
+const GITLAB_PIPELINE_SUCCESS = {
+  object_kind: 'pipeline',
+  object_attributes: {
+    status: 'success',
+    ref: 'main',
+  },
+  project: { path_with_namespace: 'org/demo' },
+};
+
+const GITLAB_ISSUE_OPENED = {
+  object_kind: 'issue',
+  object_attributes: {
+    action: 'open',
+    title: 'Bug: login fails',
+  },
+  project: { path_with_namespace: 'org/demo' },
+};
+
+describe('parseGitlabWebhook — event-driven triggers', () => {
+  it('maps pipeline status=failed to ci_failed', () => {
+    const headers = { 'x-gitlab-event': 'pipeline', 'x-gitlab-event-uuid': 'gl-fail' };
+    const event = parseGitlabWebhook(GITLAB_PIPELINE_FAILED, headers);
+    expect(event).toEqual<WebhookEvent>({
+      kind: 'ci_failed',
+      repoFullName: 'org/demo',
+      headBranch: 'main',
+      deliveryId: 'gl-fail',
+    });
+  });
+
+  it('does NOT map pipeline status=success to ci_failed', () => {
+    const headers = { 'x-gitlab-event': 'pipeline', 'x-gitlab-event-uuid': 'gl-ok' };
+    const event = parseGitlabWebhook(GITLAB_PIPELINE_SUCCESS, headers);
+    expect(event?.kind).not.toBe('ci_failed');
+  });
+
+  it('maps issue open action to issue_opened', () => {
+    const headers = { 'x-gitlab-event': 'issue', 'x-gitlab-event-uuid': 'gl-issue-1' };
+    const event = parseGitlabWebhook(GITLAB_ISSUE_OPENED, headers);
+    expect(event).toEqual<WebhookEvent>({
+      kind: 'issue_opened',
+      repoFullName: 'org/demo',
+      headBranch: '',
+      deliveryId: 'gl-issue-1',
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Webhook provider registry
 // ---------------------------------------------------------------------------
 
