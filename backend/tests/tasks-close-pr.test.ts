@@ -13,6 +13,10 @@ describe('closePrBlocker', () => {
     expect(closePrBlocker({ status: 'awaiting_review', branchName: 'lemniscate/t-1' })).toBeNull();
   });
 
+  it('allows a reviewing_code task with a branch', () => {
+    expect(closePrBlocker({ status: 'reviewing_code', branchName: 'lemniscate/t-1' })).toBeNull();
+  });
+
   it('rejects an awaiting_review task without a branch', () => {
     expect(closePrBlocker({ status: 'awaiting_review', branchName: null })).toBe(
       'task has no branch to close',

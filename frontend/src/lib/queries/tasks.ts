@@ -52,11 +52,11 @@ export function useTask(
 }
 
 /**
- * True while any of the user's tasks is running or awaiting review — drives the
- * animated brand mark and favicon. The shared ['tasks', null, 'active'] list is
- * only fetched for authenticated visitors (so the public landing page stays
- * 401-free) and polls while anything is in flight or active so the animation
- * starts/stops in sync with task transitions.
+ * True while any of the user's tasks is running, reviewing code, or awaiting
+ * review — drives the animated brand mark and favicon. The shared
+ * ['tasks', null, 'active'] list is only fetched for authenticated visitors
+ * (so the public landing page stays 401-free) and polls while anything is in
+ * flight or active so the animation starts/stops in sync with task transitions.
  */
 export function useHasActiveProcesses(): boolean {
   const me = useMe();

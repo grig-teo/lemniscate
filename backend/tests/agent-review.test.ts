@@ -35,6 +35,7 @@ const mocks = vi.hoisted(() => ({
   buildRepoContext: vi.fn(),
   loadAgentsMdTemplate: vi.fn(),
   loadTaskSkills: vi.fn(),
+  setTaskStatus: vi.fn(),
   logger: { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn(), child: vi.fn() },
 }));
 
@@ -77,6 +78,7 @@ vi.mock('../src/lib/task-skills.js', () => ({
   loadAgentsMdTemplate: mocks.loadAgentsMdTemplate,
   loadTaskSkills: mocks.loadTaskSkills,
 }));
+vi.mock('../src/lib/task-events.js', () => ({ setTaskStatus: mocks.setTaskStatus }));
 
 // pr-review.js (parsePrReview, prompt builders) is intentionally NOT mocked:
 // verdict parsing is the behavior under test.
@@ -165,6 +167,7 @@ beforeEach(() => {
   mocks.logEvent.mockResolvedValue(undefined);
   mocks.recordJobFailure.mockResolvedValue('recorded failure');
   mocks.runHermesTask.mockResolvedValue(undefined);
+  mocks.setTaskStatus.mockResolvedValue(undefined);
 });
 
 afterEach(async () => {
@@ -215,6 +218,26 @@ describe('reviewTask entry guards', () => {
 });
 
 describe('reviewTask on the internal executor', () => {
+  it('sets reviewing_code at the start and awaiting_review when the review finishes', async () => {
+    await reviewTask('task-1');
+    // Status set to reviewing_code at the start of execution.
+    expect(mocks.setTaskStatus).toHaveBeenCalledWith('task-1', 'reviewing_code');
+    // Status flipped back to awaiting_review in finishReview.
+    expect(mocks.setTaskStatus).toHaveBeenCalledWith('task-1', 'awaiting_review');
+    expect(mocks.enqueueMergeGate).toHaveBeenCalledWith('task-1', 0, 0);
+  });
+
+  it('keeps reviewing_code when re-enqueuing a fix iteration (no awaiting_review flip)', async () => {
+    mocks.llmCall.mockResolvedValue(
+      reviewJson('changes_requested', [{ path: 'src/a.ts', comment: 'fix' }]),
+    );
+    await reviewTask('task-1', 0);
+    expect(mocks.setTaskStatus).toHaveBeenCalledWith('task-1', 'reviewing_code');
+    // finishReview was NOT called (re-enqueue path), so awaiting_review was never set.
+    expect(mocks.setTaskStatus).not.toHaveBeenCalledWith('task-1', 'awaiting_review');
+    expect(mocks.enqueueReviewTask).toHaveBeenCalledWith('task-1', 1);
+  });
+
   it('hands an approved PR on an auto-merge repo to the merge gate', async () => {
     await reviewTask('task-1');
     expect(mocks.enqueueMergeGate).toHaveBeenCalledTimes(1);

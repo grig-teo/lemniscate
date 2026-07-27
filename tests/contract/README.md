@@ -16,7 +16,7 @@ The field set is the intersection of what the mobile DTOs declare
 (`android/.../core/api/Models.kt`, `ios/Lemniscate/Core/API/Models.swift`)
 and what the backend serializes (Prisma `Task`/`Repository` models +
 `backend/src/routes/`). Enum-ish values (`kind`: `prompt`/`proposal`,
-`status`: `pending`/`queued`/`running`/`awaiting_review`/`done`/`failed`/
+`status`: `pending`/`queued`/`running`/`awaiting_review`/`reviewing_code`/`done`/`failed`/
 `closed`) come from `backend/prisma/schema.prisma`.
 
 If the backend renames a field or changes a payload shape that the apps

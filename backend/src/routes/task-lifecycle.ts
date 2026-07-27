@@ -15,9 +15,9 @@ import type { PatchBody, StartBody } from './task-schemas.js';
 
 export const CANCELLABLE_STATUSES = ['pending', 'queued', 'running'] as const;
 
-// Archive eligibility for POST /tasks/:id/archive: anything except running
-// and queued (about to run) tasks can be archived.
-const UNARCHIVABLE_STATUSES = ['running', 'queued'] as const;
+// Archive eligibility for POST /tasks/:id/archive: anything except running,
+// queued (about to run), and reviewing_code (agent actively reviewing) tasks.
+const UNARCHIVABLE_STATUSES = ['running', 'queued', 'reviewing_code'] as const;
 
 export function isArchivable(status: string): boolean {
   return !(UNARCHIVABLE_STATUSES as readonly string[]).includes(status);
@@ -78,10 +78,11 @@ export function rerunBlocker(task: { status: string }): string | null {
 }
 
 // Close-PR eligibility for POST /tasks/:id/close-pr: only awaiting_review
-// tasks (an open PR exists on the git host) with a branchName can be closed
-// and have their branch deleted. The provider calls happen in the handler.
+// (or reviewing_code) tasks (an open PR exists on the git host) with a
+// branchName can be closed and have their branch deleted. The provider
+// calls happen in the handler.
 export function closePrBlocker(task: { status: string; branchName: string | null }): string | null {
-  if (task.status !== 'awaiting_review') {
+  if (task.status !== 'awaiting_review' && task.status !== 'reviewing_code') {
     return `task is ${task.status}, not awaiting_review`;
   }
   if (!task.branchName) {

@@ -129,7 +129,7 @@ function groupByRepository(tasks: TaskWithConnection[]): TaskWithConnection[][] 
 export async function syncMergedPullRequests(): Promise<void> {
   const tasks = await prisma.task.findMany({
     where: {
-      status: 'awaiting_review',
+      status: { in: ['awaiting_review', 'reviewing_code'] },
       prUrl: { not: null },
       branchName: { not: null },
       repository: { connection: { disconnectedAt: null } },
@@ -180,7 +180,7 @@ async function isReviewStuck(taskId: string): Promise<boolean> {
 export async function recoverStuckReviews(): Promise<void> {
   const tasks = await prisma.task.findMany({
     where: {
-      status: 'awaiting_review',
+      status: { in: ['awaiting_review', 'reviewing_code'] },
       archivedAt: null,
       branchName: { not: null },
       repository: { autoReviewPr: true, connection: { disconnectedAt: null } },

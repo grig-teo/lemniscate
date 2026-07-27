@@ -407,5 +407,5 @@ export async function runTask(taskId: string): Promise<void> {
 
 async function isAwaitingReview(taskId: string): Promise<boolean> {
   const task = await prisma.task.findUnique({ where: { id: taskId }, select: { status: true } });
-  return task?.status === 'awaiting_review';
+  return task?.status === 'awaiting_review' || task?.status === 'reviewing_code';
 }

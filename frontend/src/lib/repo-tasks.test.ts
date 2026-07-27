@@ -138,7 +138,7 @@ describe('isRerunnable', () => {
     expect(isRerunnable(status)).toBe(true);
   });
 
-  it.each(['pending', 'queued', 'running', 'awaiting_review', 'done'])(
+  it.each(['pending', 'queued', 'running', 'reviewing_code', 'awaiting_review', 'done'])(
     'rejects %s tasks',
     (status) => {
       expect(isRerunnable(status)).toBe(false);
