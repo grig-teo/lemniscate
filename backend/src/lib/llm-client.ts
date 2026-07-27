@@ -120,34 +120,16 @@ export class LlmError extends Error {
 
 const DEFAULT_TIMEOUT_SECONDS = 120;
 const DEFAULT_MAX_RETRIES = 3;
-const BACKOFF_BASE_MS = 500;
-const BACKOFF_MAX_MS = 10_000;
 const ERROR_BODY_MAX_CHARS = 500;
-const MAX_ATTEMPT_TIMEOUT_SECONDS = 600;
 
-// Exported for unit tests. Large-context calls on slow endpoints regularly
-// outlast the base timeout; retrying with the same timeout would just fail
-// the same way, so every attempt gets twice the room of the previous one.
-export function timeoutForAttemptSeconds(baseTimeoutSeconds: number, attempt: number): number {
-  return Math.min(baseTimeoutSeconds * 2 ** attempt, MAX_ATTEMPT_TIMEOUT_SECONDS);
-}
+// Backoff/timeout policy lives in llm-client-backoff.ts; re-exported here
+// so existing importers (tests included) keep their import path.
+export { backoffMs, timeoutForAttemptSeconds } from './llm-client-backoff.js';
+import { backoffMs, timeoutForAttemptSeconds } from './llm-client-backoff.js';
 
 // `scrubApiKey` keeps the historical call-site name; the implementation
 // lives in utils.ts (single home, shared with agent-loop and pull-requests).
 const scrubApiKey = (text: string, apiKey: string): string => redactSecrets(text, [apiKey]);
-
-// Exported for unit tests.
-export function backoffMs(attempt: number, retryAfterHeader: string | null): number {
-  if (retryAfterHeader) {
-    const seconds = Number(retryAfterHeader);
-    if (Number.isFinite(seconds) && seconds >= 0) {
-      return Math.min(seconds * 1000, BACKOFF_MAX_MS);
-    }
-  }
-  const exponential = BACKOFF_BASE_MS * 2 ** attempt;
-  const jitter = Math.random() * BACKOFF_BASE_MS;
-  return Math.min(exponential + jitter, BACKOFF_MAX_MS);
-}
 
 interface ChatCompletionsResponseBody {
   choices?: { message?: { content?: string }; finish_reason?: string }[];
