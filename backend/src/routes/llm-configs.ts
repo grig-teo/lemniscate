@@ -2,7 +2,10 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type { Prisma } from '@prisma/client';
 import { z } from 'zod';
 import { encrypt, decrypt } from '../lib/crypto.js';
-import { chatCompletions, LlmError, type ChatCompletionsParams } from '../lib/llm-client.js';
+import { chatCompletion, type DispatchChatParams } from '../lib/llm-dispatch.js';
+import { runConnectionTest, type ConnectionTestParams } from '../lib/llm-connection-test.js';
+import { LLM_PROVIDER_PRESETS, apiPatternOf } from '../lib/llm-providers.js';
+import { quotaHeaderRecorder, readLlmQuota } from '../lib/llm-quota.js';
 import { prisma } from '../lib/prisma.js';
 import { assertPublicHttpUrl } from '../lib/url-safety.js';
 import { errorMessage } from '../lib/utils.js';
@@ -32,6 +35,11 @@ const configFields = {
   name: z.string().min(1).max(100),
   baseUrl: httpUrl,
   model: z.string().min(1).max(200),
+  // Transport pattern (llm-providers.ts): 'openai' chat completions or
+  // 'anthropic' Messages API. Defaults keep pre-pattern clients working.
+  apiPattern: z.enum(['openai', 'anthropic']).default('openai'),
+  // Provider preset id the config was added from (null/absent = custom).
+  provider: z.string().min(1).max(50).nullish(),
   thinkingLevel: z.enum(['off', 'low', 'medium', 'high']).default('off'),
   temperature: z.number().min(0).max(2).default(0.2),
   maxTokens: z.number().int().positive(),
@@ -71,10 +79,12 @@ function serialize(configRecord: LlmConfig) {
 }
 
 function toClientParams(record: LlmConfig) {
+  const pattern = apiPatternOf(record);
   return {
     baseUrl: record.baseUrl,
     apiKey: decrypt(record.apiKeyEnc),
     model: record.model,
+    apiPattern: pattern,
     temperature: record.temperature,
     maxTokens: record.maxTokens,
     ...(record.thinkingLevel !== 'off'
@@ -83,16 +93,9 @@ function toClientParams(record: LlmConfig) {
     timeoutSeconds: record.timeoutSeconds,
     maxRetries: record.maxRetries,
     customHeaders: record.customHeaders as Record<string, string>,
+    onResponseHeaders: quotaHeaderRecorder(pattern, record.id),
   };
 }
-
-const TEST_PROMPT = 'Reply with the word ok';
-// Reasoning models (e.g. Kimi k3, GLM-5.2 on high thinking) spend tokens on
-// reasoning_content first — a tiny budget is exhausted before any visible
-// reply. 1024 is still a trivial probe cost, and allowTruncated below makes
-// a cut-off reply a pass anyway: any response proves URL/key/model work.
-const TEST_MAX_TOKENS = 1024;
-const TEST_TIMEOUT_CAP_SECONDS = 30;
 
 // Clears the isDefault flag on the user's other configs (single home for
 // the create/update transaction step).
@@ -105,55 +108,6 @@ async function clearOtherDefaults(
     where: { userId, isDefault: true, ...(excludeId ? { id: { not: excludeId } } : {}) },
     data: { isDefault: false },
   });
-}
-
-interface ConnectionTestParams {
-  baseUrl: string;
-  apiKey: string;
-  model: string;
-  thinkingLevel?: 'low' | 'medium' | 'high';
-  timeoutSeconds?: number;
-  maxRetries?: number;
-  customHeaders?: Record<string, string>;
-}
-
-function buildTestParams(params: ConnectionTestParams): ChatCompletionsParams {
-  return {
-    baseUrl: params.baseUrl,
-    apiKey: params.apiKey,
-    model: params.model,
-    messages: [{ role: 'user', content: TEST_PROMPT }],
-    maxTokens: TEST_MAX_TOKENS,
-    allowTruncated: true,
-    ...(params.thinkingLevel ? { thinkingLevel: params.thinkingLevel } : {}),
-    // Timeout capped at 30s regardless of the configured value.
-    timeoutSeconds: Math.min(
-      params.timeoutSeconds ?? TEST_TIMEOUT_CAP_SECONDS,
-      TEST_TIMEOUT_CAP_SECONDS,
-    ),
-    maxRetries: params.maxRetries,
-    ...(params.customHeaders ? { customHeaders: params.customHeaders } : {}),
-  };
-}
-
-async function runConnectionTest(params: ConnectionTestParams) {
-  try {
-    const result = await chatCompletions(buildTestParams(params));
-    return {
-      ok: true as const,
-      latencyMs: result.latencyMs,
-      modelEcho: result.model,
-      reply: result.content,
-      ...(result.truncated ? { truncated: true } : {}),
-    };
-  } catch (err) {
-    // Errors from llm-client are already scrubbed of the API key.
-    const error =
-      err instanceof LlmError || err instanceof Error
-        ? err.message
-        : 'Unknown error';
-    return { ok: false as const, error };
-  }
 }
 
 // --- Plugin ---
@@ -284,13 +238,37 @@ async function testSavedConfig(request: FastifyRequest, reply: FastifyReply) {
   return runConnectionTest(toClientParams(record));
 }
 
+// The provider preset registry (OpenAI, Anthropic, z.ai, Kimi, Grok) for
+// the settings "Add provider" flows — single source: lib/llm-providers.ts.
+async function listProviderPresets() {
+  return { presets: LLM_PROVIDER_PRESETS };
+}
+
+// Latest rate-limit snapshot captured from this config's response headers
+// (llm-quota.ts). Null when the provider exposes nothing (or nothing was
+// recorded yet) — the console footer renders "n/a" and never blocks.
+async function getConfigQuota(request: FastifyRequest, reply: FastifyReply) {
+  const params = parseOrReply(idParamSchema, request.params, reply, 'Invalid config id');
+  if (params === null) return;
+  const record = await prisma.llmConfig.findFirst({
+    where: { id: params.id, userId: request.userId },
+    select: { id: true },
+  });
+  if (!record) {
+    return reply.code(404).send({ error: 'LLM config not found' });
+  }
+  return { quota: await readLlmQuota(record.id) };
+}
+
 export default async function llmConfigRoutes(app: FastifyInstance) {
   app.addHook('preHandler', requireAuth);
   app.get('/', listConfigs);
   app.post('/', createConfig);
+  app.get('/presets', listProviderPresets);
   app.get('/:id', getConfig);
   app.patch('/:id', updateConfig);
   app.delete('/:id', deleteConfig);
+  app.get('/:id/quota', getConfigQuota);
   app.post('/test', { config: { rateLimit: TEST_RATE_LIMIT } }, testUnsavedConfig);
   app.post('/:id/test', { config: { rateLimit: TEST_RATE_LIMIT } }, testSavedConfig);
 }

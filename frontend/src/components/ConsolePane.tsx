@@ -7,6 +7,7 @@ import { useTask, useTaskRunTargets } from '@/lib/hooks';
 import { useWorkspaceSelection } from '@/lib/selection';
 
 import { ConsoleHeader } from '@/components/console/ConsoleHeader';
+import { ConsoleFooterStatusBar } from '@/components/console/ConsoleFooterStatusBar';
 import { ConsoleLog } from '@/components/console/ConsoleLog';
 import { ErrorBanner } from '@/components/console/ErrorBanner';
 import { ArchivedPane } from '@/components/console/ArchivedPane';
@@ -63,10 +64,11 @@ export function ConsolePane() {
   const consoleState = useTaskConsole(taskId);
 
   const status = liveStatus ?? consoleState.historyStatus ?? selectedTask?.status ?? '';
-  // Poll the task row while it runs so the header's token badge tracks the
-  // worker-side persistTokenUsage writes (and the 80% budget warning fires).
+  // Poll the task row while it is in flight so the header's token badge, the
+  // 80% budget warning, and the footer status bar (context usage, active
+  // model, quota) track the worker-side persistTokenUsage writes.
   const taskQuery = useTask(taskId, {
-    refetchInterval: status === 'running' ? IN_FLIGHT_POLL_INTERVAL_MS : false,
+    refetchInterval: isRunningStatus(status) ? IN_FLIGHT_POLL_INTERVAL_MS : false,
   });
   const usage = taskQuery.data
     ? {
@@ -148,6 +150,9 @@ export function ConsolePane() {
             liveLogs={consoleState.liveLogs}
             streamError={consoleState.streamError}
           />
+          {isRunningStatus(status) && taskQuery.data && (
+            <ConsoleFooterStatusBar task={taskQuery.data} />
+          )}
           {!isRunningStatus(status) && <TaskComposerFab />}
         </>
       )}

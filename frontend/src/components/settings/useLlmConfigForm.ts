@@ -6,9 +6,10 @@ import {
   useUpdateLlmConfig,
   type LlmConfig,
   type LlmConfigPayload,
+  type LlmProviderPreset,
   type LlmTestResult,
 } from '@/lib/hooks';
-import { buildPayload, DEFAULTS, fromConfig, type FormState } from '@/lib/llm-config-form';
+import { buildPayload, DEFAULTS, fromConfig, fromPreset, type FormState } from '@/lib/llm-config-form';
 import { describeApiError } from '@/lib/api';
 
 export type SetField = <K extends keyof FormState>(field: K, value: FormState[K]) => void;
@@ -91,9 +92,17 @@ function useTestConnection(
 /**
  * State and actions for the LLM config add/edit form: field values,
  * validation errors, save (create or update), and "Test connection".
+ * `preset` seeds the add form from a provider preset (the "Add provider"
+ * buttons); it is ignored when editing an existing config.
  */
-export function useLlmConfigForm(initial: LlmConfig | undefined, onDone: () => void) {
-  const [form, setForm] = React.useState<FormState>(() => (initial ? fromConfig(initial) : DEFAULTS));
+export function useLlmConfigForm(
+  initial: LlmConfig | undefined,
+  onDone: () => void,
+  preset?: LlmProviderPreset,
+) {
+  const [form, setForm] = React.useState<FormState>(() =>
+    initial ? fromConfig(initial) : preset ? fromPreset(preset) : DEFAULTS,
+  );
   const set: SetField = (field, value) => setForm((prev) => ({ ...prev, [field]: value }));
 
   const { formError, buildValidPayload } = usePayloadBuilder(form);

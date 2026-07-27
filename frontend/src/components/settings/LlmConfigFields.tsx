@@ -7,7 +7,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { FormField } from '@/components/ui/form-field';
-import type { ThinkingLevel } from '@/lib/hooks';
+import type { LlmApiPattern, ThinkingLevel } from '@/lib/hooks';
 import { NUMERIC_FIELDS, type FormState, type NumericField } from '@/lib/llm-config-form';
 
 import type { SetField } from '@/components/settings/useLlmConfigForm';
@@ -44,6 +44,25 @@ function NumericInput({
         onChange={(e) => set(field, e.target.value)}
         placeholder={placeholder}
       />
+    </FormField>
+  );
+}
+
+function ApiPatternField({ form, set }: { form: FormState; set: SetField }) {
+  return (
+    <FormField label="API pattern">
+      <Select
+        value={form.apiPattern}
+        onValueChange={(value) => set('apiPattern', value as LlmApiPattern)}
+      >
+        <SelectTrigger>
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="openai">OpenAI-compatible (chat completions)</SelectItem>
+          <SelectItem value="anthropic">Anthropic (Messages API)</SelectItem>
+        </SelectContent>
+      </Select>
     </FormField>
   );
 }
@@ -110,6 +129,7 @@ export function LlmConfigFields({
         />
       </FormField>
       <ApiKeyField form={form} set={set} editing={editing} />
+      <ApiPatternField form={form} set={set} />
       <ThinkingLevelField form={form} set={set} />
       {NUMERIC_FIELDS.map((field) => (
         <NumericInput key={field} field={field} form={form} set={set} />

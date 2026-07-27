@@ -198,6 +198,10 @@ export async function rerunTask(request: FastifyRequest, reply: FastifyReply) {
   return { task: updated };
 }
 
+// Switch the LLM config of an in-flight task (the console footer's model
+// dropdown) — implemented in task-model-handlers.ts and re-exported here.
+export { switchTaskModel } from './task-model-handlers.js';
+
 // Cancel a task that hasn't finished yet.
 export async function cancelTask(request: FastifyRequest, reply: FastifyReply) {
   const userId = authenticatedUserId(request);

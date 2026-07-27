@@ -101,6 +101,12 @@ model LlmConfig {
   baseUrl           String
   apiKeyEnc         String
   model             String
+  // Transport pattern: 'openai' (chat completions) or 'anthropic' (Messages
+  // API) — TEXT with a default so rows predating the column read as openai.
+  apiPattern        String        @default("openai")
+  // Provider preset id from the registry ('openai'|'anthropic'|'zai'|'kimi'|
+  // 'grok'); null for custom endpoints (lib/llm-providers.ts).
+  provider          String?
   thinkingLevel     ThinkingLevel @default(off)
   temperature       Float         @default(0.2)
   maxTokens         Int

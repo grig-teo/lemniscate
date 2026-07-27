@@ -3,7 +3,13 @@ import { Pencil, Plus, Trash2 } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { useDeleteLlmConfig, useLlmConfigs, type LlmConfig } from '@/lib/hooks';
+import {
+  useDeleteLlmConfig,
+  useLlmConfigs,
+  useLlmProviderPresets,
+  type LlmConfig,
+  type LlmProviderPreset,
+} from '@/lib/hooks';
 
 import { LlmConfigForm } from '@/components/settings/LlmConfigForm';
 
@@ -93,6 +99,47 @@ function LlmConfigList({
   );
 }
 
+/** What the inline form is editing: a saved config, a preset add-flow, or a custom endpoint. */
+type Editing = LlmConfig | LlmProviderPreset | 'custom';
+
+function isPreset(editing: Editing): editing is LlmProviderPreset {
+  return typeof editing !== 'string' && 'pattern' in editing;
+}
+
+/**
+ * The "Add provider" buttons: one per registry preset (OpenAI, Anthropic,
+ * z.ai, Kimi/Moonshot, Grok/xAI) plus a custom endpoint. Clicking one opens
+ * the config form pre-filled from the preset — only the API key is left to
+ * type. Preset-add for an existing provider is allowed (multiple keys/models
+ * per provider are normal); the list above shows what is already configured.
+ */
+function AddProviderButtons({ onAdd }: { onAdd: (editing: Editing) => void }) {
+  const presets = useLlmProviderPresets();
+  return (
+    <div className="flex flex-col gap-2">
+      <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+        Add provider
+      </span>
+      <div className="flex flex-wrap gap-2">
+        {presets.data?.map((preset) => (
+          <Button key={preset.id} variant="outline" size="sm" onClick={() => onAdd(preset)}>
+            <Plus className="h-4 w-4" />
+            Add {preset.label}
+          </Button>
+        ))}
+        <Button variant="ghost" size="sm" onClick={() => onAdd('custom')}>
+          Custom endpoint
+        </Button>
+      </div>
+      {presets.isError && (
+        <p className="text-sm text-destructive">
+          Failed to load provider presets: {presets.error.message}
+        </p>
+      )}
+    </div>
+  );
+}
+
 /**
  * LLM configs tab: list of saved configs with add/edit/delete.
  * Shows the form inline when adding or editing.
@@ -100,7 +147,7 @@ function LlmConfigList({
 export function LlmConfigsSection() {
   const configs = useLlmConfigs();
   const deleteConfig = useDeleteLlmConfig();
-  const [editing, setEditing] = React.useState<LlmConfig | 'new' | null>(null);
+  const [editing, setEditing] = React.useState<Editing | null>(null);
 
   function remove(config: LlmConfig) {
     if (window.confirm(`Delete LLM config "${config.name}"?`)) {
@@ -111,7 +158,11 @@ export function LlmConfigsSection() {
   if (editing !== null) {
     return (
       <div className="py-2">
-        <LlmConfigForm initial={editing === 'new' ? undefined : editing} onDone={() => setEditing(null)} />
+        <LlmConfigForm
+          initial={editing !== 'custom' && !isPreset(editing) ? editing : undefined}
+          preset={isPreset(editing) ? editing : undefined}
+          onDone={() => setEditing(null)}
+        />
       </div>
     );
   }
@@ -125,12 +176,7 @@ export function LlmConfigsSection() {
         onDelete={remove}
       />
 
-      <div>
-        <Button variant="outline" onClick={() => setEditing('new')}>
-          <Plus className="h-4 w-4" />
-          Add config
-        </Button>
-      </div>
+      <AddProviderButtons onAdd={setEditing} />
     </div>
   );
 }

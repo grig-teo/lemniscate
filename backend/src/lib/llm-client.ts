@@ -6,6 +6,12 @@
 // of it), and never present in the returned result.
 
 import { errorMessage, redactSecrets, sleep } from './utils.js';
+import { notifyObserver, type LlmOutcome } from './llm-observer.js';
+
+// Re-exported so existing consumers (metrics.ts, tests) keep importing the
+// observer surface from llm-client; implementation lives in llm-observer.ts.
+export { setLlmObserver } from './llm-observer.js';
+export type { LlmOutcome, LlmRequestObservation } from './llm-observer.js';
 
 export type ThinkingLevel = 'low' | 'medium' | 'high' | 'max';
 
@@ -43,6 +49,11 @@ export interface ChatCompletionsParams {
   /** Called before each backoff wait, with 1-based attempt info. */
   onRetry?: (info: LlmRetryInfo) => void;
   /**
+   * Called with the response headers of every HTTP attempt (success or
+   * error) — used to snapshot provider rate-limit headers (llm-quota.ts).
+   */
+  onResponseHeaders?: (headers: Headers) => void;
+  /**
    * Connectivity probes (test-connection): return the result with
    * `truncated: true` instead of throwing when finish_reason is 'length'.
    * Any reply — even cut short by the tiny probe budget — proves the
@@ -60,29 +71,6 @@ export interface LlmRetryInfo {
   delayMs: number;
   /** Why the attempt failed: 'timeout', 'network error', or 'HTTP <status>'. */
   reason: string;
-}
-
-// Observability hook: exactly one process-wide observer (registered by
-// lib/metrics.ts) receives the final outcome of every chatCompletions call.
-// Kept as a setter (not a param) so the many call sites stay unchanged and
-// this module stays free of any metrics dependency.
-export type LlmOutcome = 'success' | LlmError['kind'];
-
-export interface LlmRequestObservation {
-  outcome: LlmOutcome;
-  latencyMs: number;
-}
-
-let llmObserver: ((obs: LlmRequestObservation) => void) | undefined;
-
-export function setLlmObserver(
-  observer: ((obs: LlmRequestObservation) => void) | undefined,
-): void {
-  llmObserver = observer;
-}
-
-function notifyObserver(outcome: LlmOutcome, startedAt: number): void {
-  llmObserver?.({ outcome, latencyMs: Date.now() - startedAt });
 }
 
 export interface ChatUsage {
@@ -165,6 +153,7 @@ interface RequestState {
   thinkingLevel?: ThinkingLevel;
   customHeaders?: Record<string, string>;
   onRetry?: (info: LlmRetryInfo) => void;
+  onResponseHeaders?: (headers: Headers) => void;
   timeoutSeconds: number;
   maxRetries: number;
   allowTruncated: boolean;
@@ -193,6 +182,7 @@ function makeRequestState(params: ChatCompletionsParams): RequestState {
   if (params.thinkingLevel !== undefined) state.thinkingLevel = params.thinkingLevel;
   if (params.customHeaders !== undefined) state.customHeaders = params.customHeaders;
   if (params.onRetry !== undefined) state.onRetry = params.onRetry;
+  if (params.onResponseHeaders !== undefined) state.onResponseHeaders = params.onResponseHeaders;
   return state;
 }
 
@@ -365,6 +355,7 @@ async function runRequestLoop(state: RequestState): Promise<ChatCompletionsResul
       throw networkFailure(state, outcome, attempt);
     }
     const { response } = outcome;
+    state.onResponseHeaders?.(response.headers);
     if (response.ok) {
       const result = toResult(await readSuccessJson(response), state);
       notifyObserver('success', state.startedAt);

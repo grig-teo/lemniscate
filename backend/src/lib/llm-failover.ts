@@ -10,6 +10,7 @@ import {
 } from './llm-client.js';
 import { prisma } from './prisma.js';
 import { assertPublicHttpUrl } from './url-safety.js';
+import { assertSafeLlmBaseUrl } from './agent-runtime-gates.js';
 import type { LlmRuntime } from './agent-runtime.js';
 
 // The LLM call wrapper, extracted from agent-runtime.ts:
@@ -109,26 +110,68 @@ function truncateReason(message: string): string {
   return `${message.slice(0, FAILOVER_REASON_MAX_CHARS)}…`;
 }
 
-function logFailover(rt: LlmRuntime, fromModel: string, cfg: LlmConfig, cause: LlmError): void {
-  if (!rt.taskId) return;
-  const line =
-    `⚠ LLM failover: ${fromModel} failed (${truncateReason(cause.message)})` +
-    ` — switching to ${cfg.model} [${cfg.name}]`;
-  void logEvent(rt.taskId, line).catch(() => {});
-}
-
-// Swaps the runtime onto the promoted config: fresh decrypted key (registered
-// on the shared scrub list), reset throttle (the new endpoint has its own
-// rpm), and a console line recording the switch. Token counters carry over —
-// the per-run budget spans all configs used by the run.
-function activateFailoverConfig(rt: LlmRuntime, cfg: LlmConfig, cause: LlmError): void {
+// Swaps the runtime onto another config: fresh decrypted key (registered on
+// the shared scrub list), reset throttle (the new endpoint has its own rpm),
+// and a console line recording the switch. Token counters carry over — the
+// per-run budget spans all configs used by the run. Shared by the failover
+// chain and the mid-run model switch (agent-runtime.ts).
+export function switchRuntimeConfig(rt: LlmRuntime, cfg: LlmConfig, logLine: string): void {
   const apiKey = decrypt(cfg.apiKeyEnc);
   rt.secrets?.push(apiKey);
-  const fromModel = rt.cfg.model;
   rt.cfg = cfg;
   rt.apiKey = apiKey;
   rt.lastCallStartedAt = 0;
-  logFailover(rt, fromModel, cfg, cause);
+  if (rt.taskId) void logEvent(rt.taskId, logLine).catch(() => {});
+}
+
+function logFailover(rt: LlmRuntime, fromModel: string, cfg: LlmConfig, cause: LlmError): string {
+  return (
+    `⚠ LLM failover: ${fromModel} failed (${truncateReason(cause.message)})` +
+    ` — switching to ${cfg.model} [${cfg.name}]`
+  );
+}
+
+function activateFailoverConfig(rt: LlmRuntime, cfg: LlmConfig, cause: LlmError): void {
+  switchRuntimeConfig(rt, cfg, logFailover(rt, rt.cfg.model, cfg, cause));
+}
+
+// Persisting the promoted config id to the task row keeps
+// applyPendingModelSwitch from reading the pre-failover id as a pending user
+// switch and bouncing the runtime back onto the config that just failed.
+// Advisory: a failed update must not break an in-flight run.
+async function persistPromotedConfig(taskId: string, cfg: LlmConfig): Promise<void> {
+  await prisma.task
+    .update({ where: { id: taskId }, data: { llmConfigId: cfg.id } })
+    .catch(() => {});
+}
+
+// ---------------------------------------------------------------------------
+// Mid-run model switch (POST /tasks/:id/model)
+// ---------------------------------------------------------------------------
+
+// The user picked another config while this run is in flight. The in-flight
+// request already finished (this runs BETWEEN calls); the conversation
+// history is preserved in `messages` and re-sent under the new config —
+// possibly translated across patterns by llm-dispatch. Advisory: any lookup
+// failure keeps the current config rather than breaking the run.
+export async function applyPendingModelSwitch(rt: LlmRuntime): Promise<void> {
+  if (!rt.taskId || !rt.userId) return;
+  try {
+    const task = await prisma.task.findUnique({
+      where: { id: rt.taskId },
+      select: { llmConfigId: true },
+    });
+    if (!task?.llmConfigId || task.llmConfigId === rt.cfg.id) return;
+    const next = await prisma.llmConfig.findFirst({
+      where: { id: task.llmConfigId, userId: rt.userId, enabled: true },
+    });
+    if (!next) return;
+    await assertSafeLlmBaseUrl(next.baseUrl);
+    const line = `⇄ model switched to ${next.model} [${next.name}] — continuing task`;
+    switchRuntimeConfig(rt, next, line);
+  } catch {
+    // Never let switch bookkeeping break an in-flight run.
+  }
 }
 
 // Marks the active config as failed and promotes the next enabled candidate.
@@ -146,6 +189,7 @@ export async function promoteFailoverConfig(rt: LlmRuntime, cause: LlmError): Pr
       continue;
     }
     activateFailoverConfig(rt, candidate, cause);
+    if (rt.taskId) await persistPromotedConfig(rt.taskId, candidate);
     return true;
   }
   return false;

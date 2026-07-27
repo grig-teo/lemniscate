@@ -1,7 +1,7 @@
 import type { LlmConfig } from '@prisma/client';
 import { proposalDocumentSectionLines } from './agent-prompts.js';
 import { decrypt } from './crypto.js';
-import { chatCompletions } from './llm-client.js';
+import { chatCompletion } from './llm-dispatch.js';
 
 // POST /tasks/:id/improve helpers — the console pane's Improve button asks
 // the LLM to rewrite a pending task's rough description into the structured
@@ -56,10 +56,11 @@ export async function requestImprovedPrompt(
   cfg: LlmConfig,
   input: { title?: string; prompt: string },
 ): Promise<string> {
-  const result = await chatCompletions({
+  const result = await chatCompletion({
     baseUrl: cfg.baseUrl,
     apiKey: decrypt(cfg.apiKeyEnc),
     model: cfg.model,
+    apiPattern: cfg.apiPattern,
     messages: [
       { role: 'system', content: improvePromptSystemPrompt(cfg.systemPromptExtra) },
       { role: 'user', content: improvePromptUserContent(input.title, input.prompt) },

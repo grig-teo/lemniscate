@@ -8,12 +8,15 @@ import {
   type ProviderName,
 } from './git-providers.js';
 import {
-  chatCompletions,
   type ChatMessage,
   type ChatUsage,
   type ThinkingLevel,
 } from './llm-client.js';
+import { chatCompletion } from './llm-dispatch.js';
+import { apiPatternOf } from './llm-providers.js';
+import { quotaHeaderRecorder } from './llm-quota.js';
 import {
+  applyPendingModelSwitch,
   chatParams,
   llmCallWithFailover,
   logLlmDone,
@@ -166,9 +169,19 @@ export function sumMessageChars(messages: ChatMessage[]): number {
 // The call wrapper: one metered attempt + cross-config failover
 // ---------------------------------------------------------------------------
 
+function dispatchParams(rt: LlmRuntime, messages: ChatMessage[]) {
+  const pattern = apiPatternOf(rt.cfg);
+  return {
+    ...chatParams(rt, messages),
+    apiPattern: pattern,
+    onResponseHeaders: quotaHeaderRecorder(pattern, rt.cfg.id),
+  };
+}
+
 async function attemptLlmCall(rt: LlmRuntime, messages: ChatMessage[]): Promise<string> {
+  await applyPendingModelSwitch(rt);
   await logLlmStart(rt);
-  const result = await chatCompletions(chatParams(rt, messages));
+  const result = await chatCompletion(dispatchParams(rt, messages));
   const promptChars = sumMessageChars(messages);
   const billed = billedTokens(promptChars, result.content.length, result.usage?.totalTokens);
   const split = billedSplit(promptChars, result.content.length, result.usage);
