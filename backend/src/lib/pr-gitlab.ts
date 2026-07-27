@@ -20,10 +20,10 @@ import {
   type PrChecksStatus,
   type PrConnectionInput,
   type ProviderPrApi,
-  type PrReviewComment,
   type PrState,
   type PullRequestRefInput,
 } from './pr-shared.js';
+import { gitlabReviewComments } from './pr-gitlab-notes.js';
 
 // GitLab merge-request operations: open, merge, diff (reassembled from the
 // per-file changes payload), state polling, and the head-pipeline status
@@ -43,7 +43,7 @@ function gitlabTokenType(connection: PrConnectionInput): ProviderTokenType {
   return connection.tokenType === 'oauth' ? 'oauth' : 'pat';
 }
 
-function gitlabMrsUrl(connection: PrConnectionInput, repoFullName: string): string {
+export function gitlabMrsUrl(connection: PrConnectionInput, repoFullName: string): string {
   const project = encodeURIComponent(repoFullName);
   return `${gitlabApiBase(connection.baseUrl)}/projects/${project}/merge_requests`;
 }
@@ -59,7 +59,7 @@ function gitlabOpenedMrsQueryUrl(
   );
 }
 
-async function gitlabGet(
+export async function gitlabGet(
   connection: PrConnectionInput,
   token: string,
   url: string,
@@ -68,7 +68,7 @@ async function gitlabGet(
 }
 
 // Finds the open MR iid for the source branch (iids are not stored).
-async function gitlabLookupMrIid(
+export async function gitlabLookupMrIid(
   connection: PrConnectionInput,
   token: string,
   input: PullRequestRefInput,
@@ -279,36 +279,6 @@ async function gitlabListPullRequests(
   }));
 }
 
-const gitlabMrNoteListSchema = z.array(
-  z.object({
-    id: z.number(),
-    body: z.string(),
-    system: z.boolean(),
-    author: z.object({ username: z.string() }),
-  }),
-);
-
-// Human notes on the MR (the pr-state-sync poll fallback). System notes
-// ("added 1 commit", "mentioned in …") are provider bookkeeping, never
-// review feedback, so they are filtered out here.
-async function gitlabPullReviewComments(
-  connection: PrConnectionInput,
-  token: string,
-  input: PullRequestRefInput,
-): Promise<PrReviewComment[]> {
-  const { iid } = await gitlabLookupMrIid(connection, token, input);
-  const url = `${gitlabMrsUrl(connection, input.repoFullName)}/${iid}/notes?per_page=100&sort=asc`;
-  const { body } = await gitlabGet(connection, token, url);
-  return gitlabMrNoteListSchema
-    .parse(body)
-    .filter((note) => !note.system && note.body.trim())
-    .map((note) => ({
-      id: `note-${note.id}`,
-      body: note.body.trim(),
-      author: note.author.username,
-    }));
-}
-
 export function gitlabPrApi(connection: PrConnectionInput, token: string): ProviderPrApi {
   return {
     open: (input) => gitlabOpenPullRequest(connection, token, input),
@@ -320,6 +290,6 @@ export function gitlabPrApi(connection: PrConnectionInput, token: string): Provi
     deleteBranch: (repoFullName, branch) =>
       gitlabDeleteBranch(connection, token, repoFullName, branch),
     checks: (input) => gitlabChecksStatus(connection, token, input),
-    reviewComments: (input) => gitlabPullReviewComments(connection, token, input),
+    reviewComments: (input) => gitlabReviewComments(connection, token, input),
   };
 }

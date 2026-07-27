@@ -5,10 +5,11 @@ import path from 'node:path';
 import { z } from 'zod';
 import { config, MONITORED_SECRETS } from './config.js';
 import { planWorkdirSweep } from './lib/agent-git.js';
-import { generateProposals, stampProposalFailure, stampProposalSuccess, reviewTask, runTask } from './lib/agent-loop.js';
+import { reviewTask, runTask } from './lib/agent-loop.js';
 import { addressReviewTask } from './lib/address-review.js';
 import { mergeGateTask } from './lib/merge-gate.js';
 import { deployService } from './lib/deploy/deploy-service.js';
+import { runGenerateProposals } from './lib/proposal-job.js';
 import { prisma } from './lib/prisma.js';
 import {
   AGENT_QUEUE_NAME,
@@ -28,6 +29,7 @@ import {
 } from './lib/notifications.js';
 import { startHeartbeat } from './lib/worker-heartbeat.js';
 import { jobFailureFromError, logJobFailure } from './lib/job-failure-log.js';
+import { reviewFeedbackCommentSchema } from './lib/review-feedback.js';
 import { metrics, startQueueMetricsPoller } from './lib/metrics.js';
 import { getRedisClient } from './lib/redis.js';
 import { logger } from './lib/logger.js';
@@ -48,13 +50,7 @@ const mergeGateDataSchema = z.object({
 const deployServiceDataSchema = z.object({ deploymentId: z.string().min(1) });
 const addressReviewDataSchema = z.object({
   taskId: z.string().min(1),
-  comment: z.object({
-    id: z.string().min(1),
-    body: z.string().min(1),
-    author: z.string().min(1),
-    path: z.string().optional(),
-    line: z.number().int().optional(),
-  }),
+  comment: reviewFeedbackCommentSchema,
 });
 const generateProposalsDataSchema = z.object({ repositoryId: z.string().min(1) });
 const proposalsTopUpDataSchema = z.object({}).strict();
@@ -113,38 +109,6 @@ const KNOWN_JOB_NAMES = new Set([
 
 function jobMetricName(name: string): string {
   return KNOWN_JOB_NAMES.has(name) ? name : 'unknown';
-}
-
-// Wraps generateProposals with pipeline-health side effects: stamps
-// lastProposalAt on success and lastProposalError on every failure, and
-// emits a proposal_generation_failed notification only on the final retry
-// attempt (so transient blips that recover do not alarm the user).
-// The raw worker-level error is scrubbed ONCE against the owner's
-// tokens/keys and the scrubbed text is used for both the persisted stamp
-// (served by GET /repositories, rendered in the RepoRow tooltip) and the
-// notification body.
-// The generic job_failed path in notifyJobFailure is skipped for this job
-// name (see notifications.ts) to avoid a duplicate notification.
-function isFinalAttempt(job: Job): boolean {
-  return job.attemptsMade + 1 >= (job.opts?.attempts ?? 1);
-}
-
-function errorMessage(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
-}
-
-async function runGenerateProposals(repositoryId: string, job: Job): Promise<void> {
-  try {
-    await generateProposals(repositoryId);
-    await stampProposalSuccess(repositoryId);
-  } catch (err) {
-    const message = await scrubRepositoryFailureMessage(repositoryId, errorMessage(err));
-    await stampProposalFailure(repositoryId, message);
-    if (isFinalAttempt(job)) {
-      await notifyProposalGenerationFailure(repositoryId, message);
-    }
-    throw err;
-  }
 }
 
 // One switch on job.name (AGENTS.md §4); metrics live in the decorator

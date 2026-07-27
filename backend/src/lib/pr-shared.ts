@@ -67,36 +67,6 @@ export type PrState = 'open' | 'merged' | 'closed';
 export type { ReviewFeedbackComment as PrReviewComment } from './review-feedback.js';
 type PrReviewComment = ReviewFeedbackComment;
 
-// GitHub-shaped review-comment payload (GitHub pulls/{n}/comments, also
-// Gitea/GitVerse) — ONE schema + mapper shared by those providers
-// (AGENTS.md §6), not three copies.
-export const githubPrReviewCommentListSchema = z.array(
-  z.object({
-    id: z.number(),
-    body: z.string(),
-    user: z.object({ login: z.string() }).nullable(),
-    path: z.string().optional(),
-    line: z.number().nullable().optional(),
-  }),
-);
-
-export function mapGithubPrReviewComments(
-  raw: z.infer<typeof githubPrReviewCommentListSchema>,
-): PrReviewComment[] {
-  const comments: PrReviewComment[] = [];
-  for (const c of raw) {
-    if (!c.user?.login || !c.body.trim()) continue;
-    comments.push({
-      id: `rc-${c.id}`,
-      body: c.body.trim(),
-      author: c.user.login,
-      ...(c.path ? { path: c.path } : {}),
-      ...(typeof c.line === 'number' ? { line: c.line } : {}),
-    });
-  }
-  return comments;
-}
-
 /** One PR as returned by the batched per-repo listing (pr-state-sync job). */
 export interface ListedPullRequest {
   headBranch: string;

@@ -258,29 +258,15 @@ export async function enqueueMergeGate(
   );
 }
 
-// Enqueues an 'address-review' job: a human PR review comment the agent
-// should answer with a follow-up commit (lib/address-review.ts). The jobId
-// embeds the namespaced review id so a redelivered webhook (or a poll tick
-// racing a webhook) for the SAME comment is deduped while the job is
-// waiting/active, while a new comment on the same PR always gets through.
-// Finished jobs are removed immediately (same rerun-swallow rule as
-// run-task); durable dedupe lives on Task.lastAddressedReviewId.
-export async function enqueueAddressReview(
-  taskId: string,
-  comment: ReviewFeedbackComment,
-): Promise<void> {
-  await getAgentTasksQueue().add(
-    'address-review',
-    { taskId, comment },
-    {
-      jobId: `address-review-${taskId}-${comment.id}`,
-      removeOnComplete: true,
-      removeOnFail: true,
-      priority: JOB_PRIORITY.review,
-      attempts: 3,
-      backoff: { type: 'exponential', delay: 60_000 },
-    },
-  );
+// Enqueues an 'address-review' job (lib/address-review.ts); the jobId embeds the review id so same-comment redeliveries dedupe.
+export async function enqueueAddressReview(taskId: string, comment: ReviewFeedbackComment): Promise<void> {
+  await getAgentTasksQueue().add('address-review', { taskId, comment }, {
+    jobId: `address-review-${taskId}-${comment.id}`,
+    removeOnComplete: true, removeOnFail: true,
+    priority: JOB_PRIORITY.review,
+    attempts: 3,
+    backoff: { type: 'exponential', delay: 60_000 },
+  });
 }
 
 // Enqueues a 'review-pr' job (LLM review → fix iterations → merge gate).

@@ -7,8 +7,6 @@ import {
   createOrFindExistingPr,
   encodeRepoPath,
   fetchAllPages,
-  githubPrReviewCommentListSchema,
-  mapGithubPrReviewComments,
   PR_LIST_PAGE_SIZE,
   prStateFromOpenMerged,
   type ListedPullRequest,
@@ -21,6 +19,7 @@ import {
   type PullRequestRefInput,
 } from './pr-shared.js';
 import { githubChecksStatus } from './pr-github-checks.js';
+import { githubPrReviewCommentListSchema, mapGithubPrReviewComments } from './review-feedback.js';
 
 // CI-check signals live in pr-github-checks.ts; re-exported here so existing
 // importers (tests included) keep working.

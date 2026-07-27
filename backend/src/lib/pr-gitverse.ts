@@ -7,6 +7,7 @@ import {
   gitversePrWebUrl,
   gitversePullsUrl,
 } from './pr-gitverse-http.js';
+import { githubPrReviewCommentListSchema, mapGithubPrReviewComments } from './review-feedback.js';
 import {
   apiRequest,
   assembleUnifiedDiff,
@@ -14,8 +15,6 @@ import {
   encodeRepoPath,
   fetchAllPages,
   gitverseDiffFileSchema,
-  githubPrReviewCommentListSchema,
-  mapGithubPrReviewComments,
   matchesHeadBaseRef,
   PR_LIST_PAGE_SIZE,
   prStateFromOpenMerged,

@@ -1,8 +1,11 @@
 // Pure rules for the human PR review feedback loop (AGENTS.md §6 — single
-// home): which review comments are actionable, and which were already
-// addressed. Shared by the webhook dispatch (routes/webhooks.ts), the
-// address-review job (lib/address-review.ts), and the pr-state-sync poll
-// fallback. No config/prisma imports so it stays unit-testable.
+// home): provider payload parsing, which review comments are actionable, and
+// which were already addressed. Shared by the webhook dispatch
+// (routes/webhooks.ts), the address-review job (lib/address-review.ts), the
+// provider PR API modules, and the pr-state-sync poll fallback. No
+// config/prisma imports so it stays unit-testable.
+
+import { z } from 'zod';
 
 /** Minimal shape of an actionable review comment (webhook or provider API). */
 export interface ReviewFeedbackComment {
@@ -57,4 +60,69 @@ export function reviewFeedbackSkipReason(input: {
   if (isReviewCommentCovered(input.lastAddressedReviewId, input.comment.id)) return 'duplicate';
   if (!input.comment.body.trim()) return 'empty';
   return null;
+}
+
+// ---------------------------------------------------------------------------
+// Provider API payload parsing (pr-state-sync poll fallback)
+// ---------------------------------------------------------------------------
+
+// Zod shape of one comment carried in a job payload / stored marker.
+export const reviewFeedbackCommentSchema = z.object({
+  id: z.string().min(1),
+  body: z.string().min(1),
+  author: z.string().min(1),
+  path: z.string().optional(),
+  line: z.number().int().optional(),
+});
+
+// GitHub-shaped review-comment payload (GitHub pulls/{n}/comments, also
+// Gitea/GitVerse) — ONE schema + mapper shared by those providers
+// (AGENTS.md §6), not three copies.
+export const githubPrReviewCommentListSchema = z.array(
+  z.object({
+    id: z.number(),
+    body: z.string(),
+    user: z.object({ login: z.string() }).nullable(),
+    path: z.string().optional(),
+    line: z.number().nullable().optional(),
+  }),
+);
+
+export function mapGithubPrReviewComments(
+  raw: z.infer<typeof githubPrReviewCommentListSchema>,
+): ReviewFeedbackComment[] {
+  const comments: ReviewFeedbackComment[] = [];
+  for (const c of raw) {
+    if (!c.user?.login || !c.body.trim()) continue;
+    comments.push({
+      id: `rc-${c.id}`,
+      body: c.body.trim(),
+      author: c.user.login,
+      ...(c.path ? { path: c.path } : {}),
+      ...(typeof c.line === 'number' ? { line: c.line } : {}),
+    });
+  }
+  return comments;
+}
+
+// GitLab MR notes payload. System notes ("added 1 commit", "mentioned in …")
+// are provider bookkeeping, never review feedback, so they are dropped here.
+const gitlabMrNoteListSchema = z.array(
+  z.object({
+    id: z.number(),
+    body: z.string(),
+    system: z.boolean(),
+    author: z.object({ username: z.string() }),
+  }),
+);
+
+export function mapGitlabMrNotes(body: unknown): ReviewFeedbackComment[] {
+  return gitlabMrNoteListSchema
+    .parse(body)
+    .filter((note) => !note.system && note.body.trim())
+    .map((note) => ({
+      id: `note-${note.id}`,
+      body: note.body.trim(),
+      author: note.author.username,
+    }));
 }
