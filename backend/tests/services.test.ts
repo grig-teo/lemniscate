@@ -74,6 +74,7 @@ const SERVICE = {
   repositoryId: 'repo-1',
   name: 'my-app',
   port: 80,
+  hostPort: null,
   envEnc: null,
   autoDeploy: true,
   status: 'stopped',
@@ -91,6 +92,7 @@ beforeEach(() => {
   mocks.repositoryFindFirst.mockResolvedValue(REPO);
   mocks.vpsTargetFindFirst.mockResolvedValue(null);
   mocks.serviceFindFirst.mockResolvedValue(null); // slug check: free
+  mocks.serviceFindMany.mockResolvedValue([]); // hostPort allocation: none used
   mocks.serviceCreate.mockImplementation(async ({ data }: { data: object }) => ({
     id: 'svc-1',
     ...data,
@@ -118,9 +120,11 @@ describe('POST /api/services', () => {
       ...AUTH,
     });
     expect(response.statusCode).toBe(201);
-    expect(mocks.serviceCreate).toHaveBeenCalledWith({
-      data: { repositoryId: 'repo-1', name: 'my-app', deployTarget: 'lemniscate', vpsTargetId: null },
-    });
+    expect(mocks.serviceCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: { repositoryId: 'repo-1', name: 'my-app', deployTarget: 'lemniscate', vpsTargetId: null },
+      }),
+    );
     expect(response.json().service.url).toBe('https://apps.grig-teo.space/grig-teo/my-app');
   });
 
@@ -243,7 +247,7 @@ describe('deployTarget validation on POST /api/services', () => {
     expect(mocks.serviceCreate).not.toHaveBeenCalled();
   });
 
-  it('persists deployTarget and vpsTargetId when the target is owned', async () => {
+  it('persists deployTarget, vpsTargetId, and an allocated hostPort when the target is owned', async () => {
     mocks.vpsTargetFindFirst.mockResolvedValue({ id: 'tgt-1' }); // owned
     const app = await buildApp();
     const res = await app.inject({
@@ -253,9 +257,54 @@ describe('deployTarget validation on POST /api/services', () => {
       ...AUTH,
     });
     expect(res.statusCode).toBe(201);
-    expect(mocks.serviceCreate).toHaveBeenCalledWith({
-      data: { repositoryId: 'repo-1', name: 'my-app', deployTarget: 'vps', vpsTargetId: 'tgt-1' },
+    const createData = mocks.serviceCreate.mock.calls[0]![0].data;
+    expect(createData.deployTarget).toBe('vps');
+    expect(createData.vpsTargetId).toBe('tgt-1');
+    expect(createData.hostPort).toEqual(expect.any(Number));
+  });
+
+  it('allocates the next free hostPort per VPS target (no collision)', async () => {
+    mocks.vpsTargetFindFirst.mockResolvedValue({ id: 'tgt-1' });
+    // Simulate an existing VPS service already using port 30000.
+    mocks.serviceFindMany.mockResolvedValue([{ hostPort: 30000 }]);
+    const app = await buildApp();
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/services',
+      payload: { repositoryId: 'repo-1', deployTarget: 'vps', vpsTargetId: 'tgt-1' },
+      ...AUTH,
     });
+    expect(res.statusCode).toBe(201);
+    expect(mocks.serviceCreate.mock.calls[0]![0].data.hostPort).toBe(30001);
+  });
+});
+
+describe('GET /api/services URL computation', () => {
+  it('returns a VPS-target URL (http://host:hostPort) for vps services, not the platform URL', async () => {
+    const vpsService = {
+      ...SERVICE,
+      deployTarget: 'vps' as const,
+      vpsTargetId: 'tgt-1',
+      hostPort: 30042,
+      vpsTarget: { id: 'tgt-1', name: 'prod-box', host: 'vps.example.com', port: 22 },
+      repository: REPO,
+      deployments: [],
+    };
+    mocks.serviceFindMany.mockResolvedValue([vpsService]);
+    const app = await buildApp();
+    const res = await app.inject({ method: 'GET', url: '/api/services', ...AUTH });
+    expect(res.statusCode).toBe(200);
+    const svc = res.json().services[0];
+    expect(svc.url).toBe('http://vps.example.com:30042');
+    expect(svc.url).not.toContain('apps.grig-teo.space');
+  });
+
+  it('returns the platform URL for lemniscate services', async () => {
+    mocks.serviceFindMany.mockResolvedValue([{ ...SERVICE, deployments: [] }]);
+    const app = await buildApp();
+    const res = await app.inject({ method: 'GET', url: '/api/services', ...AUTH });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().services[0].url).toBe('https://apps.grig-teo.space/grig-teo/my-app');
   });
 });
 
@@ -276,6 +325,38 @@ describe('deployTarget validation on PATCH /api/services/:id', () => {
     const data = mocks.serviceUpdate.mock.calls[0]![0].data;
     expect(data.deployTarget).toBe('vps');
     expect(data.vpsTargetId).toBe('tgt-1');
+  });
+
+  it('allocates a hostPort when flipping to vps', async () => {
+    mocks.serviceFindFirst.mockResolvedValue(SERVICE);
+    mocks.vpsTargetFindFirst.mockResolvedValue({ id: 'tgt-1' });
+    mocks.serviceUpdate.mockResolvedValue({ ...SERVICE, deployTarget: 'vps', vpsTargetId: 'tgt-1' });
+    const app = await buildApp();
+    const res = await app.inject({
+      method: 'PATCH',
+      url: '/api/services/svc-1',
+      payload: { deployTarget: 'vps', vpsTargetId: 'tgt-1' },
+      ...AUTH,
+    });
+    expect(res.statusCode).toBe(200);
+    expect(mocks.serviceUpdate.mock.calls[0]![0].data.hostPort).toBe(30000);
+  });
+
+  it('preserves an existing hostPort when re-deploying to the same vps target', async () => {
+    const vpsService = { ...SERVICE, deployTarget: 'vps' as const, vpsTargetId: 'tgt-1', hostPort: 30042 };
+    mocks.serviceFindFirst.mockResolvedValue(vpsService);
+    mocks.vpsTargetFindFirst.mockResolvedValue({ id: 'tgt-1' });
+    mocks.serviceUpdate.mockResolvedValue(vpsService);
+    const app = await buildApp();
+    const res = await app.inject({
+      method: 'PATCH',
+      url: '/api/services/svc-1',
+      payload: { deployTarget: 'vps', vpsTargetId: 'tgt-1' },
+      ...AUTH,
+    });
+    expect(res.statusCode).toBe(200);
+    // Should NOT change the hostPort — it stays at 30042.
+    expect(mocks.serviceUpdate.mock.calls[0]![0].data.hostPort).toBe(30042);
   });
 
   it('flips vps back to lemniscate and clears vpsTargetId', async () => {

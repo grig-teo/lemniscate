@@ -459,6 +459,10 @@ model Service {
   name         String
   // Container port the app listens on (Traefik target port).
   port         Int           @default(80)
+  // Distinct host port published on a VPS (docker -p left side). Allocated
+  // per-service so two apps with the same container port don't collide on the
+  // host. Null for lemniscate services (Traefik routes by container name).
+  hostPort     Int?
   // Per-service env vars, AES-256-GCM encrypted JSON {KEY: value}; decrypted
   // only into `docker run --env` at deploy time, never logged.
   envEnc       String?

@@ -35,8 +35,12 @@ export interface RemoteDeploySpec {
   image: string;
   /** Container name to start remotely. */
   container: string;
-  /** Host port the app is published on (docker -p). */
+  /** Container port the app listens on (docker -p right side). */
   port: number;
+  /** Distinct host port published on the VPS (docker -p left side). Each VPS
+   *  service gets its own hostPort so two apps with the same container port
+   *  (e.g. both defaulting to 80) don't collide on the host. */
+  hostPort: number;
   /** Service env vars to inject into the remote container. */
   env: Record<string, string>;
   /** Git credential token for the clone. */
@@ -102,15 +106,27 @@ docker build --pull -t "${spec.image}" .
 docker rm -f "${spec.container}" >/dev/null 2>&1 || true
 docker run -d --name "${spec.container}" --restart unless-stopped \\
   --env-file /tmp/lemniscate-env-$$.txt \\
-  -p ${spec.port}:${spec.port} "${spec.image}"
+  -p ${spec.hostPort}:${spec.port} "${spec.image}"
 for i in $(seq 1 30); do
   code="$(docker inspect -f '{{.State.Health.Status}}' "${spec.container}" 2>/dev/null || echo "")"
   if [ "$code" = "healthy" ]; then break; fi
   if docker inspect -f '{{.State.Status}}' "${spec.container}" 2>/dev/null | grep -qE 'exited|dead'; then
     echo "container exited early"; docker logs --tail 30 "${spec.container}" || true; exit 1
   fi
+  # TCP fallback for images without a HEALTHCHECK directive: the published
+  # host port accepts a connection once the app is listening.
+  if (echo > /dev/tcp/127.0.0.1/${spec.hostPort}) 2>/dev/null; then
+    code="healthy"; break
+  fi
   sleep 2
 done
+# Explicit failure when the app never came up — mirrors the lemniscate path's
+# throw-on-timeout so the deploy is never marked online for a dead container.
+if [ "$code" != "healthy" ]; then
+  echo "container did not become healthy within 60s"
+  docker logs --tail 30 "${spec.container}" || true
+  exit 1
+fi
 rm -f /tmp/lemniscate-env-$$.txt
 rm -rf "$DEPLOY_DIR"
 echo "LEMNISCATE_DEPLOY_OK $COMMIT"`;

@@ -68,8 +68,9 @@ describe('buildRemoteDeployScript', () => {
     image: 'lemniscate-svc1:abc123',
     container: 'lemniscate-svc1',
     port: 8080,
+    hostPort: 30001,
     env: { DATABASE_URL: 'postgres://supersecret@db:5432/app', NODE_ENV: 'production' },
-    gitToken: 'ghp_topsecrettoken',
+    gitToken: 'ghp_to...oken',
   };
 
   it('runs set -euo pipefail and references the container/image/port', () => {
@@ -77,7 +78,7 @@ describe('buildRemoteDeployScript', () => {
     expect(script).toContain('set -euo pipefail');
     expect(script).toContain(spec.image);
     expect(script).toContain(spec.container);
-    expect(script).toContain(`-p ${spec.port}:${spec.port}`);
+    expect(script).toContain(`-p ${spec.hostPort}:${spec.port}`);
     expect(script).toContain('LEMNISCATE_DEPLOY_OK');
   });
 
@@ -114,5 +115,41 @@ describe('buildRemoteDeployScript', () => {
     const script = buildRemoteDeployScript(spec);
     expect(script).toMatch(/rm -rf "\$DEPLOY_DIR"/);
     expect(script).toMatch(/rm -f .*lemniscate-env/);
+  });
+
+  it('probes the host port (not the container port) via TCP for images without HEALTHCHECK', () => {
+    const script = buildRemoteDeployScript(spec);
+    expect(script).toContain(`/dev/tcp/127.0.0.1/${spec.hostPort}`);
+  });
+
+  it('fails explicitly when the container never becomes healthy (no fallthrough to OK)', () => {
+    const script = buildRemoteDeployScript(spec);
+    // After the polling loop there must be a guard that exits 1 when the app
+    // never came up — the deploy must NOT report success for a dead container.
+    const loopEnd = script.indexOf('done\n', script.indexOf('seq 1 30'));
+    const afterLoop = script.slice(loopEnd);
+    expect(afterLoop).toMatch(/exit 1/);
+    // The cleanup + OK echo must come AFTER the health gate, not before it.
+    const failGate = script.indexOf('exit 1', loopEnd);
+    const okEcho = script.indexOf('LEMNISCATE_DEPLOY_OK');
+    expect(failGate).toBeGreaterThan(-1);
+    expect(okEcho).toBeGreaterThan(failGate);
+  });
+
+  it('generates a syntactically valid bash script (bash -n)', () => {
+    const script = buildRemoteDeployScript(spec);
+    // Write to a temp file and run `bash -n` — catches syntax errors like
+    // unmatched parens/quotes that would abort the remote script at parse time.
+    const fs = require('node:fs');
+    const { execSync } = require('node:child_process');
+    const tmp = `/tmp/vps-script-${process.pid}.sh`;
+    fs.writeFileSync(tmp, script);
+    try {
+      execSync(`bash -n ${tmp}`, { stdio: 'pipe' });
+    } catch {
+      throw new Error('remote deploy script failed bash -n syntax check');
+    } finally {
+      fs.unlinkSync(tmp);
+    }
   });
 });

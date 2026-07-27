@@ -28,6 +28,8 @@ export interface AppService {
   repositoryId: string;
   name: string;
   port: number;
+  /** VPS host port (docker -p left side); null for lemniscate services. */
+  hostPort: number | null;
   autoDeploy: boolean;
   status: ServiceStatus;
   activeContainer: string | null;

@@ -81,12 +81,16 @@ export async function deployToVps(
 
   const container = vpsContainerName(service.id);
   const image = `lemniscate-${service.id}:${Date.now().toString(36)}`;
+  // hostPort is allocated per-service at creation; fall back to the container
+  // port for services created before the hostPort column existed.
+  const hostPort = service.hostPort ?? service.port;
   const script = buildRemoteDeployScript({
     cloneUrl: tokenlessCloneUrl(service.repository.cloneUrl),
     branch: service.repository.defaultBranch,
     image,
     container,
     port: service.port,
+    hostPort,
     env: parseServiceEnv(service.envEnc, secrets),
     gitToken: token,
   });
@@ -104,7 +108,7 @@ export async function deployToVps(
     data: { activeContainer: container, status: 'online' },
   });
   await setDeployStatus(deployment.id, 'online', true);
-  await appendLog(deployment.id, `live at http://${vpsConfig.host}:${service.port}`);
+  await appendLog(deployment.id, `live at http://${vpsConfig.host}:${hostPort}`);
 }
 
 // Stops + removes the remote container (stop endpoint). Best-effort: a

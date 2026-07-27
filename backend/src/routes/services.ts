@@ -85,6 +85,7 @@ type ServiceRow = {
   repositoryId: string;
   name: string;
   port: number;
+  hostPort: number | null;
   envEnc: string | null;
   autoDeploy: boolean;
   status: string;
@@ -95,6 +96,17 @@ type ServiceRow = {
   updatedAt: Date;
   vpsTarget?: { id: string; name: string; host: string; port: number } | null;
 };
+
+// VPS services are reachable at http://<vps-host>:<hostPort>; lemniscate
+// services at the platform apps URL. For legacy VPS services without an
+// allocated hostPort, the container port is used (they deployed as port:port).
+function computeServiceUrl(service: ServiceRow, ownerUsername: string): string {
+  if (service.deployTarget === 'vps' && service.vpsTarget) {
+    const exposedPort = service.hostPort ?? service.port;
+    return `http://${service.vpsTarget.host}:${exposedPort}`;
+  }
+  return serviceUrl(ownerUsername, service.name);
+}
 
 function serializeService(
   service: ServiceRow,
@@ -108,7 +120,7 @@ function serializeService(
   return {
     ...rest,
     envKeys: envEnc ? envKeys(envEnc) : [],
-    url: serviceUrl(ownerUsername, service.name),
+    url: computeServiceUrl(service, ownerUsername),
     ...(publicTarget ? { vpsTarget: publicTarget } : {}),
     deployments,
   };
@@ -158,6 +170,36 @@ async function resolveDeployTarget(
   return { deployTarget: 'vps', vpsTargetId };
 }
 
+// Allocates a distinct host port for a VPS service. Each VPS target gets its
+// own [30000, 39999] range; the lowest free port is handed out so two apps
+// with the same container port (e.g. both defaulting to 80) don't collide.
+const HOST_PORT_RANGE_START = 30000;
+const HOST_PORT_RANGE_END = 39999;
+
+async function allocateHostPort(vpsTargetId: string): Promise<number> {
+  const used = await prisma.service.findMany({
+    where: { vpsTargetId, hostPort: { not: null } },
+    select: { hostPort: true },
+  });
+  const taken = new Set(used.map((s) => s.hostPort as number));
+  for (let p = HOST_PORT_RANGE_START; p <= HOST_PORT_RANGE_END; p += 1) {
+    if (!taken.has(p)) return p;
+  }
+  throw new Error('No free host ports in the VPS allocation range (30000-39999)');
+}
+
+// Returns an existing hostPort or allocates a new one for VPS services; null
+// for lemniscate services. Called after resolveDeployTarget succeeds.
+async function ensureHostPort(
+  deployTarget: 'lemniscate' | 'vps',
+  vpsTargetId: string | null,
+  existingHostPort: number | null,
+): Promise<number | null> {
+  if (deployTarget !== 'vps' || !vpsTargetId) return null;
+  if (existingHostPort) return existingHostPort;
+  return allocateHostPort(vpsTargetId);
+}
+
 const servicesRoutes: FastifyPluginAsync = async (app) => {
   app.addHook('preHandler', requireAuth);
 
@@ -201,6 +243,7 @@ const servicesRoutes: FastifyPluginAsync = async (app) => {
     }
     const target = await resolveDeployTarget(userId, data.deployTarget, data.vpsTargetId, reply);
     if (target === null) return;
+    const hostPort = await ensureHostPort(target.deployTarget, target.vpsTargetId, null);
     const service = await prisma.service.create({
       data: {
         repositoryId: repository.id,
@@ -209,7 +252,9 @@ const servicesRoutes: FastifyPluginAsync = async (app) => {
         ...(data.autoDeploy !== undefined ? { autoDeploy: data.autoDeploy } : {}),
         deployTarget: target.deployTarget,
         vpsTargetId: target.vpsTargetId,
+        ...(hostPort !== null ? { hostPort } : {}),
       },
+      include: { vpsTarget: { select: { id: true, name: true, host: true, port: true } } },
     });
     return reply.code(201).send({ service: serializeService(service, owner) });
   });
@@ -223,7 +268,7 @@ const servicesRoutes: FastifyPluginAsync = async (app) => {
     const service = await ownedService(userId, params.id);
     if (!service) return reply.code(404).send({ error: 'Service not found' });
     const owner = service.repository.connection.username;
-    const update: { name?: string; port?: number; autoDeploy?: boolean; deployTarget?: 'lemniscate' | 'vps'; vpsTargetId?: string | null } = {};
+    const update: { name?: string; port?: number; autoDeploy?: boolean; deployTarget?: 'lemniscate' | 'vps'; vpsTargetId?: string | null; hostPort?: number } = {};
     if (data.name !== undefined) {
       const slug = slugify(data.name);
       if (!slug) return reply.code(400).send({ error: 'Service name has no usable characters' });
@@ -244,8 +289,14 @@ const servicesRoutes: FastifyPluginAsync = async (app) => {
       if (target === null) return;
       update.deployTarget = target.deployTarget;
       update.vpsTargetId = target.vpsTargetId;
+      const hostPort = await ensureHostPort(target.deployTarget, target.vpsTargetId, service.hostPort);
+      if (hostPort !== null) update.hostPort = hostPort;
     }
-    const updated = await prisma.service.update({ where: { id: service.id }, data: update });
+    const updated = await prisma.service.update({
+      where: { id: service.id },
+      data: update,
+      include: { vpsTarget: { select: { id: true, name: true, host: true, port: true } } },
+    });
     return { service: serializeService(updated, owner) };
   });
 
