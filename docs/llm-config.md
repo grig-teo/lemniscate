@@ -66,6 +66,27 @@ backfill).
 | `isDefault` | Fallback config for projects without an explicit one |
 | `enabled` | Disable without deleting |
 
+## Failover between configs (implemented)
+
+When the active config's endpoint fails mid-run — unreachable, quota or token
+limit exhausted (HTTP 4xx/429/5xx after the client's own retries), timeouts,
+or malformed replies — the run does not abort. `llmCall`
+(`backend/src/lib/agent-runtime.ts`) routes every call through the failover
+chain in `backend/src/lib/llm-failover.ts`:
+
+- The failed config is marked for the rest of the run and the next **enabled**
+  config of the same user takes over (default config first, matching the
+  primary-resolution precedence), then the call is retried against it.
+- Each failed config is tried at most once per run; when no candidate
+  remains, the original error propagates and the run fails as before.
+- A rotated-in config gets the same baseUrl SSRF gate as the primary one;
+  its decrypted key is registered on the run's secret scrub list, and the
+  switch is logged to the task console
+  (`⚠ LLM failover: <model> failed (…) — switching to <model> [name]`).
+- Token usage accumulates across configs, so `maxTokensPerRun` of the
+  currently active config still applies — the per-run budget itself is a
+  deliberate cap and never triggers failover.
+
 ## Test connection (implemented)
 
 A **"Test connection"** button in the config form sends a trivial
