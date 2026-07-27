@@ -191,8 +191,14 @@ export async function recoverInterruptedTasks(): Promise<void> {
 
 // Enqueues a one-shot 'generate-proposals' job (round button / top-up).
 // jobId dedupes enqueues only while a job is waiting/active: finished jobs
-// are removed immediately, otherwise BullMQ would keep them and silently
-// swallow every later enqueue for the same repo.
+// (completed OR failed) are removed immediately, otherwise BullMQ would keep
+// them and silently swallow every later enqueue for the same repo — after a
+// failure that would stall the 10-minute top-up and the manual generate
+// button precisely when the pipeline is broken. Failure state is already
+// persisted (Repository.lastProposalError + the proposal_generation_failed
+// notification), so failed-job retention in Redis is not needed.
+// Retries (attempts:3, exponential backoff) absorb transient LLM
+// failures so a single blip does not strand proposal generation.
 export async function enqueueGenerateProposalsNow(repositoryId: string): Promise<void> {
   await getAgentTasksQueue().add(
     'generate-proposals',
@@ -202,6 +208,8 @@ export async function enqueueGenerateProposalsNow(repositoryId: string): Promise
       removeOnComplete: true,
       removeOnFail: true,
       priority: JOB_PRIORITY.background,
+      attempts: 3,
+      backoff: { type: 'exponential', delay: 60_000 },
     },
   );
 }

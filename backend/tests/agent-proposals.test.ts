@@ -15,6 +15,7 @@ const mocks = vi.hoisted(() => ({
     AGENT_HERMES_TIMEOUT_MINUTES: 45,
   },
   repositoryFindUnique: vi.fn(),
+  repositoryUpdate: vi.fn(),
   taskFindMany: vi.fn(),
   taskCreate: vi.fn(),
   skillFindMany: vi.fn(),
@@ -30,7 +31,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock('../src/config.js', () => ({ config: mocks.config }));
 vi.mock('../src/lib/prisma.js', () => ({
   prisma: {
-    repository: { findUnique: mocks.repositoryFindUnique },
+    repository: { findUnique: mocks.repositoryFindUnique, update: mocks.repositoryUpdate },
     task: { findMany: mocks.taskFindMany, create: mocks.taskCreate },
     skill: { findMany: mocks.skillFindMany },
   },
@@ -61,6 +62,8 @@ import {
   parseProposalsFile,
   pendingProposalState,
   sortByPriority,
+  stampProposalFailure,
+  stampProposalSuccess,
 } from '../src/lib/agent-proposals.js';
 
 type RepositoryWithConnection = Repository & { connection: GitConnection };
@@ -407,5 +410,45 @@ describe('buildHermesProposalPrompt', () => {
     expect(prompt).toContain('features');
     expect(prompt).toContain('at least one `features` proposal');
     expect(prompt).toContain('NEW implementations');
+  });
+});
+
+// Pipeline-health stamping: the worker handler calls these after each
+// generate-proposals outcome to update the Repository row's health columns.
+// stampProposalSuccess sets lastProposalAt and clears lastProposalError;
+// stampProposalFailure sets lastProposalError (truncated to 500 chars).
+describe('stampProposalSuccess', () => {
+  beforeEach(() => {
+    mocks.repositoryUpdate.mockResolvedValue(undefined);
+  });
+
+  it('sets lastProposalAt to now and clears lastProposalError', async () => {
+    await stampProposalSuccess('repo-1');
+    expect(mocks.repositoryUpdate).toHaveBeenCalledWith({
+      where: { id: 'repo-1' },
+      data: { lastProposalAt: expect.any(Date), lastProposalError: null },
+    });
+  });
+});
+
+describe('stampProposalFailure', () => {
+  beforeEach(() => {
+    mocks.repositoryUpdate.mockResolvedValue(undefined);
+  });
+
+  it('sets lastProposalError with the error message', async () => {
+    await stampProposalFailure('repo-1', 'LLM connection refused');
+    expect(mocks.repositoryUpdate).toHaveBeenCalledWith({
+      where: { id: 'repo-1' },
+      data: { lastProposalError: 'LLM connection refused' },
+    });
+  });
+
+  it('truncates very long error messages to 500 characters', async () => {
+    const longMessage = 'x'.repeat(600);
+    await stampProposalFailure('repo-1', longMessage);
+    const stamped = mocks.repositoryUpdate.mock.calls[0]?.[0].data.lastProposalError as string;
+    expect(stamped).toHaveLength(500);
+    expect(stamped).toBe('x'.repeat(500));
   });
 });

@@ -115,6 +115,10 @@ export type Repository = {
   skillSlugs?: string[];
   /** AGENTS.md template skill applied when the repo root has no AGENTS.md. */
   agentsMdSkillId?: string | null;
+  /** Last successful generate-proposals timestamp (ISO); null until first run. */
+  lastProposalAt?: string | null;
+  /** Scrubbed error from the last failed generate-proposals attempt; null = no error. */
+  lastProposalError?: string | null;
   connection: {
     provider: GitProvider;
     username: string;

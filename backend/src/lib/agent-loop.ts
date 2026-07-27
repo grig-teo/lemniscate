@@ -19,4 +19,4 @@
 
 export { runTask } from './agent-run.js';
 export { reviewTask } from './agent-review.js';
-export { generateProposals } from './agent-proposals.js';
+export { generateProposals, stampProposalFailure, stampProposalSuccess } from './agent-proposals.js';

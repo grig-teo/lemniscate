@@ -387,7 +387,7 @@ describe('notifyJobFailure', () => {
     });
 
     await notifyJobFailure({
-      jobName: 'generate-proposals',
+      jobName: 'deploy-service',
       errorKind: 'Error',
       message: 'LLM request failed: invalid api key',
       repositoryId: 'r1',
@@ -397,7 +397,7 @@ describe('notifyJobFailure', () => {
       data: expect.objectContaining({
         userId: 'user-1',
         kind: 'job_failed',
-        title: 'Job failed: generate-proposals',
+        title: 'Job failed: deploy-service',
       }),
     });
   });
@@ -408,6 +408,22 @@ describe('notifyJobFailure', () => {
       connection: { userId: 'user-1' },
     });
     mocks.notificationFindFirst.mockResolvedValue({ id: 'n-existing' });
+
+    await notifyJobFailure({
+      jobName: 'deploy-service',
+      errorKind: 'Error',
+      message: 'boom',
+      repositoryId: 'r1',
+    });
+
+    expect(mocks.notificationCreate).not.toHaveBeenCalled();
+  });
+
+  it('skips generate-proposals (handled by the dedicated proposal_generation_failed path)', async () => {
+    mocks.repositoryFindUnique.mockResolvedValue({
+      fullName: 'org/demo',
+      connection: { userId: 'user-1' },
+    });
 
     await notifyJobFailure({
       jobName: 'generate-proposals',
@@ -435,7 +451,7 @@ describe('notifyJobFailure', () => {
   it('does nothing when no owner can be resolved', async () => {
     mocks.repositoryFindUnique.mockResolvedValue(null);
     await notifyJobFailure({
-      jobName: 'generate-proposals',
+      jobName: 'deploy-service',
       errorKind: 'Error',
       message: 'boom',
       repositoryId: 'ghost',

@@ -7,6 +7,7 @@ import { useWorkspaceSelection } from '@/lib/selection';
 import { RepoFlagsDropdown } from '@/components/repo-tree/RepoFlagsDropdown';
 import { RepoTasks } from '@/components/repo-tree/RepoTasks';
 import { Button } from '@/components/ui/button';
+import { HEALTH_LABELS, proposalHealth } from '@/lib/proposal-health';
 
 export function RepoRow({
   repo,
@@ -53,6 +54,7 @@ function RepoToggle({
 }) {
   const { selectRepository } = useWorkspaceSelection();
   const Chevron = expanded ? ChevronDown : ChevronRight;
+  const health = proposalHealth(repo);
   const handleClick = () => {
     onToggle();
     selectRepository(repo.id);
@@ -65,9 +67,30 @@ function RepoToggle({
       aria-expanded={expanded}
     >
       <Chevron className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+      <HealthDot health={health} error={repo.lastProposalError} />
       <span className="truncate font-medium" title={repoDisplayName(repo)}>
         {repoDisplayName(repo)}
       </span>
     </button>
+  );
+}
+
+const HEALTH_COLORS: Record<string, string> = {
+  red: 'bg-red-500',
+  amber: 'bg-amber-500',
+  green: 'bg-green-500',
+};
+
+function HealthDot({ health, error }: { health: string; error?: string | null }) {
+  if (health === 'none') return null;
+  const tooltip = error
+    ? `${HEALTH_LABELS[health as keyof typeof HEALTH_LABELS]}\n${error}`
+    : HEALTH_LABELS[health as keyof typeof HEALTH_LABELS];
+  return (
+    <span
+      className={`h-2 w-2 shrink-0 rounded-full ${HEALTH_COLORS[health] ?? ''}`}
+      title={tooltip}
+      aria-label={HEALTH_LABELS[health as keyof typeof HEALTH_LABELS]}
+    />
   );
 }

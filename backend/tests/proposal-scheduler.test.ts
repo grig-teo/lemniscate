@@ -89,15 +89,26 @@ describe('enqueueGenerateProposalsNow', () => {
     );
   });
 
-  // Regression: removeOnComplete/removeOnFail as counts kept the finished
-  // job around, so BullMQ silently swallowed every later enqueue with the
-  // same jobId (the UI generate button worked only once per repo).
-  it('removes finished jobs so re-enqueues for the same repo are not swallowed', async () => {
+  // Regression: removeOnComplete/removeOnFail as counts or retention kept the
+  // finished job around, so BullMQ silently swallowed every later enqueue with
+  // the same jobId — after a failure the top-up scheduler and the manual
+  // generate button no-op'd while the jobId was held. Failure state is
+  // persisted via lastProposalError + notification instead of Redis retention.
+  it('removes completed and failed jobs immediately so re-enqueues are not swallowed', async () => {
     await enqueueGenerateProposalsNow('repo-1');
     expect(mocks.add).toHaveBeenCalledWith(
       'generate-proposals',
       { repositoryId: 'repo-1' },
       expect.objectContaining({ removeOnComplete: true, removeOnFail: true }),
+    );
+  });
+
+  it('retries up to 3 times with exponential backoff so transient failures recover', async () => {
+    await enqueueGenerateProposalsNow('repo-1');
+    expect(mocks.add).toHaveBeenCalledWith(
+      'generate-proposals',
+      { repositoryId: 'repo-1' },
+      expect.objectContaining({ attempts: 3, backoff: { type: 'exponential', delay: 60_000 } }),
     );
   });
 });
