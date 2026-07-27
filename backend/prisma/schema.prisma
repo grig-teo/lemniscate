@@ -160,6 +160,11 @@ model Repository {
   // LLM config used by the review-pr job (review + fix iterations); null =
   // the standard resolution (task → repo llmConfigId → user default).
   reviewLlmConfigId String?
+  // Autonomous pipeline health: last successful generate-proposals run and
+  // the last error message (scrubbed). Null until the first attempt; the
+  // frontend shows a green/amber/red dot based on these (see RepoRow.tsx).
+  lastProposalAt    DateTime?
+  lastProposalError String?
   connection    GitConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
   llmConfig     LlmConfig?    @relation("RepositoryLlm", fields: [llmConfigId], references: [id], onDelete: SetNull)
   reviewLlmConfig LlmConfig?  @relation("RepositoryReviewLlm", fields: [reviewLlmConfigId], references: [id], onDelete: SetNull)

@@ -16,6 +16,7 @@ export type TaskErrorCode =
   | 'GIT_AUTH_FAILED'
   | 'GIT_PERMISSION_DENIED'
   | 'GIT_WORKFLOW_SCOPE'
+  | 'PROPOSAL_GENERATION_FAILED'
   | 'UNKNOWN'
   | (string & {});
 
@@ -73,6 +74,11 @@ const ERROR_BANNER_MAP: Record<string, ErrorBannerInfo> = {
     title: 'Missing GitHub "workflow" scope',
     hint: 'The task edited .github/workflows but the token lacks the workflow OAuth scope. Reconnect GitHub to grant it, then rerun.',
     settingsTab: 'git',
+  },
+  PROPOSAL_GENERATION_FAILED: {
+    title: 'Autonomous proposal generation failed',
+    hint: 'The background pipeline could not generate proposals after multiple retries. Check the LLM config and try again, or trigger proposals manually.',
+    settingsTab: 'llm',
   },
 };
 

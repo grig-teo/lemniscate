@@ -92,12 +92,23 @@ describe('enqueueGenerateProposalsNow', () => {
   // Regression: removeOnComplete/removeOnFail as counts kept the finished
   // job around, so BullMQ silently swallowed every later enqueue with the
   // same jobId (the UI generate button worked only once per repo).
-  it('removes finished jobs so re-enqueues for the same repo are not swallowed', async () => {
+  // Failed jobs are retained for 24h (age: 86400, count: 100) so they are
+  // inspectable for debugging — completed jobs are still removed immediately.
+  it('removes completed jobs and retains failed jobs for 24h so re-enqueues are not swallowed', async () => {
     await enqueueGenerateProposalsNow('repo-1');
     expect(mocks.add).toHaveBeenCalledWith(
       'generate-proposals',
       { repositoryId: 'repo-1' },
-      expect.objectContaining({ removeOnComplete: true, removeOnFail: true }),
+      expect.objectContaining({ removeOnComplete: true, removeOnFail: { age: 86400, count: 100 } }),
+    );
+  });
+
+  it('retries up to 3 times with exponential backoff so transient failures recover', async () => {
+    await enqueueGenerateProposalsNow('repo-1');
+    expect(mocks.add).toHaveBeenCalledWith(
+      'generate-proposals',
+      { repositoryId: 'repo-1' },
+      expect.objectContaining({ attempts: 3, backoff: { type: 'exponential', delay: 60_000 } }),
     );
   });
 });

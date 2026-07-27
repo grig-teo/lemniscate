@@ -267,3 +267,28 @@ export async function generateProposals(repositoryId: string): Promise<void> {
     await cleanupWorkdir(workdir);
   }
 }
+
+// Stamps the autonomous pipeline health on the Repository row. Called by the
+// worker handler wrapper (worker.ts runGenerateProposals) after each
+// generate-proposals outcome — never inside generateProposals itself, so the
+// stamping has no effect on unit-tested proposal logic and the worker retains
+// control over when/how the stamp is applied (including on the final retry).
+
+export async function stampProposalSuccess(repositoryId: string): Promise<void> {
+  await prisma.repository.update({
+    where: { id: repositoryId },
+    data: { lastProposalAt: new Date(), lastProposalError: null },
+  });
+}
+
+const MAX_PROPOSAL_ERROR_LEN = 500;
+
+export async function stampProposalFailure(
+  repositoryId: string,
+  message: string,
+): Promise<void> {
+  await prisma.repository.update({
+    where: { id: repositoryId },
+    data: { lastProposalError: message.slice(0, MAX_PROPOSAL_ERROR_LEN) },
+  });
+}

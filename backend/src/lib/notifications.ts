@@ -24,6 +24,7 @@ export const NOTIFICATION_KINDS = [
   'task_completed',
   'merge_gate_failed',
   'job_failed',
+  'proposal_generation_failed',
 ] as const;
 
 export type NotificationKind = (typeof NOTIFICATION_KINDS)[number];
@@ -201,16 +202,22 @@ export interface JobFailureNotification {
 
 // logJobFailure hook (job-failure-log.ts — the single failure funnel):
 // task-scoped failures reuse the run_failed path; repository-scoped failures
-// (the scheduled 'generate-proposals' runs) notify the repo owner as
-// job_failed, deduped per unread job name so a broken LLM config cannot spam
-// every cycle. Messages are scrubbed against the owner's tokens/keys —
-// worker-level failures arrive unsanitized.
+// (the scheduled 'generate-proposals' runs) have their own dedicated
+// proposal_generation_failed path (see notifyProposalGenerationFailure),
+// so this generic job_failed branch is skipped for that job name.
+// Messages are scrubbed against the owner's tokens/keys — worker-level
+// failures arrive unsanitized.
 export async function notifyJobFailure(entry: JobFailureNotification): Promise<void> {
   try {
     if (entry.taskId) {
       await notifyTaskFailure(entry.taskId, entry.errorKind, entry.message);
       return;
     }
+    // generate-proposals failures are notified by the dedicated
+    // proposal_generation_failed path in the worker handler (which has access
+    // to job.attemptsMade so the notification fires only on the final attempt,
+    // not every retry). Skip the generic job_failed notification here.
+    if (entry.jobName === 'generate-proposals') return;
     if (!entry.repositoryId) return;
     const repository = await prisma.repository.findUnique({
       where: { id: entry.repositoryId },
@@ -233,5 +240,40 @@ export async function notifyJobFailure(entry: JobFailureNotification): Promise<v
     });
   } catch (err) {
     logger.error({ jobName: entry.jobName, err }, 'failed to notify job failure');
+  }
+}
+
+// Dedicated failure notification for generate-proposals jobs. Called from the
+// worker handler ONLY on the final retry attempt (so transient failures that
+// recover do not alarm the user). Deduped per repo: one unread
+// proposal_generation_failed notification per repository at a time, so a broken
+// LLM config cannot spam the bell on every 10-minute top-up cycle. The message
+// is scrubbed against the owner's tokens/keys.
+export async function notifyProposalGenerationFailure(
+  repositoryId: string,
+  message: string,
+): Promise<void> {
+  try {
+    const repository = await prisma.repository.findUnique({
+      where: { id: repositoryId },
+      select: {
+        fullName: true,
+        connection: { select: { userId: true, accessTokenEnc: true, refreshTokenEnc: true } },
+      },
+    });
+    if (!repository) return;
+    const title = `Proposal generation failed: ${repository.fullName}`;
+    const existing = await prisma.notification.findFirst({
+      where: { userId: repository.connection.userId, kind: 'proposal_generation_failed', readAt: null, title },
+      select: { id: true },
+    });
+    if (existing) return;
+    const secrets = await failureSecrets(repository.connection);
+    await notify(repository.connection.userId, 'proposal_generation_failed', {
+      title,
+      body: `${repository.fullName} — ${redactSecrets(message, secrets)}`,
+    });
+  } catch (err) {
+    logger.error({ repositoryId, err }, 'failed to notify proposal generation failure');
   }
 }

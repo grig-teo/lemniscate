@@ -5,7 +5,7 @@ import path from 'node:path';
 import { z } from 'zod';
 import { config, MONITORED_SECRETS } from './config.js';
 import { planWorkdirSweep } from './lib/agent-git.js';
-import { generateProposals, reviewTask, runTask } from './lib/agent-loop.js';
+import { generateProposals, stampProposalFailure, stampProposalSuccess, reviewTask, runTask } from './lib/agent-loop.js';
 import { mergeGateTask } from './lib/merge-gate.js';
 import { deployService } from './lib/deploy/deploy-service.js';
 import { prisma } from './lib/prisma.js';
@@ -21,6 +21,7 @@ import {
 } from './lib/proposal-scheduler.js';
 import { registerPrStateSyncSchedule, recoverStuckReviews, syncMergedPullRequests } from './lib/pr-state-sync.js';
 import { deliverNotification } from './lib/notification-delivery.js';
+import { notifyProposalGenerationFailure } from './lib/notifications.js';
 import { startHeartbeat } from './lib/worker-heartbeat.js';
 import { jobFailureFromError, logJobFailure } from './lib/job-failure-log.js';
 import { metrics, startQueueMetricsPoller } from './lib/metrics.js';
@@ -99,6 +100,34 @@ function jobMetricName(name: string): string {
   return KNOWN_JOB_NAMES.has(name) ? name : 'unknown';
 }
 
+// Wraps generateProposals with pipeline-health side effects: stamps
+// lastProposalAt on success and lastProposalError on every failure, and
+// emits a proposal_generation_failed notification only on the final retry
+// attempt (so transient blips that recover do not alarm the user).
+// The generic job_failed path in notifyJobFailure is skipped for this job
+// name (see notifications.ts) to avoid a duplicate notification.
+function isFinalAttempt(job: Job): boolean {
+  return job.attemptsMade + 1 >= (job.opts?.attempts ?? 1);
+}
+
+function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+async function runGenerateProposals(repositoryId: string, job: Job): Promise<void> {
+  try {
+    await generateProposals(repositoryId);
+    await stampProposalSuccess(repositoryId);
+  } catch (err) {
+    const message = errorMessage(err);
+    await stampProposalFailure(repositoryId, message);
+    if (isFinalAttempt(job)) {
+      await notifyProposalGenerationFailure(repositoryId, message);
+    }
+    throw err;
+  }
+}
+
 // One switch on job.name (AGENTS.md §4); metrics live in the decorator
 // below so no case carries its own timing/try-catch.
 async function processJob(job: Job): Promise<void> {
@@ -125,7 +154,7 @@ async function processJob(job: Job): Promise<void> {
     }
     case 'generate-proposals': {
       const { repositoryId } = generateProposalsDataSchema.parse(job.data);
-      await generateProposals(repositoryId);
+      await runGenerateProposals(repositoryId, job);
       return;
     }
     case 'proposals-topup': {

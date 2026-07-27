@@ -40,6 +40,7 @@ import {
   NOTIFICATION_KINDS,
   notify,
   notifyJobFailure,
+  notifyProposalGenerationFailure,
   notifyTaskFailure,
   signWebhookBody,
 } from '../src/lib/notifications.js';
@@ -63,6 +64,10 @@ beforeEach(() => {
   mocks.llmConfigFindMany.mockResolvedValue([]);
   mocks.repositoryFindUnique.mockResolvedValue(null);
 });
+
+function lastNotificationBody(): string {
+  return mocks.notificationCreate.mock.calls.at(-1)?.[0].data.body as string;
+}
 
 describe('signWebhookBody', () => {
   it('produces a stable GitHub-style sha256 HMAC of the exact body', () => {
@@ -91,6 +96,7 @@ describe('NOTIFICATION_KINDS', () => {
       'task_completed',
       'merge_gate_failed',
       'job_failed',
+      'proposal_generation_failed',
     ]) {
       expect(NOTIFICATION_KINDS).toContain(kind);
     }
@@ -174,10 +180,6 @@ describe('notifyTaskFailure', () => {
 // config-level MONITORED_SECRETS before they hit the in-app bell or a signed
 // webhook payload.
 describe('failure message scrubbing', () => {
-  function lastNotificationBody(): string {
-    return mocks.notificationCreate.mock.calls.at(-1)?.[0].data.body as string;
-  }
-
   it('notifyTaskFailure redacts connection tokens and LLM keys from the message', async () => {
     mocks.taskFindUnique.mockResolvedValue({
       ...TASK,
@@ -227,6 +229,25 @@ describe('failure message scrubbing', () => {
     expect(lastNotificationBody()).toContain('boom');
   });
 
+  it('notifyJobFailure skips generate-proposals (handled by the dedicated path)', async () => {
+    mocks.repositoryFindUnique.mockResolvedValue({
+      fullName: 'org/demo',
+      connection: { userId: 'user-1', accessTokenEnc: null, refreshTokenEnc: null },
+    });
+
+    await notifyJobFailure({
+      jobName: 'generate-proposals',
+      repositoryId: 'r1',
+      errorKind: 'Error',
+      message: 'clone failed',
+    });
+
+    // The generic job_failed notification must NOT fire — the dedicated
+    // proposal_generation_failed path (called from the worker handler on the
+    // final retry attempt) handles this job name.
+    expect(mocks.notificationCreate).not.toHaveBeenCalled();
+  });
+
   it('notifyJobFailure redacts secrets from repository-scoped job failures', async () => {
     mocks.repositoryFindUnique.mockResolvedValue({
       fullName: 'org/demo',
@@ -238,7 +259,7 @@ describe('failure message scrubbing', () => {
     });
 
     await notifyJobFailure({
-      jobName: 'generate-proposals',
+      jobName: 'deploy-service',
       repositoryId: 'r1',
       errorKind: 'Error',
       message: 'clone failed for ghp_live_token',
@@ -248,5 +269,75 @@ describe('failure message scrubbing', () => {
     expect(mocks.notificationCreate).toHaveBeenCalledTimes(1);
     expect(body).not.toContain('ghp_live_token');
     expect(body).toContain('org/demo');
+  });
+});
+
+// Dedicated failure notification for generate-proposals: fired by the worker
+// handler only on the final retry attempt. Deduped per repo (one unread
+// proposal_generation_failed per repository at a time) so a broken LLM
+// config cannot spam the bell every 10-minute cycle.
+describe('notifyProposalGenerationFailure', () => {
+  it('creates a proposal_generation_failed notification for the repo owner', async () => {
+    mocks.repositoryFindUnique.mockResolvedValue({
+      fullName: 'org/demo',
+      connection: { userId: 'user-1', accessTokenEnc: null, refreshTokenEnc: null },
+    });
+
+    await notifyProposalGenerationFailure('r1', 'LLM connection refused');
+
+    expect(mocks.notificationCreate).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        userId: 'user-1',
+        kind: 'proposal_generation_failed',
+        title: 'Proposal generation failed: org/demo',
+        body: 'org/demo — LLM connection refused',
+      }),
+    });
+  });
+
+  it('dedupes while an unread notification for the same repo exists', async () => {
+    mocks.repositoryFindUnique.mockResolvedValue({
+      fullName: 'org/demo',
+      connection: { userId: 'user-1', accessTokenEnc: null, refreshTokenEnc: null },
+    });
+    mocks.notificationFindFirst.mockResolvedValue({ id: 'n-existing' });
+
+    await notifyProposalGenerationFailure('r1', 'LLM down');
+
+    expect(mocks.notificationFindFirst).toHaveBeenCalledWith({
+      where: {
+        userId: 'user-1',
+        kind: 'proposal_generation_failed',
+        readAt: null,
+        title: 'Proposal generation failed: org/demo',
+      },
+      select: { id: true },
+    });
+    expect(mocks.notificationCreate).not.toHaveBeenCalled();
+  });
+
+  it('does nothing for an unknown repository', async () => {
+    mocks.repositoryFindUnique.mockResolvedValue(null);
+
+    await notifyProposalGenerationFailure('ghost', 'boom');
+
+    expect(mocks.notificationCreate).not.toHaveBeenCalled();
+  });
+
+  it('scrubs secrets from the error message', async () => {
+    mocks.repositoryFindUnique.mockResolvedValue({
+      fullName: 'org/demo',
+      connection: {
+        userId: 'user-1',
+        accessTokenEnc: encrypt('ghp_live_token'),
+        refreshTokenEnc: null,
+      },
+    });
+
+    await notifyProposalGenerationFailure('r1', 'push failed: ghp_live_token');
+
+    const body = lastNotificationBody();
+    expect(body).not.toContain('ghp_live_token');
+    expect(body).toContain('[redacted]');
   });
 });
