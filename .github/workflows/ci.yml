@@ -277,16 +277,24 @@ jobs:
         run: xcodegen
 
       # `test` needs a concrete simulator (generic destinations only build).
-      # Pick the first available iPhone from -showdestinations so the job
-      # keeps working as runner images change simulator lineups.
+      # Select by UDID from simctl rather than by name from -showdestinations:
+      # a name-only destination implies OS:latest, which fails when the picked
+      # iPhone exists only on an older runtime (e.g. first-listed iPhone is
+      # not installed on the newest runtime). id= avoids name/runtime
+      # mismatches on any runner image.
       - name: Build & test on iOS Simulator (no signing)
         working-directory: ios
         run: |
-          SIM_NAME=$(xcodebuild -project Lemniscate.xcodeproj -scheme Lemniscate -showdestinations \
-            | awk -F'name:' '/platform:iOS Simulator/ && /iPhone/ {
-                n=$2; sub(/[},].*$/, "", n); gsub(/^[ \t]+|[ \t]+$/, "", n); print n; exit
-              }')
-          echo "Using simulator: $SIM_NAME"
+          SIM_UDID=$(xcrun simctl list devices available -j | python3 -c '
+            import json, sys
+            data = json.load(sys.stdin)
+            for runtime in sorted(data["devices"], reverse=True):
+                for d in data["devices"][runtime]:
+                    if d.get("isAvailable") and "iPhone" in d["name"]:
+                        print(d["udid"]); sys.exit(0)
+            sys.exit("no available iPhone simulator found")
+          ')
+          echo "Using simulator UDID: $SIM_UDID"
           xcodebuild -project Lemniscate.xcodeproj -scheme Lemniscate \
-            -destination "platform=iOS Simulator,name=$SIM_NAME" \
+            -destination "platform=iOS Simulator,id=$SIM_UDID" \
             CODE_SIGNING_ALLOWED=NO test

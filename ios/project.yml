@@ -32,8 +32,14 @@ targets:
       - path: LemniscateTests
       # Shared API-contract fixtures (also decoded by the Android contract
       # tests); bundled as test resources, loaded via Bundle.url(forResource:).
+      # READMEs are excluded: tests/contract/README.md and
+      # device-ws/README.md would both copy to the same resources path
+      # ("Multiple commands produce .../README.md").
       - path: ../tests/contract
         buildPhase: resources
+        excludes:
+          - README.md
+          - "**/README.md"
     dependencies:
       - target: Lemniscate
     settings:

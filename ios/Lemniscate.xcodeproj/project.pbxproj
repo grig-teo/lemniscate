@@ -7,46 +7,94 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		04B94D41C0B89751B3C8EB94 /* lint.js in Resources */ = {isa = PBXBuildFile; fileRef = 51E024E196194C753C274B9B /* lint.js */; };
+		09A2F67F4F5CF19FDA18DAD9 /* command-result-failed.json in Resources */ = {isa = PBXBuildFile; fileRef = 1B260EBE3F2BE30CD907E786 /* command-result-failed.json */; };
 		0F60614EC37B54A9EEB6D701 /* AuthViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7FDA9F370E22372B39A2F127 /* AuthViewModel.swift */; };
+		1360FE24CD5D319225E15768 /* AuthViewModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4A3562C33EA412D0BC924360 /* AuthViewModelTests.swift */; };
+		1DEFCBECC871D54DED9FFEAC /* TestSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 436ACA99B199772761ED9D8E /* TestSupport.swift */; };
+		20681F2B4C5230B71C9FBC4B /* command-result-done.json in Resources */ = {isa = PBXBuildFile; fileRef = A5FCF005047954B1565C9DB7 /* command-result-done.json */; };
 		21D1B823A89192EA0D4E21FF /* RepoPickerViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF6D0B58A2DA90E6473B5D95 /* RepoPickerViewModel.swift */; };
+		23680F00DEB90BD7C8775BB0 /* capabilities.json in Resources */ = {isa = PBXBuildFile; fileRef = 86C7B2A71AD4500E4D62ED5E /* capabilities.json */; };
+		24D28DE233FB9D3E953B8DBF /* hello.json in Resources */ = {isa = PBXBuildFile; fileRef = 128F56DF1823D7EBEA261FD5 /* hello.json */; };
 		2A1E9B8FE093220951A4C7EE /* KeychainStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A024EFD763C473AAFF293453 /* KeychainStore.swift */; };
+		2C6FFA0A3C058100B345ACA7 /* MainViewModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 985EC849A3E416DAA37F0201 /* MainViewModelTests.swift */; };
+		2E290D73656CC9AE7AFF64F2 /* heartbeat.json in Resources */ = {isa = PBXBuildFile; fileRef = 4217C4FE30A4A5DE7FC3DBD1 /* heartbeat.json */; };
 		35223F47E91F741474F1946B /* LlmConfigFormView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0FFD9D7F71E2E1F8011202A9 /* LlmConfigFormView.swift */; };
 		377F7D1490DD4DB160BDC555 /* RootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B471B6C649EADD126CC936A /* RootView.swift */; };
+		4B55C188A49A271AF30A0C7F /* RepoPickerViewModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1289F85FC320AB64E1AE51EC /* RepoPickerViewModelTests.swift */; };
+		589741C3DFDFC13E90B8407B /* command-build-android.json in Resources */ = {isa = PBXBuildFile; fileRef = 4342D70CA44E9F74D5E21FC3 /* command-build-android.json */; };
+		5B4D177DFED08F280FAD3B7C /* repositories-response.json in Resources */ = {isa = PBXBuildFile; fileRef = CC3BC8AE5C97383199669988 /* repositories-response.json */; };
 		5F867095E563BC28BA43A088 /* GitVerseTokenView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 913DDC8AC5DD23B00C5CCEE1 /* GitVerseTokenView.swift */; };
+		6121355F80B953750ADDAD83 /* index.json in Resources */ = {isa = PBXBuildFile; fileRef = FA88391A08789528587AE025 /* index.json */; };
 		612CDA6070497A0C6C5EFE58 /* LemniscateApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3B2BC103FDAA2C6308531BBC /* LemniscateApp.swift */; };
+		66FF092DFD206B0A9DA7B7AD /* ContractFixturesTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BA749077E7A07DDAAB9475EA /* ContractFixturesTests.swift */; };
 		6DE1ED60E86BED38488AF7CD /* AuthView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B648B3188E4F1D9A5FA91882 /* AuthView.swift */; };
+		757E70382529FD4557E688F7 /* command-run-web.json in Resources */ = {isa = PBXBuildFile; fileRef = DE2347F010EC0A817B724E04 /* command-run-web.json */; };
 		76FBD461669DB060783CF62A /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 3E3547BA7748F843A84C3EDD /* Assets.xcassets */; };
 		7A75EB446872ED3965E6688C /* SpeechRecognizer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2A42777957E5D462B0465F52 /* SpeechRecognizer.swift */; };
 		7D4173284D7E0877C56A85C7 /* OAuthWebView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 71166FBAC8858256014CA38E /* OAuthWebView.swift */; };
+		7FD006764F490DA775E3FF08 /* command-run-desktop.json in Resources */ = {isa = PBXBuildFile; fileRef = 7EE287984F24EFCEFC360B70 /* command-run-desktop.json */; };
 		83757A36E2D937DD4AE50595 /* ConnectionsSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A23E92C704AFA9DC12835998 /* ConnectionsSettingsView.swift */; };
+		85C17B3E53A4DFD3949D29EC /* tasks-response.json in Resources */ = {isa = PBXBuildFile; fileRef = 4177CF727C527F788D42179A /* tasks-response.json */; };
 		87368906B283D167BCB9FCF7 /* MainViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 69C4740766F00E99FF8360D9 /* MainViewModel.swift */; };
+		8817D407156734F7B05AFCCF /* EndpointsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FE5297EBA9BE09B91CBE12EB /* EndpointsTests.swift */; };
 		8896EF117F3EF839A907BBE0 /* LlmConfigFormState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 64850821FBE007B6B24A49F7 /* LlmConfigFormState.swift */; };
 		9456B93105761502633097D3 /* Env.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9992B69E6019B5DA1D5D19DF /* Env.swift */; };
 		9AC264B642716F462CEED5A1 /* Glass.swift in Sources */ = {isa = PBXBuildFile; fileRef = 15FE2011296D1E1EA244D86D /* Glass.swift */; };
+		9B2D28E9A15AE4ADDACFA079 /* command-result-failed-with-log.json in Resources */ = {isa = PBXBuildFile; fileRef = 590E82F0C0425E43B0EA9C12 /* command-result-failed-with-log.json */; };
+		AF8CD45A52AE771B43E93BC4 /* command-install-apk.json in Resources */ = {isa = PBXBuildFile; fileRef = 2C9809652C43C6E0BBEFFB05 /* command-install-apk.json */; };
 		C186A23A7783FFAC0CD3C046 /* MainView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 04CA97031D6A0CBE2EE2AD2C /* MainView.swift */; };
 		C50169526984863E4585F94F /* SessionStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 885077AB5F9E8A32B125BE70 /* SessionStore.swift */; };
+		C5454AC256F83BD6372E9868 /* close-4001.json in Resources */ = {isa = PBXBuildFile; fileRef = 83E756156FD84F322ABA5354 /* close-4001.json */; };
 		C748588B30533099257737BE /* ConnectionsViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B4728D5DC62AC45BE151B8 /* ConnectionsViewModel.swift */; };
+		CB44D095EC91951495D534AB /* command-result-running.json in Resources */ = {isa = PBXBuildFile; fileRef = FF898F33D3BDA48F3F40A240 /* command-result-running.json */; };
 		D4272FBD0D05168D532A6936 /* APIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 86018401CE9B69AA7ABAE3B7 /* APIClient.swift */; };
 		DA172223C85344E837A6D28D /* LlmConfigListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5F200A4DA57B91F1A5B31535 /* LlmConfigListView.swift */; };
 		DB8C90F906DA1FF7BDC1B7E4 /* Endpoints.swift in Sources */ = {isa = PBXBuildFile; fileRef = 19892DE9F678BF3D794CD83C /* Endpoints.swift */; };
+		DCED9AF0C67EEAC77064B1D2 /* welcome.json in Resources */ = {isa = PBXBuildFile; fileRef = 81445F8FC4DE8DC4C19BD964 /* welcome.json */; };
 		E8C3F06CC2BD53CA5D2149C7 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = EA2ABCEF5A1F9FB98ACC5B8B /* Models.swift */; };
 		ECA7AFD3C15A3FB8E50F9D77 /* LlmConfigsViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40EF11683E9506FABACF434D /* LlmConfigsViewModel.swift */; };
 		EED7029A10E8C5E64FB57EE1 /* RepoPickerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 679FFAFBCED9D801E9B1B1FF /* RepoPickerView.swift */; };
+		F0873BECAF211F7624670246 /* LlmConfigFormStateTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 31530A650EC35DCBD2D696C7 /* LlmConfigFormStateTests.swift */; };
 		F277EF00FBEB9148611030C3 /* GitProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1896B22714A5B27A1A34BD88 /* GitProvider.swift */; };
+		FA00E052E82A00FC0B915C74 /* command-run-ios.json in Resources */ = {isa = PBXBuildFile; fileRef = 972273C26C29219ED0D45688 /* command-run-ios.json */; };
 		FB9927513A197C83339DEC2A /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8751FDE11552E7F15D62101D /* SettingsView.swift */; };
 /* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		BC0751225F81CD16C5393D23 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = A168B3043E5055DBEEDA2057 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 353215760ED03C9213E9A575;
+			remoteInfo = Lemniscate;
+		};
+/* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
 		04CA97031D6A0CBE2EE2AD2C /* MainView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MainView.swift; sourceTree = "<group>"; };
 		0AF1E2ABCD9FD352D8F50ACE /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		0FFD9D7F71E2E1F8011202A9 /* LlmConfigFormView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LlmConfigFormView.swift; sourceTree = "<group>"; };
+		1289F85FC320AB64E1AE51EC /* RepoPickerViewModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepoPickerViewModelTests.swift; sourceTree = "<group>"; };
+		128F56DF1823D7EBEA261FD5 /* hello.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = hello.json; sourceTree = "<group>"; };
 		15FE2011296D1E1EA244D86D /* Glass.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Glass.swift; sourceTree = "<group>"; };
 		1896B22714A5B27A1A34BD88 /* GitProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GitProvider.swift; sourceTree = "<group>"; };
 		19892DE9F678BF3D794CD83C /* Endpoints.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Endpoints.swift; sourceTree = "<group>"; };
+		1B260EBE3F2BE30CD907E786 /* command-result-failed.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = "command-result-failed.json"; sourceTree = "<group>"; };
 		2A42777957E5D462B0465F52 /* SpeechRecognizer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpeechRecognizer.swift; sourceTree = "<group>"; };
+		2C9809652C43C6E0BBEFFB05 /* command-install-apk.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = "command-install-apk.json"; sourceTree = "<group>"; };
+		2F1605229FC44428D365B752 /* LemniscateTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = LemniscateTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		31530A650EC35DCBD2D696C7 /* LlmConfigFormStateTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LlmConfigFormStateTests.swift; sourceTree = "<group>"; };
 		3B2BC103FDAA2C6308531BBC /* LemniscateApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LemniscateApp.swift; sourceTree = "<group>"; };
 		3E3547BA7748F843A84C3EDD /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		40EF11683E9506FABACF434D /* LlmConfigsViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LlmConfigsViewModel.swift; sourceTree = "<group>"; };
+		4177CF727C527F788D42179A /* tasks-response.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = "tasks-response.json"; sourceTree = "<group>"; };
+		4217C4FE30A4A5DE7FC3DBD1 /* heartbeat.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = heartbeat.json; sourceTree = "<group>"; };
+		4342D70CA44E9F74D5E21FC3 /* command-build-android.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = "command-build-android.json"; sourceTree = "<group>"; };
+		436ACA99B199772761ED9D8E /* TestSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TestSupport.swift; sourceTree = "<group>"; };
+		4A3562C33EA412D0BC924360 /* AuthViewModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthViewModelTests.swift; sourceTree = "<group>"; };
+		51E024E196194C753C274B9B /* lint.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = lint.js; sourceTree = "<group>"; };
+		590E82F0C0425E43B0EA9C12 /* command-result-failed-with-log.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = "command-result-failed-with-log.json"; sourceTree = "<group>"; };
 		5F200A4DA57B91F1A5B31535 /* LlmConfigListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LlmConfigListView.swift; sourceTree = "<group>"; };
 		64850821FBE007B6B24A49F7 /* LlmConfigFormState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LlmConfigFormState.swift; sourceTree = "<group>"; };
 		6648AA7D4E526581AD9731A7 /* Lemniscate.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = Lemniscate.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -54,19 +102,32 @@
 		69C4740766F00E99FF8360D9 /* MainViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MainViewModel.swift; sourceTree = "<group>"; };
 		71166FBAC8858256014CA38E /* OAuthWebView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OAuthWebView.swift; sourceTree = "<group>"; };
 		7B471B6C649EADD126CC936A /* RootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootView.swift; sourceTree = "<group>"; };
+		7EE287984F24EFCEFC360B70 /* command-run-desktop.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = "command-run-desktop.json"; sourceTree = "<group>"; };
 		7FDA9F370E22372B39A2F127 /* AuthViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthViewModel.swift; sourceTree = "<group>"; };
+		81445F8FC4DE8DC4C19BD964 /* welcome.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = welcome.json; sourceTree = "<group>"; };
+		83E756156FD84F322ABA5354 /* close-4001.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = "close-4001.json"; sourceTree = "<group>"; };
 		86018401CE9B69AA7ABAE3B7 /* APIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIClient.swift; sourceTree = "<group>"; };
+		86C7B2A71AD4500E4D62ED5E /* capabilities.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = capabilities.json; sourceTree = "<group>"; };
 		8751FDE11552E7F15D62101D /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		885077AB5F9E8A32B125BE70 /* SessionStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionStore.swift; sourceTree = "<group>"; };
 		913DDC8AC5DD23B00C5CCEE1 /* GitVerseTokenView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GitVerseTokenView.swift; sourceTree = "<group>"; };
+		972273C26C29219ED0D45688 /* command-run-ios.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = "command-run-ios.json"; sourceTree = "<group>"; };
+		985EC849A3E416DAA37F0201 /* MainViewModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MainViewModelTests.swift; sourceTree = "<group>"; };
 		9992B69E6019B5DA1D5D19DF /* Env.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Env.swift; sourceTree = "<group>"; };
 		A024EFD763C473AAFF293453 /* KeychainStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainStore.swift; sourceTree = "<group>"; };
 		A1B4728D5DC62AC45BE151B8 /* ConnectionsViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConnectionsViewModel.swift; sourceTree = "<group>"; };
 		A23E92C704AFA9DC12835998 /* ConnectionsSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConnectionsSettingsView.swift; sourceTree = "<group>"; };
+		A5FCF005047954B1565C9DB7 /* command-result-done.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = "command-result-done.json"; sourceTree = "<group>"; };
 		B648B3188E4F1D9A5FA91882 /* AuthView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthView.swift; sourceTree = "<group>"; };
+		BA749077E7A07DDAAB9475EA /* ContractFixturesTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContractFixturesTests.swift; sourceTree = "<group>"; };
+		CC3BC8AE5C97383199669988 /* repositories-response.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = "repositories-response.json"; sourceTree = "<group>"; };
+		DE2347F010EC0A817B724E04 /* command-run-web.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = "command-run-web.json"; sourceTree = "<group>"; };
 		EA2ABCEF5A1F9FB98ACC5B8B /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
+		FA88391A08789528587AE025 /* index.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = index.json; sourceTree = "<group>"; };
+		FE5297EBA9BE09B91CBE12EB /* EndpointsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EndpointsTests.swift; sourceTree = "<group>"; };
 		FF6D0B58A2DA90E6473B5D95 /* RepoPickerViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepoPickerViewModel.swift; sourceTree = "<group>"; };
-		"TEMP_4619C170-6BD8-4191-8430-CBC782076081" /* Base.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Base.xcconfig; sourceTree = "<group>"; };
+		FF898F33D3BDA48F3F40A240 /* command-result-running.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = "command-result-running.json"; sourceTree = "<group>"; };
+		"TEMP_79789463-E756-4D34-887B-CC26769B9BB7" /* Base.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Base.xcconfig; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXGroup section */
@@ -84,6 +145,39 @@
 			path = Settings;
 			sourceTree = "<group>";
 		};
+		17C758C8DEA694A31CDA5518 /* device-ws */ = {
+			isa = PBXGroup;
+			children = (
+				86C7B2A71AD4500E4D62ED5E /* capabilities.json */,
+				83E756156FD84F322ABA5354 /* close-4001.json */,
+				4342D70CA44E9F74D5E21FC3 /* command-build-android.json */,
+				2C9809652C43C6E0BBEFFB05 /* command-install-apk.json */,
+				A5FCF005047954B1565C9DB7 /* command-result-done.json */,
+				590E82F0C0425E43B0EA9C12 /* command-result-failed-with-log.json */,
+				1B260EBE3F2BE30CD907E786 /* command-result-failed.json */,
+				FF898F33D3BDA48F3F40A240 /* command-result-running.json */,
+				7EE287984F24EFCEFC360B70 /* command-run-desktop.json */,
+				972273C26C29219ED0D45688 /* command-run-ios.json */,
+				DE2347F010EC0A817B724E04 /* command-run-web.json */,
+				4217C4FE30A4A5DE7FC3DBD1 /* heartbeat.json */,
+				128F56DF1823D7EBEA261FD5 /* hello.json */,
+				FA88391A08789528587AE025 /* index.json */,
+				51E024E196194C753C274B9B /* lint.js */,
+				81445F8FC4DE8DC4C19BD964 /* welcome.json */,
+			);
+			path = "device-ws";
+			sourceTree = "<group>";
+		};
+		267B9238C1FF30B690B9C377 /* contract */ = {
+			isa = PBXGroup;
+			children = (
+				CC3BC8AE5C97383199669988 /* repositories-response.json */,
+				4177CF727C527F788D42179A /* tasks-response.json */,
+				17C758C8DEA694A31CDA5518 /* device-ws */,
+			);
+			path = contract;
+			sourceTree = "<group>";
+		};
 		356E1A52790BFD8F26102EB5 /* Core */ = {
 			isa = PBXGroup;
 			children = (
@@ -99,6 +193,8 @@
 			isa = PBXGroup;
 			children = (
 				9B937856D2291A685E1121BA /* Lemniscate */,
+				85D789C02CB11890D296C469 /* lemniscate */,
+				C9EDD5B58BACF2124E67EB79 /* LemniscateTests */,
 				51F6BD1B12DDCB58788B6EE3 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -115,6 +211,7 @@
 			isa = PBXGroup;
 			children = (
 				6648AA7D4E526581AD9731A7 /* Lemniscate.app */,
+				2F1605229FC44428D365B752 /* LemniscateTests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -141,6 +238,15 @@
 			path = Features;
 			sourceTree = "<group>";
 		};
+		85D789C02CB11890D296C469 /* lemniscate */ = {
+			isa = PBXGroup;
+			children = (
+				BC7A2FBBBD55916453C2A11F /* tests */,
+			);
+			name = lemniscate;
+			path = ..;
+			sourceTree = "<group>";
+		};
 		9B937856D2291A685E1121BA /* Lemniscate */ = {
 			isa = PBXGroup;
 			children = (
@@ -152,6 +258,28 @@
 				70B29DF1045DABC993F73E1A /* Features */,
 			);
 			path = Lemniscate;
+			sourceTree = "<group>";
+		};
+		BC7A2FBBBD55916453C2A11F /* tests */ = {
+			isa = PBXGroup;
+			children = (
+				267B9238C1FF30B690B9C377 /* contract */,
+			);
+			path = tests;
+			sourceTree = "<group>";
+		};
+		C9EDD5B58BACF2124E67EB79 /* LemniscateTests */ = {
+			isa = PBXGroup;
+			children = (
+				4A3562C33EA412D0BC924360 /* AuthViewModelTests.swift */,
+				BA749077E7A07DDAAB9475EA /* ContractFixturesTests.swift */,
+				FE5297EBA9BE09B91CBE12EB /* EndpointsTests.swift */,
+				31530A650EC35DCBD2D696C7 /* LlmConfigFormStateTests.swift */,
+				985EC849A3E416DAA37F0201 /* MainViewModelTests.swift */,
+				1289F85FC320AB64E1AE51EC /* RepoPickerViewModelTests.swift */,
+				436ACA99B199772761ED9D8E /* TestSupport.swift */,
+			);
+			path = LemniscateTests;
 			sourceTree = "<group>";
 		};
 		D080474DFBB074286D8AC3E6 /* Main */ = {
@@ -177,10 +305,10 @@
 			path = Auth;
 			sourceTree = "<group>";
 		};
-		"TEMP_10D04817-9A69-4D39-AABF-2FE03377E414" /* ios */ = {
+		"TEMP_1B0819C5-105F-408E-9989-0280E2FE5A3A" /* ios */ = {
 			isa = PBXGroup;
 			children = (
-				"TEMP_4619C170-6BD8-4191-8430-CBC782076081" /* Base.xcconfig */,
+				"TEMP_79789463-E756-4D34-887B-CC26769B9BB7" /* Base.xcconfig */,
 			);
 			path = ios;
 			sourceTree = "<group>";
@@ -205,6 +333,25 @@
 			productName = Lemniscate;
 			productReference = 6648AA7D4E526581AD9731A7 /* Lemniscate.app */;
 			productType = "com.apple.product-type.application";
+		};
+		B56D263F431680E8A871AA6E /* LemniscateTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = DE4CE6DCC801A2D878400E37 /* Build configuration list for PBXNativeTarget "LemniscateTests" */;
+			buildPhases = (
+				6AC6891AEB712CEB68AA4849 /* Sources */,
+				919B95FA08BC7D194DC058B0 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				B5A8FBECCCB57DADA4DB08D4 /* PBXTargetDependency */,
+			);
+			name = LemniscateTests;
+			packageProductDependencies = (
+			);
+			productName = LemniscateTests;
+			productReference = 2F1605229FC44428D365B752 /* LemniscateTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
 		};
 /* End PBXNativeTarget section */
 
@@ -232,6 +379,7 @@
 			projectRoot = "";
 			targets = (
 				353215760ED03C9213E9A575 /* Lemniscate */,
+				B56D263F431680E8A871AA6E /* LemniscateTests */,
 			);
 		};
 /* End PBXProject section */
@@ -245,9 +393,48 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		919B95FA08BC7D194DC058B0 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				23680F00DEB90BD7C8775BB0 /* capabilities.json in Resources */,
+				C5454AC256F83BD6372E9868 /* close-4001.json in Resources */,
+				589741C3DFDFC13E90B8407B /* command-build-android.json in Resources */,
+				AF8CD45A52AE771B43E93BC4 /* command-install-apk.json in Resources */,
+				20681F2B4C5230B71C9FBC4B /* command-result-done.json in Resources */,
+				9B2D28E9A15AE4ADDACFA079 /* command-result-failed-with-log.json in Resources */,
+				09A2F67F4F5CF19FDA18DAD9 /* command-result-failed.json in Resources */,
+				CB44D095EC91951495D534AB /* command-result-running.json in Resources */,
+				7FD006764F490DA775E3FF08 /* command-run-desktop.json in Resources */,
+				FA00E052E82A00FC0B915C74 /* command-run-ios.json in Resources */,
+				757E70382529FD4557E688F7 /* command-run-web.json in Resources */,
+				2E290D73656CC9AE7AFF64F2 /* heartbeat.json in Resources */,
+				24D28DE233FB9D3E953B8DBF /* hello.json in Resources */,
+				6121355F80B953750ADDAD83 /* index.json in Resources */,
+				04B94D41C0B89751B3C8EB94 /* lint.js in Resources */,
+				5B4D177DFED08F280FAD3B7C /* repositories-response.json in Resources */,
+				85C17B3E53A4DFD3949D29EC /* tasks-response.json in Resources */,
+				DCED9AF0C67EEAC77064B1D2 /* welcome.json in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
+		6AC6891AEB712CEB68AA4849 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				1360FE24CD5D319225E15768 /* AuthViewModelTests.swift in Sources */,
+				66FF092DFD206B0A9DA7B7AD /* ContractFixturesTests.swift in Sources */,
+				8817D407156734F7B05AFCCF /* EndpointsTests.swift in Sources */,
+				F0873BECAF211F7624670246 /* LlmConfigFormStateTests.swift in Sources */,
+				2C6FFA0A3C058100B345ACA7 /* MainViewModelTests.swift in Sources */,
+				4B55C188A49A271AF30A0C7F /* RepoPickerViewModelTests.swift in Sources */,
+				1DEFCBECC871D54DED9FFEAC /* TestSupport.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		7AD0200CBAB380D11F4715BC /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -282,6 +469,14 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		B5A8FBECCCB57DADA4DB08D4 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 353215760ED03C9213E9A575 /* Lemniscate */;
+			targetProxy = BC0751225F81CD16C5393D23 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
 		367F7C09C7B6B3CEF45E8AA6 /* Debug */ = {
@@ -349,7 +544,7 @@
 		};
 		4B84B558172E33ECF73E2AE7 /* Release */ = {
 			isa = XCBuildConfiguration;
-			baseConfigurationReference = "TEMP_4619C170-6BD8-4191-8430-CBC782076081" /* Base.xcconfig */;
+			baseConfigurationReference = "TEMP_79789463-E756-4D34-887B-CC26769B9BB7" /* Base.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
@@ -371,7 +566,7 @@
 		};
 		53A9BEC153AFBADE1DBBF596 /* Debug */ = {
 			isa = XCBuildConfiguration;
-			baseConfigurationReference = "TEMP_4619C170-6BD8-4191-8430-CBC782076081" /* Base.xcconfig */;
+			baseConfigurationReference = "TEMP_79789463-E756-4D34-887B-CC26769B9BB7" /* Base.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
@@ -447,6 +642,44 @@
 			};
 			name = Release;
 		};
+		E2681EB79B5B53719DBD4F96 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = space.grigteo.lemniscate.tests;
+				SDKROOT = iphoneos;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Lemniscate.app/Lemniscate";
+			};
+			name = Debug;
+		};
+		E4570D68AFAE1F3B6A350517 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = space.grigteo.lemniscate.tests;
+				SDKROOT = iphoneos;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Lemniscate.app/Lemniscate";
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -455,6 +688,15 @@
 			buildConfigurations = (
 				367F7C09C7B6B3CEF45E8AA6 /* Debug */,
 				955EFCFB2800E9F3A3B33FE6 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		DE4CE6DCC801A2D878400E37 /* Build configuration list for PBXNativeTarget "LemniscateTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				E2681EB79B5B53719DBD4F96 /* Debug */,
+				E4570D68AFAE1F3B6A350517 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Debug;
