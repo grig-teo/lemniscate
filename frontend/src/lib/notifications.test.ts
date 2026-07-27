@@ -42,6 +42,7 @@ describe('notificationKindLabel', () => {
     expect(notificationKindLabel('pr_closed')).toBe('PR closed');
     expect(notificationKindLabel('run_failed')).toBe('Run failed');
     expect(notificationKindLabel('budget_exceeded')).toBe('Budget exceeded');
+    expect(notificationKindLabel('llm_failover')).toBe('LLM failover');
     expect(notificationKindLabel('future_kind')).toBe('Notification');
   });
 });

@@ -148,6 +148,18 @@ describe('recordLlmRequest', () => {
   });
 });
 
+describe('recordLlmFailover', () => {
+  it('counts failovers by bounded reason label', async () => {
+    const metrics = createMetrics();
+    metrics.recordLlmFailover('rate_limit');
+    metrics.recordLlmFailover('rate_limit');
+    metrics.recordLlmFailover('other');
+    const body = await metrics.render();
+    expect(body).toContain('lemniscate_llm_failovers_total{reason="rate_limit"} 2');
+    expect(body).toContain('lemniscate_llm_failovers_total{reason="other"} 1');
+  });
+});
+
 describe('queue gauges', () => {
   const source: QueueCountsSource = {
     name: 'agent-tasks',

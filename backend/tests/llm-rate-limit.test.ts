@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { LlmError } from '../src/lib/llm-client.js';
-import { rateLimitDeferMs } from '../src/lib/llm-rate-limit.js';
+import { rateLimitDeferMs, isRateLimited } from '../src/lib/llm-rate-limit.js';
 
 // rateLimitDeferMs decides how long a job parks itself after an LLM
 // rate-limit failure: provider-stated reset time when parseable (clamped),
@@ -47,5 +47,33 @@ describe('rateLimitDeferMs', () => {
     expect(rateLimitDeferMs(past, NOW)).toBe(60 * 60_000);
     const garbage = new Error('usage limit reached, reset at not-a-date');
     expect(rateLimitDeferMs(garbage, NOW)).toBe(60 * 60_000);
+  });
+
+  it('honors a caller-provided fallback when no reset time is parseable', () => {
+    expect(rateLimitDeferMs(new LlmError('http', 'HTTP 429', 429), NOW, 5 * 60_000)).toBe(
+      5 * 60_000,
+    );
+    // A parseable provider reset still wins over the caller fallback.
+    const err = new Error('usage limit reached, reset at 2026-07-27 11:00:00');
+    expect(rateLimitDeferMs(err, NOW, 5 * 60_000)).toBe(
+      Date.parse('2026-07-27T11:00:00Z') + 5 * 60_000 - NOW,
+    );
+  });
+});
+
+describe('isRateLimited', () => {
+  it('detects the provider quota signatures beyond a bare 429', () => {
+    expect(isRateLimited(new Error('insufficient_quota: you exceeded your current quota'))).toBe(
+      true,
+    );
+    expect(isRateLimited(new Error('RESOURCE_EXHAUSTED: quota exceeded for model'))).toBe(true);
+    expect(isRateLimited(new LlmError('http', 'HTTP 429: {"type":"tokens"}', 429))).toBe(true);
+  });
+
+  it('rejects ordinary failures so real bugs never trigger failover parking', () => {
+    expect(isRateLimited(new Error('boom'))).toBe(false);
+    expect(isRateLimited(new LlmError('http', 'HTTP 500', 500))).toBe(false);
+    expect(isRateLimited(new LlmError('protocol', 'invalid JSON'))).toBe(false);
+    expect(isRateLimited('not an error')).toBe(false);
   });
 });

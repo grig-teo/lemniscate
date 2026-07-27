@@ -15,6 +15,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { logger } from './logger.js';
 import { errorKind, setJobFailureRecorder } from './job-failure-log.js';
 import { setLlmObserver, type LlmOutcome } from './llm-client.js';
+import { setFailoverObserver, type FailoverReason } from './llm-observer.js';
 
 const PREFIX = 'lemniscate_';
 const UNMATCHED_ROUTE = 'unmatched';
@@ -40,6 +41,7 @@ export interface Metrics {
   observeJob: <T>(jobName: string, fn: () => Promise<T>) => Promise<T>;
   recordJobFailure: (jobName: string, errorKind: string) => void;
   recordLlmRequest: (outcome: LlmOutcome, durationSeconds: number) => void;
+  recordLlmFailover: (reason: FailoverReason) => void;
   setQueueJobCount: (queue: string, state: string, count: number) => void;
 }
 
@@ -54,6 +56,7 @@ interface Instruments {
   jobFailures: Counter<string>;
   llmRequests: Counter<string>;
   llmDuration: Histogram<string>;
+  llmFailovers: Counter<string>;
   queueJobs: Gauge<string>;
 }
 
@@ -96,7 +99,9 @@ function createJobInstruments(registry: Registry): Pick<Instruments, 'jobDuratio
   return { jobDuration, jobFailures, queueJobs };
 }
 
-function createLlmInstruments(registry: Registry): Pick<Instruments, 'llmRequests' | 'llmDuration'> {
+function createLlmInstruments(
+  registry: Registry,
+): Pick<Instruments, 'llmRequests' | 'llmDuration' | 'llmFailovers'> {
   const llmRequests = new Counter({
     name: `${PREFIX}llm_requests_total`,
     help: 'LLM chat-completions requests by outcome',
@@ -110,7 +115,13 @@ function createLlmInstruments(registry: Registry): Pick<Instruments, 'llmRequest
     buckets: [0.5, 2, 5, 15, 30, 60, 120, 300, 600],
     registers: [registry],
   });
-  return { llmRequests, llmDuration };
+  const llmFailovers = new Counter({
+    name: `${PREFIX}llm_failovers_total`,
+    help: 'LLM config failovers by reason (rate_limit when the provider quota/token limit was hit)',
+    labelNames: ['reason'],
+    registers: [registry],
+  });
+  return { llmRequests, llmDuration, llmFailovers };
 }
 
 function createInstruments(registry: Registry): Instruments {
@@ -152,6 +163,9 @@ export function createMetrics(): Metrics {
       i.llmRequests.inc({ outcome });
       i.llmDuration.observe({ outcome }, durationSeconds);
     },
+    recordLlmFailover: (reason) => {
+      i.llmFailovers.inc({ reason });
+    },
     setQueueJobCount: (queue, state, count) => {
       i.queueJobs.set({ queue, state }, count);
     },
@@ -166,6 +180,10 @@ export const metrics = createMetrics();
 // module; llm-client itself stays free of prom-client so it remains usable
 // in config-free/test contexts.
 setLlmObserver((obs) => metrics.recordLlmRequest(obs.outcome, obs.latencyMs / 1000));
+
+// Cross-config failovers (llm-failover.ts) surface here as a counter; the
+// reason label is bounded by the observer contract (llm-observer.ts).
+setFailoverObserver((obs) => metrics.recordLlmFailover(obs.reason));
 
 // Same pattern for structured job-failure logs: in-run failures are caught
 // and recorded on the task (the BullMQ job then completes), so observeJob

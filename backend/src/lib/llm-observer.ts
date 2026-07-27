@@ -26,3 +26,25 @@ export function setLlmObserver(
 export function notifyObserver(outcome: LlmOutcome, startedAt: number): void {
   llmObserver?.({ outcome, latencyMs: Date.now() - startedAt });
 }
+
+// Failover observation (llm-failover.ts): one event per config switch. The
+// reason label is deliberately bounded ('rate_limit' | 'other') so it is
+// safe as a Prometheus label — models/configs would leak user data into
+// label values (see lib/metrics.ts cardinality rules).
+export type FailoverReason = 'rate_limit' | 'other';
+
+export interface LlmFailoverObservation {
+  reason: FailoverReason;
+}
+
+let failoverObserver: ((obs: LlmFailoverObservation) => void) | undefined;
+
+export function setFailoverObserver(
+  observer: ((obs: LlmFailoverObservation) => void) | undefined,
+): void {
+  failoverObserver = observer;
+}
+
+export function notifyFailover(obs: LlmFailoverObservation): void {
+  failoverObserver?.(obs);
+}
