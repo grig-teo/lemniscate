@@ -29,17 +29,20 @@ export function isAgentAuthoredComment(
 
 // Namespaced ids embed the provider's monotonically increasing numeric id
 // ('rc-1234' → 1234), so a single last-addressed marker covers everything
-// older. Non-numeric ids fall back to exact equality.
+// older — but only within the SAME prefix: GitHub 'review-<n>' (submitted
+// reviews) and 'rc-<n>' (review comments) are independent id sequences, so
+// numeric comparison across prefixes would wrongly suppress comments.
+// Different prefixes (or non-numeric ids) fall back to exact equality.
 export function isReviewCommentCovered(
   lastAddressedId: string | null | undefined,
   candidateId: string,
 ): boolean {
   if (!lastAddressedId) return false;
   if (lastAddressedId === candidateId) return true;
-  const last = /(\d+)$/.exec(lastAddressedId);
-  const candidate = /(\d+)$/.exec(candidateId);
-  if (!last || !candidate) return false;
-  return BigInt(candidate[1] ?? '0') <= BigInt(last[1] ?? '0');
+  const last = /^(.*?)(\d+)$/.exec(lastAddressedId);
+  const candidate = /^(.*?)(\d+)$/.exec(candidateId);
+  if (!last || !candidate || last[1] !== candidate[1]) return false;
+  return BigInt(candidate[2] ?? '0') <= BigInt(last[2] ?? '0');
 }
 
 /** Skip reason, or null when the comment should enqueue an address-review job. */

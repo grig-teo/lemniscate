@@ -15,6 +15,10 @@
 //   -> the pull request exists on Gitea (asserted via its API + web URL)
 //   -> token usage recorded (task DTO + GET /api/usage)
 //   -> "PR opened" notification recorded (GET /api/notifications)
+//   -> human PR review comment (posted via the Gitea API as a second user,
+//      repo autoAddressReview flag on) -> pr-state-sync poll fallback ->
+//      address-review job -> follow-up commit on the agent branch + task
+//      events summarizing the change + "review addressed" notification
 //   -> Prometheus series present (worker /metrics, backend /metrics guard)
 //
 // The only credentials are throwaway e2e values minted by run.sh; the
@@ -38,9 +42,11 @@ const FRONTEND_URL = process.env.E2E_FRONTEND_URL;
 const GITSTUB_URL = process.env.E2E_GITSTUB_URL;
 const GITSTUB_API_URL = process.env.E2E_GITSTUB_API_URL;
 const PAT_TOKEN = process.env.E2E_PAT;
+const REVIEWER_PAT = process.env.E2E_REVIEWER_PAT;
 const METRICS_TOKEN = process.env.E2E_METRICS_TOKEN;
 const SEED = JSON.parse(process.env.E2E_SEED ?? '{}');
 const TASK_TIMEOUT_MS = Number(process.env.E2E_TASK_TIMEOUT_SECONDS ?? 300) * 1000;
+const REVIEW_TIMEOUT_MS = Number(process.env.E2E_REVIEW_TIMEOUT_SECONDS ?? 180) * 1000;
 
 const REPO_FULL_NAME = 'e2e-user/e2e-repo';
 const CLONE_URL = `${GITSTUB_URL}/${REPO_FULL_NAME}.git`;
@@ -49,7 +55,7 @@ const EXPECTED_PR_URL = `${GITSTUB_URL}/${REPO_FULL_NAME}/pulls/1`;
 const EXPECTED_SUMMARY = 'Stub LLM applied the e2e smoke change';
 
 assert.ok(BACKEND_URL && WORKER_HEALTH_URL && FRONTEND_URL && GITSTUB_URL && GITSTUB_API_URL, 'E2E_*_URL env vars are required');
-assert.ok(PAT_TOKEN && METRICS_TOKEN, 'E2E_PAT and E2E_METRICS_TOKEN are required');
+assert.ok(PAT_TOKEN && REVIEWER_PAT && METRICS_TOKEN, 'E2E_PAT, E2E_REVIEWER_PAT and E2E_METRICS_TOKEN are required');
 assert.ok(SEED.userId && SEED.connectionId, 'E2E_SEED must carry userId and connectionId');
 
 // Session cookie captured by the PAT-connect test and reused after.
@@ -105,14 +111,30 @@ async function git(args, options = {}) {
 }
 
 // Gitea REST API through the TLS edge — the same base the backend's GitVerse
-// client talks to. Auth: the seeded PAT, exactly like the backend does.
-async function giteaApi(pathName) {
+// client talks to. Auth: a seeded PAT, exactly like the backend does.
+async function giteaSend(method, pathName, { body, token } = {}) {
   const response = await fetch(`${GITSTUB_API_URL}${pathName}`, {
-    headers: { authorization: `Bearer ${PAT_TOKEN}` },
+    method,
+    headers: {
+      authorization: `Bearer ${token ?? PAT_TOKEN}`,
+      ...(body ? { 'content-type': 'application/json' } : {}),
+    },
+    ...(body ? { body: JSON.stringify(body) } : {}),
   });
   const text = await response.text();
-  assert.equal(response.status, 200, `gitea GET ${pathName} -> ${response.status}: ${text.slice(0, 200)}`);
-  return JSON.parse(text);
+  assert.ok(
+    response.status >= 200 && response.status < 300,
+    `gitea ${method} ${pathName} -> ${response.status}: ${text.slice(0, 200)}`,
+  );
+  return text ? JSON.parse(text) : null;
+}
+
+async function giteaApi(pathName) {
+  return giteaSend('GET', pathName);
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 test('stack boots healthy: backend readiness reports postgres+redis', async () => {
@@ -279,6 +301,90 @@ test('full task lifecycle: queued -> running -> awaiting_review with an asserted
     assert.ok(notification, `no pr_opened notification for task ${task.id}`);
     assert.equal(notification.prUrl, EXPECTED_PR_URL);
     assert.ok(response.json.unreadCount >= 1);
+  });
+});
+
+test('human review feedback produces a follow-up commit (poll fallback)', async (t) => {
+  // GitVerse/Gitea has no webhook support (webhook-registry.ts), so this
+  // scenario rides the pr-state-sync poll fallback — shortened to 10s via
+  // PR_STATE_SYNC_INTERVAL_MS in docker-compose.e2e.yml. The comment is
+  // posted by a SECOND Gitea user: the loop deliberately ignores comments
+  // authored by the connection's own account.
+  const REVIEW_BODY = 'e2e review feedback: document the smoke marker file';
+
+  await t.test('the repo opts in via autoAddressReview (default off)', async () => {
+    assert.equal(repository.autoAddressReview ?? false, false, 'flag must default to off');
+    const enabled = await api('PATCH', `/repositories/${repository.id}`, {
+      cookie: true,
+      body: { autoAddressReview: true },
+    });
+    assert.equal(enabled.status, 200, `enable autoAddressReview -> ${enabled.status}: ${enabled.text}`);
+    assert.equal(enabled.json.repository.autoAddressReview, true);
+  });
+
+  const beforeRefs = await git(['ls-remote', CLONE_URL, `refs/heads/${EXPECTED_BRANCH}`]);
+  const beforeSha = beforeRefs.split(/\s/)[0];
+  assert.ok(beforeSha, `no remote head for ${EXPECTED_BRANCH}`);
+
+  await t.test('a scripted review comment lands on the PR via the Gitea API', async () => {
+    const review = await giteaSend('POST', `/repos/${REPO_FULL_NAME}/pulls/1/reviews`, {
+      token: REVIEWER_PAT,
+      body: {
+        body: 'e2e: requesting a change',
+        event: 'COMMENT',
+        comments: [{ path: 'E2E_SMOKE.md', new_position: 1, body: REVIEW_BODY }],
+      },
+    });
+    assert.ok(review?.id, 'Gitea returned no review id');
+  });
+
+  await t.test('a follow-up commit lands on the agent branch', async () => {
+    const deadline = Date.now() + REVIEW_TIMEOUT_MS;
+    let headSha = beforeSha;
+    while (headSha === beforeSha) {
+      assert.ok(
+        Date.now() < deadline,
+        `no follow-up commit on ${EXPECTED_BRANCH} within ${REVIEW_TIMEOUT_MS}ms`,
+      );
+      await sleep(2000);
+      headSha = (await git(['ls-remote', CLONE_URL, `refs/heads/${EXPECTED_BRANCH}`])).split(/\s/)[0];
+    }
+
+    // The new commit carries the stub LLM's review-fix change-set.
+    const dir = mkdtempSync(path.join(tmpdir(), 'e2e-fix-clone-'));
+    await git(['clone', '--branch', EXPECTED_BRANCH, '--depth', '1', CLONE_URL, dir]);
+    const fix = readFileSync(path.join(dir, 'E2E_REVIEW_FIX.md'), 'utf8');
+    assert.match(fix, /addressing a human review comment/);
+  });
+
+  await t.test('task events summarize the addressed review comment', async () => {
+    const eventsResponse = await api('GET', `/tasks/${task.id}/events`, { cookie: true });
+    assert.equal(eventsResponse.status, 200);
+    const lines = eventsResponse.json
+      .filter((event) => event.kind === 'log')
+      .map((event) => event.payload.line);
+    assert.ok(
+      lines.some((line) => /^addressing review comment rc-\d+ from @e2e-reviewer/.test(line)),
+      `console missing the "addressing" line; lines:\n${lines.join('\n')}`,
+    );
+    assert.ok(
+      lines.some((line) => line.includes('Stub LLM addressed the review comment')),
+      `console missing the fix summary; lines:\n${lines.join('\n')}`,
+    );
+    assert.ok(
+      lines.some((line) => /^addressed review comment rc-\d+$/.test(line)),
+      `console missing the "addressed" line; lines:\n${lines.join('\n')}`,
+    );
+  });
+
+  await t.test('a "review addressed" notification was recorded', async () => {
+    const response = await api('GET', '/notifications', { cookie: true });
+    assert.equal(response.status, 200, `GET /notifications -> ${response.status}`);
+    const notification = response.json.notifications.find(
+      (entry) => entry.kind === 'review_addressed' && entry.taskId === task.id,
+    );
+    assert.ok(notification, `no review_addressed notification for task ${task.id}`);
+    assert.equal(notification.prUrl, EXPECTED_PR_URL);
   });
 });
 

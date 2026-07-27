@@ -50,6 +50,14 @@ describe('isReviewCommentCovered', () => {
     expect(isReviewCommentCovered('abc', 'abc')).toBe(true);
     expect(isReviewCommentCovered('abc', 'abd')).toBe(false);
   });
+
+  it('never compares numerically across different prefixes', () => {
+    // GitHub 'review-<n>' and 'rc-<n>' are independent id sequences: a high
+    // review marker must not suppress a newer review comment (or vice versa).
+    expect(isReviewCommentCovered('review-999', 'rc-5')).toBe(false);
+    expect(isReviewCommentCovered('rc-999', 'review-5')).toBe(false);
+    expect(isReviewCommentCovered('review-100', 'review-42')).toBe(true);
+  });
 });
 
 describe('reviewFeedbackSkipReason', () => {

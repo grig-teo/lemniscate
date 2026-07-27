@@ -20,7 +20,9 @@ const mocks = vi.hoisted(() => ({
   notify: vi.fn().mockResolvedValue(undefined),
 }));
 
-vi.mock('../src/config.js', () => ({ config: { AGENT_WORKDIR: '/tmp/test-workdirs' } }));
+vi.mock('../src/config.js', () => ({
+  config: { AGENT_WORKDIR: '/tmp/test-workdirs', PR_STATE_SYNC_INTERVAL_MS: 12_345 },
+}));
 vi.mock('../src/lib/prisma.js', () => ({
   prisma: {
     task: { findMany: mocks.taskFindMany },
@@ -48,9 +50,26 @@ vi.mock('ioredis', () => ({ Redis: vi.fn() }));
 import {
   pollReviewFeedback,
   recoverStuckReviews,
+  registerPrStateSyncSchedule,
   syncMergedPullRequests,
   taskStatusForPrState,
 } from '../src/lib/pr-state-sync.js';
+import { getAgentTasksQueue } from '../src/lib/proposal-scheduler.js';
+
+describe('registerPrStateSyncSchedule', () => {
+  it('registers the repeatable job with the configured interval', async () => {
+    const upsertJobScheduler = vi.fn().mockResolvedValue(undefined);
+    vi.mocked(getAgentTasksQueue).mockReturnValue({ upsertJobScheduler } as never);
+
+    await registerPrStateSyncSchedule();
+
+    expect(upsertJobScheduler).toHaveBeenCalledWith(
+      'pr-state-sync',
+      { every: 12_345 },
+      { name: 'pr-state-sync', data: {} },
+    );
+  });
+});
 
 function awaitingTask(overrides: Record<string, unknown> = {}) {
   return {

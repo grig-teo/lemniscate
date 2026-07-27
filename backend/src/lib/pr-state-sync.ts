@@ -9,6 +9,7 @@ import { enqueueAddressReview, enqueueReviewTask, getAgentTasksQueue } from './p
 import { applyTaskPrStateSafe, type TaskWithConnection } from './pr-merged-handler.js';
 import { reviewFeedbackSkipReason } from './review-feedback.js';
 import { logEvent } from './agent-git.js';
+import { config } from '../config.js';
 import { prisma } from './prisma.js';
 import { logger } from './logger.js';
 import { sleep } from './utils.js';
@@ -28,7 +29,8 @@ import { sleep } from './utils.js';
 // Re-exported so existing importers (tests) keep a single import path.
 export { taskStatusForPrState } from './pr-merged-handler.js';
 
-const PR_STATE_SYNC_INTERVAL_MS = 5 * 60 * 1000; // every 5 minutes
+// Configurable (config.PR_STATE_SYNC_INTERVAL_MS, default 5 minutes) so the
+// e2e stack can shorten the cadence and observe the poll fallback.
 const PR_STATE_SYNC_SCHEDULER_ID = 'pr-state-sync';
 // One hung provider must not stall the whole sweep — a repo whose list call
 // times out falls back to per-branch checks.
@@ -42,7 +44,7 @@ const INTER_REPO_JITTER_MS = 250;
 export async function registerPrStateSyncSchedule(): Promise<void> {
   await getAgentTasksQueue().upsertJobScheduler(
     PR_STATE_SYNC_SCHEDULER_ID,
-    { every: PR_STATE_SYNC_INTERVAL_MS },
+    { every: config.PR_STATE_SYNC_INTERVAL_MS },
     { name: 'pr-state-sync', data: {} },
   );
 }

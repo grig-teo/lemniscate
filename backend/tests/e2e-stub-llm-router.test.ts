@@ -18,11 +18,9 @@ import {
 // branch-slug or commit-message prompts, this test goes red instead of the
 // e2e suite mysteriously timing out in CI.
 
-const fixturePath = path.resolve(
-  import.meta.dirname,
-  '../../tests/e2e/gitstub/llm-fixture.json',
-);
-const fixture = readFileSync(fixturePath, 'utf8').trim();
+const fixtureDir = path.resolve(import.meta.dirname, '../../tests/e2e/gitstub');
+const fixture = readFileSync(path.join(fixtureDir, 'llm-fixture.json'), 'utf8').trim();
+const fixFixture = readFileSync(path.join(fixtureDir, 'llm-fixture-fix.json'), 'utf8').trim();
 
 function userMessage(content: unknown) {
   return { role: 'user', content };
@@ -48,8 +46,27 @@ describe('e2e mock LLM scenario router', () => {
   });
 
   it('answers any other prompt with the canned change-set fixture', () => {
-    const content = completionContent([userMessage('Improve this repository')], fixture);
+    const content = completionContent([userMessage('Improve this repository')], fixture, fixFixture);
     expect(content).toBe(fixture);
+  });
+
+  it('answers the review-fix prompt with the review-fix change-set fixture', () => {
+    // buildFixUserPrompt (pr-review.ts) embeds this heading in every fix
+    // prompt — both the self-review loop and the address-review job. The e2e
+    // review-feedback scenario depends on this routing rule producing a
+    // DIFFERENT change-set than the original task run, otherwise the fix
+    // commit is empty and the follow-up-commit assertion has nothing to see.
+    const content = completionContent(
+      [
+        userMessage(
+          '# Original task\nAdd the e2e smoke marker file.\n\n# Code review feedback\nA reviewer requested changes on your pull request.',
+        ),
+      ],
+      fixture,
+      fixFixture,
+    );
+    expect(content).toBe(fixFixture);
+    expect(content).not.toBe(fixture);
   });
 
   it('reads multi-part (text blocks) message content too', () => {
