@@ -4,6 +4,7 @@ import { decrypt } from './crypto.js';
 import { prisma } from './prisma.js';
 import { getAgentTasksQueue } from './queue.js';
 import { assertPublicHttpUrl } from './url-safety.js';
+import { DeliveryError, sendEmail } from './notification-email.js';
 import { logger } from './logger.js';
 import { errorMessage, redactSecrets } from './utils.js';
 
@@ -43,16 +44,6 @@ export interface ChannelEventPayload {
   body: string;
   taskId?: string;
   prUrl?: string;
-}
-
-// Failure carrying the HTTP status (if any) for the audit row.
-class DeliveryError extends Error {
-  readonly statusCode: number | null;
-
-  constructor(message: string, statusCode: number | null = null) {
-    super(message);
-    this.statusCode = statusCode;
-  }
 }
 
 // ---------------------------------------------------------------------------
@@ -152,27 +143,6 @@ async function postWebhook(target: string, secret: string | null, body: string, 
     throw new DeliveryError(`webhook responded with HTTP ${response.status}`, response.status);
   }
   return response.status;
-}
-
-async function sendEmail(target: string, payload: Record<string, unknown>): Promise<void> {
-  if (!config.SMTP_HOST) {
-    throw new DeliveryError('SMTP not configured (set SMTP_HOST/SMTP_FROM to enable email)');
-  }
-  const { createTransport } = await import('nodemailer');
-  const transport = createTransport({
-    host: config.SMTP_HOST,
-    port: config.SMTP_PORT,
-    secure: config.SMTP_PORT === 465,
-    auth: config.SMTP_USER ? { user: config.SMTP_USER, pass: config.SMTP_PASS } : undefined,
-  });
-  const lines = [String(payload.body ?? '')];
-  if (payload.prUrl) lines.push('', String(payload.prUrl));
-  await transport.sendMail({
-    from: config.SMTP_FROM,
-    to: target,
-    subject: String(payload.title ?? 'Lemniscate notification'),
-    text: lines.join('\n'),
-  });
 }
 
 async function transportFor(

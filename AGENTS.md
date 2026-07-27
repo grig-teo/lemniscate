@@ -93,6 +93,27 @@ that was red is now green, alongside the whole suite. Refactors specifically
 (per section 6) MUST land a locking test against the current code before any
 production line is deleted or rewritten.
 
+## 8. Git workflow: changes land only via pull requests
+
+ALL code changes — features, fixes, refactors, conflict resolutions — reach
+`main` (or the repository's default branch) exclusively through a pull
+request. This applies to human contributors, this project's own agent runs,
+and any external AI agent working in the repo.
+
+* **Never push directly to the default branch.** Work on a short-lived
+  branch (`lemniscate/<slug>` for agent runs), open a PR, let CI run.
+* **Merges and rebases happen through the PR flow too.** When the default
+  branch moved since the branch started, rebase the task branch onto it
+  (resolving conflicts on the branch), push with `--force-with-lease`, and
+  let CI verify the rebased head before merging — never resolve by merging
+  the default branch into the task branch, and never resolve conflicts by
+  editing directly on the default branch.
+* **CI must be green before merging.** A broken or missing CI signal is a
+  blocker, not a bypass: fix the workflow first, then merge.
+* Conflict-resolution commits deserve the same care as feature commits:
+  duplicated YAML keys, kept conflict markers, and "both sides kept"
+  resolutions are exactly what PR review and CI exist to catch.
+
 ---
 
 ## Project layout

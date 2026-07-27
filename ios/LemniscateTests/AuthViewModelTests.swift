@@ -43,6 +43,8 @@ final class AuthViewModelTests: XCTestCase {
             }
             XCTAssertEqual(status, 400)
             XCTAssertEqual(message, "invalid token")
+        } catch {
+            XCTFail("unexpected error: \(error)")
         }
         XCTAssertNil(session.loginError)
     }
