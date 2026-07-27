@@ -213,8 +213,10 @@ export async function persistTokenUsage(
 
 export async function cleanupWorkdir(workdir: string, taskId?: string): Promise<void> {
   // Snapshot to MinIO first (silent, best-effort) so a finished task's
-  // workdir stays retrievable after the local copy is gone.
-  await archiveWorkdirToMinio(workdir).catch(() => {});
+  // workdir stays retrievable after the local copy is gone. taskId is
+  // forwarded so the size-skip path can record an 'archive_skipped_size'
+  // marker event on the task's console.
+  await archiveWorkdirToMinio(workdir, taskId).catch(() => {});
   await fs.rm(workdir, { recursive: true, force: true }).catch(() => {});
   if (taskId) await logEvent(taskId, 'cleaned up workdir').catch(() => {});
 }

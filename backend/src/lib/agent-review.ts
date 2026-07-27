@@ -316,6 +316,6 @@ export async function reviewTask(taskId: string, attempt = 0): Promise<void> {
       rt?.usedTokens ?? task.llmTokensUsed,
       rt ? tokenSplit(rt) : undefined,
     );
-    await cleanupWorkdir(workdir);
+    await cleanupWorkdir(workdir, taskId);
   }
 }

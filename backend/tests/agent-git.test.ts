@@ -190,7 +190,7 @@ describe('cleanupWorkdir', () => {
         existedWhenArchived = await fs.stat(workdir).then((s) => s.isDirectory()).catch(() => false);
       });
       await cleanupWorkdir(workdir, 'task-1');
-      expect(mocks.archiveWorkdirToMinio).toHaveBeenCalledWith(workdir);
+      expect(mocks.archiveWorkdirToMinio).toHaveBeenCalledWith(workdir, 'task-1');
       expect(existedWhenArchived).toBe(true);
       await expect(fs.stat(workdir)).rejects.toThrow();
       expect(mocks.publishTaskEvent).toHaveBeenCalledWith('task-1', 'log', {

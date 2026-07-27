@@ -357,7 +357,7 @@ describe('reviewTask verdict parsing and failure path', () => {
     await expect(reviewTask('task-1')).rejects.toBe(boom);
     expect(mocks.recordJobFailure).toHaveBeenCalledWith('review-pr', 'task-1', boom, []);
     expect(mocks.persistTokenUsage).toHaveBeenCalledWith('task-1', 0, undefined);
-    expect(mocks.cleanupWorkdir).toHaveBeenCalledWith(workdirFor(0));
+    expect(mocks.cleanupWorkdir).toHaveBeenCalledWith(workdirFor(0), 'task-1');
   });
 });
 
@@ -396,7 +396,7 @@ describe('reviewTask rate-limit deferral', () => {
     const delay = mocks.enqueueReviewTask.mock.calls[0][2] as number;
     expect(delay).toBeGreaterThanOrEqual(10 * 60_000);
     expect(delay).toBeLessThanOrEqual(6 * 60 * 60_000);
-    expect(mocks.cleanupWorkdir).toHaveBeenCalledWith(workdirFor(0));
+    expect(mocks.cleanupWorkdir).toHaveBeenCalledWith(workdirFor(0), 'task-1');
   });
 
   it('sequences defer jobIds so repeated pauses are never deduped away', async () => {
@@ -520,6 +520,6 @@ describe('reviewTask on the hermes executor', () => {
     mocks.runHermesTask.mockRejectedValue(boom);
     await expect(reviewTask('task-1')).rejects.toBe(boom);
     expect(mocks.recordJobFailure).toHaveBeenCalledWith('review-pr', 'task-1', boom, []);
-    expect(mocks.cleanupWorkdir).toHaveBeenCalledWith(workdirFor(0));
+    expect(mocks.cleanupWorkdir).toHaveBeenCalledWith(workdirFor(0), 'task-1');
   });
 });
