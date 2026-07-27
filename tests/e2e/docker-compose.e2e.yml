@@ -47,6 +47,10 @@ services:
       NODE_TLS_REJECT_UNAUTHORIZED: "0"
       GIT_SSL_NO_VERIFY: "true"
       AGENT_EXECUTOR: internal
+      # GitVerse/Gitea has no webhook support, so the human-review-feedback
+      # scenario rides the pr-state-sync poll fallback — shorten its cadence
+      # (production default: 5 min) so the suite observes it in seconds.
+      PR_STATE_SYNC_INTERVAL_MS: "10000"
 
   gitea:
     # Pinned release (never :latest) — same rule as the MinIO image in the

@@ -18,6 +18,7 @@ import { completionContent } from './llm-router.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const CHANGES_FIXTURE = readFileSync(path.join(HERE, 'llm-fixture.json'), 'utf8').trim();
+const FIX_FIXTURE = readFileSync(path.join(HERE, 'llm-fixture-fix.json'), 'utf8').trim();
 
 function sendJson(res, status, body) {
   const payload = JSON.stringify(body);
@@ -46,7 +47,7 @@ async function llmHandler(req, res) {
   } catch {
     return sendJson(res, 400, { error: 'invalid JSON body' });
   }
-  const content = completionContent(body.messages ?? [], CHANGES_FIXTURE);
+  const content = completionContent(body.messages ?? [], CHANGES_FIXTURE, FIX_FIXTURE);
   return sendJson(res, 200, {
     id: 'chatcmpl-e2e-stub',
     object: 'chat.completion',

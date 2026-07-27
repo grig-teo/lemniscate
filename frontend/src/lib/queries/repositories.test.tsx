@@ -106,7 +106,7 @@ describe('useUpdateAllRepositoryFlags', () => {
   it('POSTs /api/repositories/flags, invalidates ["repositories"], suppresses the toast', async () => {
     const queryClient = createTestQueryClient();
     const invalidate = vi.spyOn(queryClient, 'invalidateQueries');
-    const flags = { autoCreatePr: true, autoReviewPr: false, autoMergePr: false };
+    const flags = { autoCreatePr: true, autoReviewPr: false, autoMergePr: false, autoAddressReview: false };
     const { calls } = mockFetchSequence({ json: { updated: 2 } });
 
     const { result } = renderHookWithClient(() => useUpdateAllRepositoryFlags(), queryClient);

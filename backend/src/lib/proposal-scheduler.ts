@@ -4,6 +4,7 @@ import { MAX_PENDING_PROPOSALS } from './agent-proposals.js';
 import { prisma } from './prisma.js';
 import { logger } from './logger.js';
 import { getAgentTasksQueue } from './queue.js';
+import type { ReviewFeedbackComment } from './review-feedback.js';
 
 // Repeatable schedulers + enqueue helpers on the shared agent queue (the
 // queue itself lives in lib/queue.ts — single home, re-exported here so
@@ -255,6 +256,17 @@ export async function enqueueMergeGate(
       ...(delayMs > 0 ? { delay: delayMs } : {}),
     },
   );
+}
+
+// Enqueues an 'address-review' job (lib/address-review.ts); the jobId embeds the review id so same-comment redeliveries dedupe.
+export async function enqueueAddressReview(taskId: string, comment: ReviewFeedbackComment): Promise<void> {
+  await getAgentTasksQueue().add('address-review', { taskId, comment }, {
+    jobId: `address-review-${taskId}-${comment.id}`,
+    removeOnComplete: true, removeOnFail: true,
+    priority: JOB_PRIORITY.review,
+    attempts: 3,
+    backoff: { type: 'exponential', delay: 60_000 },
+  });
 }
 
 // Enqueues a 'review-pr' job (LLM review → fix iterations → merge gate).

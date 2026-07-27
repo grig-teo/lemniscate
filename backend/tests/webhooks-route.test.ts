@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   applyTaskPrStateSafe: vi.fn().mockResolvedValue(true),
   enqueueMergeGate: vi.fn().mockResolvedValue(undefined),
   enqueueRunTask: vi.fn().mockResolvedValue(undefined),
+  enqueueAddressReview: vi.fn().mockResolvedValue(undefined),
   fireEventTrigger: vi.fn().mockResolvedValue({ fired: false, reason: 'not_triggerable' }),
   redisSet: vi.fn().mockResolvedValue('OK'),
   decrypt: vi.fn().mockReturnValue('super-secret-webhook-key'),
@@ -47,6 +48,7 @@ vi.mock('../src/lib/pr-merged-handler.js', () => ({
 vi.mock('../src/lib/proposal-scheduler.js', () => ({
   enqueueMergeGate: mocks.enqueueMergeGate,
   enqueueRunTask: mocks.enqueueRunTask,
+  enqueueAddressReview: mocks.enqueueAddressReview,
   getAgentTasksQueue: vi.fn(),
 }));
 
@@ -105,12 +107,14 @@ function awaitingTask() {
     branchName: 'lemniscate/t-1',
     repositoryId: 'repo-1',
     title2: 'Add feature X',
+    lastAddressedReviewId: null,
     repository: {
       id: 'repo-1',
       fullName: 'org/demo',
       defaultBranch: 'main',
       autoMergePr: true,
-      connection: { id: CONNECTION_ID, userId: 'user-1', provider: 'github' },
+      autoAddressReview: true,
+      connection: { id: CONNECTION_ID, userId: 'user-1', provider: 'github', username: 'agent-bot' },
     },
   };
 }
@@ -418,5 +422,101 @@ describe('POST /api/webhooks/:connectionId', () => {
     expect(res.statusCode).toBe(200);
     expect(res.json().event).toBe('no_task');
     await app.close();
+  });
+
+  // -----------------------------------------------------------------------
+  // Human PR review feedback (pull_request_review_comment → address-review)
+  // -----------------------------------------------------------------------
+
+  function reviewCommentBody(overrides: Record<string, unknown> = {}): string {
+    return JSON.stringify({
+      action: 'created',
+      comment: {
+        id: 777,
+        body: 'Please handle the null case here',
+        user: { login: 'human-reviewer' },
+        path: 'src/a.ts',
+        line: 42,
+      },
+      pull_request: {
+        number: 42,
+        head: { ref: 'lemniscate/t-1', repo: { full_name: 'org/demo' } },
+      },
+      repository: { full_name: 'org/demo' },
+      ...overrides,
+    });
+  }
+
+  async function postReviewComment(body: string, delivery: string) {
+    const app = await buildApp();
+    const res = await app.inject({
+      method: 'POST',
+      url: `/api/webhooks/${CONNECTION_ID}`,
+      headers: {
+        'content-type': 'application/json',
+        'x-github-event': 'pull_request_review_comment',
+        'x-hub-signature-256': githubSig(body),
+        'x-github-delivery': delivery,
+      },
+      payload: body,
+    });
+    await app.close();
+    return res;
+  }
+
+  it('enqueues address-review for a human review comment on an awaiting PR', async () => {
+    const res = await postReviewComment(reviewCommentBody(), 'deliv-rc-1');
+    expect(res.statusCode).toBe(200);
+    expect(res.json().event).toBe('pr_review_comment');
+    expect(mocks.enqueueAddressReview).toHaveBeenCalledWith(TASK_ID, {
+      id: 'rc-777',
+      body: 'Please handle the null case here',
+      author: 'human-reviewer',
+      path: 'src/a.ts',
+      line: 42,
+    });
+  });
+
+  it('scopes the task lookup to the verified connection (cross-tenant guard)', async () => {
+    mocks.taskFindFirst.mockResolvedValue(null);
+    const res = await postReviewComment(reviewCommentBody(), 'deliv-rc-2');
+    expect(res.statusCode).toBe(200);
+    expect(res.json().event).toBe('no_task');
+    expect(mocks.taskFindFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          repository: { fullName: 'org/demo', connectionId: CONNECTION_ID },
+        }),
+      }),
+    );
+    expect(mocks.enqueueAddressReview).not.toHaveBeenCalled();
+  });
+
+  it('ignores review comments when the repo flag is off (default: do not intervene)', async () => {
+    const t = awaitingTask();
+    t.repository.autoAddressReview = false;
+    mocks.taskFindFirst.mockResolvedValue(t);
+    const res = await postReviewComment(reviewCommentBody(), 'deliv-rc-3');
+    expect(res.statusCode).toBe(200);
+    expect(res.json().event).toBe('pr_review_comment_flag_off');
+    expect(mocks.enqueueAddressReview).not.toHaveBeenCalled();
+  });
+
+  it('ignores comments authored by the agent itself', async () => {
+    const res = await postReviewComment(
+      reviewCommentBody({ comment: { id: 778, body: 'note', user: { login: 'Agent-Bot' } } }),
+      'deliv-rc-4',
+    );
+    expect(res.json().event).toBe('pr_review_comment_own_comment');
+    expect(mocks.enqueueAddressReview).not.toHaveBeenCalled();
+  });
+
+  it('ignores an already-addressed review id (duplicate delivery)', async () => {
+    const t = awaitingTask();
+    (t as { lastAddressedReviewId: string | null }).lastAddressedReviewId = 'rc-777';
+    mocks.taskFindFirst.mockResolvedValue(t);
+    const res = await postReviewComment(reviewCommentBody(), 'deliv-rc-5');
+    expect(res.json().event).toBe('pr_review_comment_duplicate');
+    expect(mocks.enqueueAddressReview).not.toHaveBeenCalled();
   });
 });

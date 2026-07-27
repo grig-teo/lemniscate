@@ -5,6 +5,7 @@ import {
   assembleUnifiedDiff,
   createOrFindExistingPr,
   getPullRequestDiff,
+  listPrReviewComments,
   listPullRequests,
   mergePullRequest,
   openPullRequest,
@@ -270,6 +271,51 @@ describe('gitverse mergePullRequest', () => {
     const error = await mergePullRequest(gvConnection, gvRef).catch((err: unknown) => err);
     expect(error).toBeInstanceOf(ProviderError);
     expect((error as ProviderError).status).toBe(409);
+  });
+});
+
+describe('gitverse listPrReviewComments', () => {
+  // The Gitea-flavored API (pinned e2e image gitea/gitea:1.26.4) has NO
+  // GET /pulls/{n}/comments — it 404s. Review comments are fetched per
+  // review: GET /pulls/{n}/reviews, then GET /pulls/{n}/reviews/{id}/comments.
+  it('collects review comments across reviews via the per-review endpoints', async () => {
+    stubFetch((url) => {
+      if (url.includes('state=open')) return mockResponse(200, [gvPull]);
+      if (url === `${pullsUrl}/7/reviews?per_page=100`) {
+        return mockResponse(200, [{ id: 11 }, { id: 12 }]);
+      }
+      if (url === `${pullsUrl}/7/reviews/11/comments?per_page=100`) {
+        return mockResponse(200, [
+          {
+            id: 101,
+            body: 'please document the marker file',
+            user: { login: 'e2e-reviewer' },
+            path: 'E2E_SMOKE.md',
+            position: 1,
+          },
+        ]);
+      }
+      if (url === `${pullsUrl}/7/reviews/12/comments?per_page=100`) {
+        return mockResponse(200, [
+          { id: 102, body: 'and rename it', user: { login: 'e2e-reviewer' }, path: 'x.md' },
+        ]);
+      }
+      throw new Error(`unexpected url ${url}`);
+    });
+    const comments = await listPrReviewComments(gvConnection, gvRef);
+    expect(comments).toEqual([
+      { id: 'rc-101', body: 'please document the marker file', author: 'e2e-reviewer', path: 'E2E_SMOKE.md' },
+      { id: 'rc-102', body: 'and rename it', author: 'e2e-reviewer', path: 'x.md' },
+    ]);
+  });
+
+  it('reports no comments when the PR has no reviews', async () => {
+    stubFetch((url) => {
+      if (url.includes('state=open')) return mockResponse(200, [gvPull]);
+      expect(url).toBe(`${pullsUrl}/7/reviews?per_page=100`);
+      return mockResponse(200, []);
+    });
+    await expect(listPrReviewComments(gvConnection, gvRef)).resolves.toEqual([]);
   });
 });
 

@@ -1,5 +1,5 @@
 import { safeEqualSecret } from '../secret-compare.js';
-import type { ProviderWebhookApi, WebhookEvent } from './webhook-types.js';
+import { reviewCommentEvent, type ProviderWebhookApi, type WebhookEvent } from './webhook-types.js';
 
 // GitLab inbound webhook verification + event mapping.
 //
@@ -80,6 +80,38 @@ function parseGitlabIssue(
   return { kind: 'issue_opened', repoFullName, headBranch: '', deliveryId };
 }
 
+interface GitlabNotePayload {
+  object_attributes?: {
+    id?: unknown;
+    note?: unknown;
+    noteable_type?: unknown;
+  };
+  user?: { username?: unknown };
+  merge_request?: { source_branch?: unknown };
+}
+
+// Maps a GitLab Note Hook on a merge request to pr_review_comment. Notes on
+// any other noteable (commits, issues, snippets) are not PR review feedback.
+function parseGitlabNote(
+  body: GitlabNotePayload,
+  deliveryId: string | null,
+  repoFullName: string,
+): WebhookEvent | null {
+  const attrs = body.object_attributes;
+  if (attrs?.noteable_type !== 'MergeRequest') return null;
+  const headBranch = body.merge_request?.source_branch;
+  if (typeof headBranch !== 'string' || !headBranch) return null;
+  return reviewCommentEvent({
+    prefix: 'note-',
+    id: attrs.id,
+    body: attrs.note,
+    author: body.user?.username,
+    repoFullName,
+    headBranch,
+    deliveryId,
+  });
+}
+
 /** Parses a verified GitLab webhook payload into a normalized event. */
 export function parseGitlabWebhook(
   payload: unknown,
@@ -111,6 +143,9 @@ export function parseGitlabWebhook(
     const attrs = body.object_attributes as { action?: unknown } | undefined;
     if (!attrs) return null;
     return parseGitlabIssue(attrs, deliveryId, repoFullName);
+  }
+  if (eventType === 'note' || eventType === 'Note Hook') {
+    return parseGitlabNote(body as GitlabNotePayload, deliveryId, repoFullName);
   }
   return null;
 }

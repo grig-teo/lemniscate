@@ -103,6 +103,10 @@ const envSchema = z.object({
   // pruned and a single truncation marker is ensured. Bounds table growth,
   // backup size, and event-history response latency.
   TASK_EVENT_MAX_PER_TASK: z.coerce.number().int().positive().default(5_000),
+  // Cadence of the repeatable 'pr-state-sync' job (merged-PR detection plus
+  // the review-feedback poll fallback for hosts without webhooks). The e2e
+  // stack shortens it so the poll fallback is observable within the suite.
+  PR_STATE_SYNC_INTERVAL_MS: z.coerce.number().int().positive().default(5 * 60 * 1000),
 
   // --- Service deployments (Lemniscate Apps) ---
   // Shared secret between Traefik (HTTP provider) and the backend's

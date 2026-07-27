@@ -17,6 +17,7 @@ function makeRepo(id: string): Repository {
     autoCreatePr: false,
     autoReviewPr: false,
     autoMergePr: false,
+    autoAddressReview: false,
     autoRunProposals: false,
     hidden: false,
     bare: false,

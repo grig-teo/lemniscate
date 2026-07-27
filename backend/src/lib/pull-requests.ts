@@ -11,6 +11,7 @@ import type {
   PrChecksStatus,
   PrConnectionInput,
   ProviderPrApi,
+  PrReviewComment,
   PrState,
   PullRequestRefInput,
 } from './pr-shared.js';
@@ -36,6 +37,7 @@ export type {
   OpenPullRequestResult,
   PrChecksStatus,
   PrConnectionInput,
+  PrReviewComment,
   PrState,
   PullRequestRefInput,
 } from './pr-shared.js';
@@ -102,6 +104,20 @@ export async function pullRequestChecksStatus(
     const checks = providerPrApi(connection, token).checks;
     if (!checks) return Promise.resolve({ supported: false, green: true, state: 'green' });
     return checks(input);
+  });
+}
+
+// Human review comments on the PR (the pr-state-sync poll fallback for
+// hosts without webhooks). Providers without a review-comment API report an
+// empty list — the poll simply finds nothing to address.
+export async function listPrReviewComments(
+  connection: PrConnectionInput,
+  input: PullRequestRefInput,
+): Promise<PrReviewComment[]> {
+  return withGitlabRefreshRetry(connection, (token) => {
+    const reviewComments = providerPrApi(connection, token).reviewComments;
+    if (!reviewComments) return Promise.resolve([]);
+    return reviewComments(input);
   });
 }
 

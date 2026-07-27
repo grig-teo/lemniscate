@@ -32,6 +32,7 @@ interface RepoFlagsPatch {
   autoCreatePr?: boolean;
   autoReviewPr?: boolean;
   autoMergePr?: boolean;
+  autoAddressReview?: boolean;
   autoRunProposals?: boolean;
 }
 
@@ -88,7 +89,9 @@ export function useUpdateAllRepositoryFlags() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (
-      flags: Required<Pick<RepoFlagsPatch, 'autoCreatePr' | 'autoReviewPr' | 'autoMergePr'>> & {
+      flags: Required<
+        Pick<RepoFlagsPatch, 'autoCreatePr' | 'autoReviewPr' | 'autoMergePr' | 'autoAddressReview'>
+      > & {
         reviewLlmConfigId?: string | null;
       },
     ) => api.post<{ updated: number }>('/api/repositories/flags', { ...flags }),

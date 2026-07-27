@@ -10,21 +10,22 @@ import { parseLlmJson } from '../src/lib/llm-json.js';
 // extraction rules in llm-json.ts change, this test forces the fixture to
 // move with them instead of silently breaking the e2e suite.
 
-const fixturePath = path.resolve(
-  import.meta.dirname,
-  '../../tests/e2e/gitstub/llm-fixture.json',
-);
+const fixtureDir = path.resolve(import.meta.dirname, '../../tests/e2e/gitstub');
 
 describe('e2e stub LLM fixture', () => {
-  it('stays parseable by the agent loop change-set contract', () => {
-    const raw = readFileSync(fixturePath, 'utf8');
-    const parsed = parseLlmJson(llmChangesResponseSchema, raw, 'an invalid change set');
-    expect(parsed.summary.length).toBeGreaterThan(0);
-    expect(parsed.changes.length).toBeGreaterThan(0);
-    for (const change of parsed.changes) {
-      if (change.action !== 'delete') {
-        expect(typeof change.content).toBe('string');
+  // Both canned change-sets (task run + review-feedback fix) must stay
+  // parseable by the agent loop's change-set contract.
+  for (const name of ['llm-fixture.json', 'llm-fixture-fix.json']) {
+    it(`${name} stays parseable by the agent loop change-set contract`, () => {
+      const raw = readFileSync(path.join(fixtureDir, name), 'utf8');
+      const parsed = parseLlmJson(llmChangesResponseSchema, raw, 'an invalid change set');
+      expect(parsed.summary.length).toBeGreaterThan(0);
+      expect(parsed.changes.length).toBeGreaterThan(0);
+      for (const change of parsed.changes) {
+        if (change.action !== 'delete') {
+          expect(typeof change.content).toBe('string');
+        }
       }
-    }
-  });
+    });
+  }
 });

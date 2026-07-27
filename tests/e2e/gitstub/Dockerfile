@@ -16,7 +16,7 @@ RUN mkdir -p /etc/ssl/gitstub \
      -addext 'subjectAltName=DNS:gitstub,DNS:api.gitstub'
 
 COPY nginx.conf /etc/nginx/http.d/default.conf
-COPY stub-server.mjs llm-router.mjs llm-fixture.json /opt/stub/
+COPY stub-server.mjs llm-router.mjs llm-fixture.json llm-fixture-fix.json /opt/stub/
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 

@@ -23,6 +23,7 @@ import {
   type PrState,
   type PullRequestRefInput,
 } from './pr-shared.js';
+import { gitlabReviewComments } from './pr-gitlab-notes.js';
 
 // GitLab merge-request operations: open, merge, diff (reassembled from the
 // per-file changes payload), state polling, and the head-pipeline status
@@ -42,7 +43,7 @@ function gitlabTokenType(connection: PrConnectionInput): ProviderTokenType {
   return connection.tokenType === 'oauth' ? 'oauth' : 'pat';
 }
 
-function gitlabMrsUrl(connection: PrConnectionInput, repoFullName: string): string {
+export function gitlabMrsUrl(connection: PrConnectionInput, repoFullName: string): string {
   const project = encodeURIComponent(repoFullName);
   return `${gitlabApiBase(connection.baseUrl)}/projects/${project}/merge_requests`;
 }
@@ -58,7 +59,7 @@ function gitlabOpenedMrsQueryUrl(
   );
 }
 
-async function gitlabGet(
+export async function gitlabGet(
   connection: PrConnectionInput,
   token: string,
   url: string,
@@ -67,7 +68,7 @@ async function gitlabGet(
 }
 
 // Finds the open MR iid for the source branch (iids are not stored).
-async function gitlabLookupMrIid(
+export async function gitlabLookupMrIid(
   connection: PrConnectionInput,
   token: string,
   input: PullRequestRefInput,
@@ -289,5 +290,6 @@ export function gitlabPrApi(connection: PrConnectionInput, token: string): Provi
     deleteBranch: (repoFullName, branch) =>
       gitlabDeleteBranch(connection, token, repoFullName, branch),
     checks: (input) => gitlabChecksStatus(connection, token, input),
+    reviewComments: (input) => gitlabReviewComments(connection, token, input),
   };
 }

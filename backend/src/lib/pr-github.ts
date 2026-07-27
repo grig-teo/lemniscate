@@ -14,10 +14,12 @@ import {
   type OpenPullRequestInput,
   type OpenPullRequestResult,
   type ProviderPrApi,
+  type PrReviewComment,
   type PrState,
   type PullRequestRefInput,
 } from './pr-shared.js';
 import { githubChecksStatus } from './pr-github-checks.js';
+import { githubPrReviewCommentListSchema, mapGithubPrReviewComments } from './review-feedback.js';
 
 // CI-check signals live in pr-github-checks.ts; re-exported here so existing
 // importers (tests included) keep working.
@@ -228,6 +230,18 @@ async function githubListPullRequests(
   }));
 }
 
+// Human review comments on the PR (the pr-state-sync poll fallback). The
+// mapper/schema live in pr-shared.ts — GitVerse/Gitea reuse the same shape.
+async function githubPullReviewComments(
+  token: string,
+  input: PullRequestRefInput,
+): Promise<PrReviewComment[]> {
+  const { number } = await githubLookupPullNumber(token, input);
+  const url = `${githubPullsUrl(input.repoFullName)}/${number}/comments?per_page=100`;
+  const { body } = await apiRequest('github', 'GET', url, githubHeaders(token), token);
+  return mapGithubPrReviewComments(githubPrReviewCommentListSchema.parse(body));
+}
+
 export function githubPrApi(token: string): ProviderPrApi {
   return {
     open: (input) => githubOpenPullRequest(token, input),
@@ -238,5 +252,6 @@ export function githubPrApi(token: string): ProviderPrApi {
     close: (input) => githubClosePullRequest(token, input),
     deleteBranch: (repoFullName, branch) => githubDeleteBranch(token, repoFullName, branch),
     checks: (input) => githubChecksStatus(token, input),
+    reviewComments: (input) => githubPullReviewComments(token, input),
   };
 }

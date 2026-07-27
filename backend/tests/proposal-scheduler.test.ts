@@ -52,6 +52,7 @@ vi.mock('../src/lib/prisma.js', () => ({
 }));
 
 import {
+  enqueueAddressReview,
   enqueueRunTask,
   enqueueGenerateProposalsNow,
   enqueueProposalAutoRuns,
@@ -68,6 +69,30 @@ beforeEach(() => {
   mocks.transaction.mockImplementation(async (cb) => cb(mocks.tx));
   mocks.executeRaw.mockResolvedValue(0);
   mocks.taskUpdateMany.mockResolvedValue({ count: 1 });
+});
+
+describe('enqueueAddressReview', () => {
+  it('enqueues an address-review job with the review id in the jobId', async () => {
+    const comment = { id: 'rc-777', body: 'fix this', author: 'human-reviewer' };
+    await enqueueAddressReview('task-1', comment);
+    expect(mocks.add).toHaveBeenCalledWith(
+      'address-review',
+      { taskId: 'task-1', comment },
+      expect.objectContaining({
+        jobId: 'address-review-task-1-rc-777',
+        removeOnComplete: true,
+        removeOnFail: true,
+        attempts: 3,
+      }),
+    );
+  });
+
+  it('gives a second comment its own jobId (not deduped away)', async () => {
+    await enqueueAddressReview('task-1', { id: 'rc-1', body: 'a', author: 'h' });
+    await enqueueAddressReview('task-1', { id: 'rc-2', body: 'b', author: 'h' });
+    const jobIds = mocks.add.mock.calls.map((call) => call[2]?.jobId);
+    expect(jobIds).toEqual(['address-review-task-1-rc-1', 'address-review-task-1-rc-2']);
+  });
 });
 
 describe('enqueueGenerateProposalsNow', () => {

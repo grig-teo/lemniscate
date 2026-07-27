@@ -1,6 +1,6 @@
 import { createHmac } from 'node:crypto';
 import { safeEqualHexSignature } from '../secret-compare.js';
-import type { ProviderWebhookApi, WebhookEvent } from './webhook-types.js';
+import { reviewCommentEvent, type ProviderWebhookApi, type WebhookEvent } from './webhook-types.js';
 
 // GitHub inbound webhook verification + event mapping.
 //
@@ -104,6 +104,75 @@ function parseGithubIssueEvent(
   return { kind: 'issue_opened', repoFullName, headBranch: '', deliveryId };
 }
 
+interface GithubReviewCommentPayload {
+  action?: unknown;
+  comment?: {
+    id?: unknown;
+    body?: unknown;
+    user?: { login?: unknown };
+    path?: unknown;
+    line?: unknown;
+  };
+}
+
+// Maps a GitHub pull_request_review_comment created event to pr_review_comment.
+function parseGithubReviewComment(
+  payload: GithubReviewCommentPayload,
+  deliveryId: string | null,
+  repoFullName: string,
+  headBranch: string,
+): WebhookEvent | null {
+  if (payload.action !== 'created') return null;
+  return reviewCommentEvent({
+    prefix: 'rc-',
+    id: payload.comment?.id,
+    body: payload.comment?.body,
+    author: payload.comment?.user?.login,
+    path: payload.comment?.path,
+    line: payload.comment?.line,
+    repoFullName,
+    headBranch,
+    deliveryId,
+  });
+}
+
+interface GithubReviewPayload {
+  action?: unknown;
+  review?: {
+    id?: unknown;
+    body?: unknown;
+    state?: unknown;
+    user?: { login?: unknown };
+  };
+}
+
+// Maps a GitHub pull_request_review submitted event to pr_review_comment. A
+// 'changes_requested' review without a body still carries a signal, so the
+// body is synthesized; an approve/comment review without a body is a no-op.
+function parseGithubReview(
+  payload: GithubReviewPayload,
+  deliveryId: string | null,
+  repoFullName: string,
+  headBranch: string,
+): WebhookEvent | null {
+  if (payload.action !== 'submitted') return null;
+  const body =
+    typeof payload.review?.body === 'string' && payload.review.body.trim()
+      ? payload.review.body
+      : payload.review?.state === 'changes_requested'
+        ? 'The reviewer requested changes on this pull request.'
+        : '';
+  return reviewCommentEvent({
+    prefix: 'review-',
+    id: payload.review?.id,
+    body,
+    author: payload.review?.user?.login,
+    repoFullName,
+    headBranch,
+    deliveryId,
+  });
+}
+
 /** Parses a verified GitHub webhook payload into a normalized event. */
 export function parseGithubWebhook(
   payload: unknown,
@@ -144,6 +213,19 @@ export function parseGithubWebhook(
   }
   if (eventType === 'issues') {
     return parseGithubIssueEvent(body as { action?: unknown }, deliveryId, repoFullName);
+  }
+  if (eventType === 'pull_request_review_comment' || eventType === 'pull_request_review') {
+    const headBranch = prHeadBranch(body as { pull_request?: { head?: { ref?: string } } });
+    if (!headBranch) return null;
+    if (eventType === 'pull_request_review_comment') {
+      return parseGithubReviewComment(
+        body as GithubReviewCommentPayload,
+        deliveryId,
+        repoFullName,
+        headBranch,
+      );
+    }
+    return parseGithubReview(body as GithubReviewPayload, deliveryId, repoFullName, headBranch);
   }
   return null;
 }

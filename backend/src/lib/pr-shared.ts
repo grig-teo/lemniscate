@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { ProviderError, type ProviderName } from './git-providers.js';
 import { errorMessage, redactSecrets } from './utils.js';
+import type { ReviewFeedbackComment } from './review-feedback.js';
 
 // Shared types and HTTP plumbing for the pull-request provider modules
 // (pr-github.ts, pr-gitlab.ts, pr-gitverse.ts, pr-gitee.ts). Kept separate
@@ -59,6 +60,13 @@ export interface PrChecksStatus {
 
 export type PrState = 'open' | 'merged' | 'closed';
 
+// A human-written PR review comment fetched via a provider API (the
+// pr-state-sync poll fallback for hosts without webhooks). Same shape the
+// webhook pipeline normalizes to — ReviewFeedbackComment is the single home
+// (lib/review-feedback.ts), aliased here for the PR API modules.
+export type { ReviewFeedbackComment as PrReviewComment } from './review-feedback.js';
+type PrReviewComment = ReviewFeedbackComment;
+
 /** One PR as returned by the batched per-repo listing (pr-state-sync job). */
 export interface ListedPullRequest {
   headBranch: string;
@@ -112,6 +120,8 @@ export interface ProviderPrApi {
   deleteBranch(repoFullName: string, branch: string): Promise<void>;
   /** Commit/PR check statuses; absent when the provider has no checks API. */
   checks?(input: PullRequestRefInput): Promise<PrChecksStatus>;
+  /** Human review comments on the PR; absent when the provider has no such API. */
+  reviewComments?(input: PullRequestRefInput): Promise<PrReviewComment[]>;
 }
 
 // Maps a provider "not mergeable" status to a conflict result; rethrows

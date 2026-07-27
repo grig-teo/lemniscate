@@ -5,7 +5,9 @@
 #
 #   PAT connect (login) -> repository sync -> LLM config -> task run ->
 #   branch push -> asserted pull-request creation on Gitea, plus token-usage,
-#   notification and metrics assertions.
+#   notification and metrics assertions, and the human review-feedback loop:
+#   a scripted review comment (posted as a second Gitea user) -> poll
+#   fallback -> asserted follow-up commit on the PR branch.
 #
 # Idempotent: always starts from throwaway volumes and always tears them
 # down again.
@@ -148,6 +150,17 @@ E2E_PAT="$(docker exec -u git "$GITEA_CID" gitea admin user generate-access-toke
   --username e2e-user --token-name e2e --scopes all --raw | tail -n 1)" || fail
 [ -n "$E2E_PAT" ] || fail
 
+# A second Gitea user plays the human reviewer: the address-review loop
+# ignores comments authored by the connection's own account (e2e-user), so
+# the scripted review comment must come from someone else.
+log "seeding Gitea: reviewer user + access token"
+docker exec -u git "$GITEA_CID" gitea admin user create \
+  --username e2e-reviewer --password 'e2e-password-not-used' \
+  --email reviewer@example.com --must-change-password=false > /dev/null || fail
+E2E_REVIEWER_PAT="$(docker exec -u git "$GITEA_CID" gitea admin user generate-access-token \
+  --username e2e-reviewer --token-name e2e --scopes all --raw | tail -n 1)" || fail
+[ -n "$E2E_REVIEWER_PAT" ] || fail
+
 # Repository + the src/ fixture file, via Gitea's real REST API (reachable
 # in-network as plain HTTP; the TLS edge is only for the stack under test).
 SRC_FIXTURE_B64="$(printf '%s' 'console.log("hello from the e2e fixture");' | base64 | tr -d '\n')"
@@ -161,6 +174,10 @@ in_network sh -c "
     -H 'content-type: application/json' \
     -d '{\"message\":\"add src fixture\",\"content\":\"$SRC_FIXTURE_B64\",\"branch\":\"main\"}' \
     http://gitea:3000/api/v1/repos/e2e-user/e2e-repo/contents/src/index.js > /dev/null
+  curl -sf -X PUT -H 'Authorization: Bearer $E2E_PAT' \
+    -H 'content-type: application/json' \
+    -d '{\"permission\":\"write\"}' \
+    http://gitea:3000/api/v1/repos/e2e-user/e2e-repo/collaborators/e2e-reviewer > /dev/null
 " || fail
 
 log "seeding user + git connection inside the backend container"
@@ -182,6 +199,7 @@ if ! docker run --rm \
   -e E2E_GITSTUB_URL="https://gitstub" \
   -e E2E_GITSTUB_API_URL="https://api.gitstub" \
   -e E2E_PAT="$E2E_PAT" \
+  -e E2E_REVIEWER_PAT="$E2E_REVIEWER_PAT" \
   -e E2E_METRICS_TOKEN="${E2E_METRICS_TOKEN:-e2e-metrics-token}" \
   -e NODE_TLS_REJECT_UNAUTHORIZED=0 \
   -e E2E_SEED="$E2E_SEED" \
