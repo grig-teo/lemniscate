@@ -5,6 +5,7 @@ const mocks = vi.hoisted(() => ({
   chatCompletions: vi.fn(),
   logEvent: vi.fn(),
   findMany: vi.fn(),
+  taskUpdate: vi.fn(),
   decrypt: vi.fn(),
   assertPublicHttpUrl: vi.fn(),
 }));
@@ -15,7 +16,10 @@ vi.mock('../src/lib/llm-client.js', async (importOriginal) => ({
 }));
 vi.mock('../src/lib/agent-git.js', () => ({ logEvent: mocks.logEvent }));
 vi.mock('../src/lib/prisma.js', () => ({
-  prisma: { llmConfig: { findMany: mocks.findMany } },
+  prisma: {
+    llmConfig: { findMany: mocks.findMany },
+    task: { update: mocks.taskUpdate },
+  },
 }));
 vi.mock('../src/lib/crypto.js', () => ({ decrypt: mocks.decrypt }));
 vi.mock('../src/lib/url-safety.js', () => ({
@@ -87,6 +91,7 @@ beforeEach(() => {
   mocks.assertPublicHttpUrl.mockResolvedValue(new URL('https://llm.example'));
   mocks.chatCompletions.mockResolvedValue(OK_RESULT);
   mocks.findMany.mockResolvedValue([]);
+  mocks.taskUpdate.mockResolvedValue({});
 });
 
 describe('findFailoverConfigs', () => {
@@ -171,6 +176,41 @@ describe('llmCall failover', () => {
 
     await expect(llmCall(rt, messages)).rejects.toThrow('LLM token budget exceeded');
     expect(mocks.findMany).not.toHaveBeenCalled();
+  });
+
+  it('persists the promoted config id to the task row so the pending-switch check does not bounce back', async () => {
+    // applyPendingModelSwitch reads task.llmConfigId as a pending user
+    // switch; without this persist it would re-switch the runtime onto the
+    // config that just failed on every subsequent LLM call.
+    const cfgA = stubConfig('A', 'Primary', 'model-a', true);
+    const cfgB = stubConfig('B', 'Backup', 'model-b');
+    mocks.findMany.mockResolvedValue([cfgB]);
+    mocks.chatCompletions
+      .mockRejectedValueOnce(new LlmError('http', 'HTTP 429: rate limited', 429))
+      .mockResolvedValueOnce(OK_RESULT);
+    const rt = stubRuntime(cfgA, { taskId: 'task-1' });
+
+    await llmCall(rt, messages);
+
+    expect(mocks.taskUpdate).toHaveBeenCalledWith({
+      where: { id: 'task-1' },
+      data: { llmConfigId: 'B' },
+    });
+  });
+
+  it('does not touch the task row when the runtime has no taskId', async () => {
+    const cfgA = stubConfig('A', 'Primary', 'model-a');
+    const cfgB = stubConfig('B', 'Backup', 'model-b');
+    mocks.findMany.mockResolvedValue([cfgB]);
+    mocks.chatCompletions
+      .mockRejectedValueOnce(new LlmError('http', 'HTTP 500', 500))
+      .mockResolvedValueOnce(OK_RESULT);
+    const rt = stubRuntime(cfgA);
+
+    await llmCall(rt, messages);
+
+    expect(rt.cfg.id).toBe('B');
+    expect(mocks.taskUpdate).not.toHaveBeenCalled();
   });
 
   it('rethrows the original error when no failover config remains', async () => {

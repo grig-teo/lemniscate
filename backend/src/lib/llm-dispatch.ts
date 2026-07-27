@@ -22,6 +22,14 @@ export type DispatchChatParams = ChatCompletionsParams & {
 // only backstops hand-built params (tests, probes).
 const DEFAULT_ANTHROPIC_MAX_TOKENS = 4096;
 
+// Anthropic only accepts temperature in [0, 1]; the shared LlmConfig schema
+// allows 0..2 (valid for OpenAI-compatible endpoints). Clamp here so a value
+// stored for the OpenAI pattern can't put Anthropic calls into a permanent
+// HTTP 400 state.
+function clampAnthropicTemperature(temperature: number): number {
+  return Math.min(1, Math.max(0, temperature));
+}
+
 function toAnthropicParams(params: DispatchChatParams): AnthropicMessagesParams {
   return {
     baseUrl: params.baseUrl,
@@ -29,7 +37,9 @@ function toAnthropicParams(params: DispatchChatParams): AnthropicMessagesParams 
     model: params.model,
     messages: params.messages,
     maxTokens: params.maxTokens ?? DEFAULT_ANTHROPIC_MAX_TOKENS,
-    ...(params.temperature !== undefined ? { temperature: params.temperature } : {}),
+    ...(params.temperature !== undefined
+      ? { temperature: clampAnthropicTemperature(params.temperature) }
+      : {}),
     ...(params.timeoutSeconds !== undefined ? { timeoutSeconds: params.timeoutSeconds } : {}),
     ...(params.maxRetries !== undefined ? { maxRetries: params.maxRetries } : {}),
     ...(params.customHeaders !== undefined ? { customHeaders: params.customHeaders } : {}),

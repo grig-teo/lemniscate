@@ -90,4 +90,33 @@ describe('chatCompletion dispatch', () => {
     const body = JSON.parse(String(calls[0]?.init.body));
     expect(body.reasoning_effort).toBeUndefined();
   });
+
+  it('clamps temperature into the anthropic [0, 1] range', async () => {
+    // The shared LlmConfig schema allows 0..2 (valid for OpenAI-compatible
+    // endpoints); Anthropic rejects > 1 with a 400 on every call.
+    const calls = stubFetch(
+      jsonResponse({ content: [{ type: 'text', text: 'x' }], stop_reason: 'end_turn' }),
+    );
+    await chatCompletion({ ...BASE, apiPattern: 'anthropic', temperature: 1.8 });
+    const body = JSON.parse(String(calls[0]?.init.body));
+    expect(body.temperature).toBe(1);
+  });
+
+  it('keeps an in-range temperature unchanged for anthropic calls', async () => {
+    const calls = stubFetch(
+      jsonResponse({ content: [{ type: 'text', text: 'x' }], stop_reason: 'end_turn' }),
+    );
+    await chatCompletion({ ...BASE, apiPattern: 'anthropic', temperature: 0.5 });
+    const body = JSON.parse(String(calls[0]?.init.body));
+    expect(body.temperature).toBe(0.5);
+  });
+
+  it('does not clamp temperature for openai-pattern calls', async () => {
+    const calls = stubFetch(
+      jsonResponse({ choices: [{ message: { content: 'ok' } }] }),
+    );
+    await chatCompletion({ ...BASE, apiPattern: 'openai', temperature: 1.8 });
+    const body = JSON.parse(String(calls[0]?.init.body));
+    expect(body.temperature).toBe(1.8);
+  });
 });
