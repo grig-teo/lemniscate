@@ -1,5 +1,4 @@
 import type { GitConnection, LlmConfig, Repository, Task } from '@prisma/client';
-import { z } from 'zod';
 import { logEvent, type GitAuth } from './agent-git.js';
 import { decrypt } from './crypto.js';
 import {
@@ -10,11 +9,16 @@ import {
 } from './git-providers.js';
 import {
   chatCompletions,
-  type ChatCompletionsParams,
   type ChatMessage,
   type ChatUsage,
   type ThinkingLevel,
 } from './llm-client.js';
+import {
+  chatParams,
+  llmCallWithFailover,
+  logLlmDone,
+  logLlmStart,
+} from './llm-failover.js';
 import { parseTaskThinkingLevel } from './task-attachments.js';
 import { prisma } from './prisma.js';
 import { withGitlabRefreshRetry } from './token-refresh.js';
@@ -38,6 +42,12 @@ export interface LlmRuntime {
   thinkingLevelOverride?: ThinkingLevel;
   /** When set, llmCall echoes start/done/retry lines to the task console. */
   taskId?: string;
+  /** Owning user — enables cross-config failover (llm-failover.ts) when set. */
+  userId?: string;
+  /** Shared scrub list; failover pushes each rotated-in key here. */
+  secrets?: string[];
+  /** Config ids that already failed this run — never retried. */
+  triedConfigIds?: string[];
 }
 
 /** Prompt/completion split of billed tokens — the currency of cost estimates. */
@@ -54,7 +64,7 @@ export class TokenBudgetExceededError extends Error {
 }
 
 export function makeLlmRuntime(cfg: LlmConfig, apiKey: string): LlmRuntime {
-  return { cfg, apiKey, usedTokens: 0, usedPromptTokens: 0, usedCompletionTokens: 0, lastCallStartedAt: 0 };
+  return { cfg, apiKey, usedTokens: 0, usedPromptTokens: 0, usedCompletionTokens: 0, lastCallStartedAt: 0, triedConfigIds: [] };
 }
 
 // ---------------------------------------------------------------------------
@@ -153,61 +163,10 @@ export function sumMessageChars(messages: ChatMessage[]): number {
 }
 
 // ---------------------------------------------------------------------------
-// The call wrapper
+// The call wrapper: one metered attempt + cross-config failover
 // ---------------------------------------------------------------------------
 
-const customHeadersSchema = z.record(z.string());
-
-// Stored customHeaders are Json in the DB; anything malformed degrades to {}.
-export function parseCustomHeaders(raw: unknown): Record<string, string> {
-  const parsed = customHeadersSchema.safeParse(raw);
-  return parsed.success ? parsed.data : {};
-}
-
-// Retry-hook payload shared with llm-client's chatCompletions onRetry param.
-interface LlmRetryInfo {
-  attempt: number;
-  maxAttempts: number;
-  delayMs: number;
-  reason: string;
-}
-
-function logLlmRetry(taskId: string, info: LlmRetryInfo): void {
-  const line = `  LLM retry ${info.attempt}/${info.maxAttempts} in ${info.delayMs}ms (${info.reason})`;
-  void logEvent(taskId, line).catch(() => {});
-}
-
-function chatParams(rt: LlmRuntime, messages: ChatMessage[]): ChatCompletionsParams {
-  const thinkingLevel = rt.thinkingLevelOverride ?? rt.cfg.thinkingLevel;
-  const params: ChatCompletionsParams & { onRetry?: (info: LlmRetryInfo) => void } = {
-    baseUrl: rt.cfg.baseUrl,
-    apiKey: rt.apiKey,
-    model: rt.cfg.model,
-    messages,
-    temperature: rt.cfg.temperature,
-    maxTokens: rt.cfg.maxTokens,
-    ...(thinkingLevel !== 'off' ? { thinkingLevel } : {}),
-    timeoutSeconds: rt.cfg.timeoutSeconds,
-    maxRetries: rt.cfg.maxRetries,
-    customHeaders: parseCustomHeaders(rt.cfg.customHeaders),
-  };
-  if (rt.taskId) params.onRetry = (info) => logLlmRetry(rt.taskId as string, info);
-  return params;
-}
-
-async function logLlmStart(rt: LlmRuntime): Promise<void> {
-  if (!rt.taskId) return;
-  await logEvent(rt.taskId, `→ LLM call (${rt.cfg.model})`).catch(() => {});
-}
-
-async function logLlmDone(rt: LlmRuntime, latencyMs: number, billed: number): Promise<void> {
-  if (!rt.taskId) return;
-  await logEvent(rt.taskId, `← LLM done in ${(latencyMs / 1000).toFixed(1)}s, ~${billed} tokens`)
-    .catch(() => {});
-}
-
-export async function llmCall(rt: LlmRuntime, messages: ChatMessage[]): Promise<string> {
-  await throttle(rt);
+async function attemptLlmCall(rt: LlmRuntime, messages: ChatMessage[]): Promise<string> {
   await logLlmStart(rt);
   const result = await chatCompletions(chatParams(rt, messages));
   const promptChars = sumMessageChars(messages);
@@ -219,6 +178,16 @@ export async function llmCall(rt: LlmRuntime, messages: ChatMessage[]): Promise<
   await logLlmDone(rt, result.latencyMs, billed);
   assertWithinBudget(rt.usedTokens, rt.cfg.maxTokensPerRun);
   return result.content;
+}
+
+// One metered attempt against the active config; when its endpoint fails
+// (unreachable, quota/tokens exhausted, timeouts, broken replies) the next
+// enabled config of the same user takes over and the call is retried there
+// (llm-failover.ts) — a dead provider aborts the run only when no failover
+// config remains. The per-run token budget is NOT a failover trigger.
+export async function llmCall(rt: LlmRuntime, messages: ChatMessage[]): Promise<string> {
+  await throttle(rt);
+  return llmCallWithFailover(rt, messages, attemptLlmCall);
 }
 
 // ---------------------------------------------------------------------------
@@ -353,6 +322,8 @@ export async function prepareAgentRuntime(
   rt.usedPromptTokens = splitSeed.promptTokens;
   rt.usedCompletionTokens = splitSeed.completionTokens;
   rt.taskId = task?.id;
+  rt.userId = repository.connection.userId;
+  rt.secrets = secrets;
   const thinkingLevelOverride = parseTaskThinkingLevel(task?.thinkingLevel);
   if (thinkingLevelOverride) rt.thinkingLevelOverride = thinkingLevelOverride;
   return { cloneUrl, gitAuth, rt };

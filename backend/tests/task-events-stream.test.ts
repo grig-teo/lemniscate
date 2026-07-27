@@ -4,12 +4,16 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 // Route tests for GET /tasks/:id/events: verifies that the JSON history query
 // and the SSE replay are bounded by a `take` limit so a task with thousands of
-// events cannot produce an unbounded response.
+// events cannot produce an unbounded response. Also covers the per-user SSE
+// stream cap: when the hub rejects a registration (capacity exhausted), the
+// route returns 429 instead of opening the stream.
 
 const mocks = vi.hoisted(() => ({
   userFindUnique: vi.fn(),
   taskFindFirst: vi.fn(),
   eventFindMany: vi.fn(),
+  sseRegister: vi.fn(),
+  sseUnregister: vi.fn(),
 }));
 
 vi.mock('../src/lib/prisma.js', () => ({
@@ -20,12 +24,22 @@ vi.mock('../src/lib/prisma.js', () => ({
   },
 }));
 
-// SSE subscribe would hang the test; only the JSON path is exercised here.
+// ioredis is imported transitively (task-events.ts publisher); mock so no real
+// connection opens. The SSE subscriber is mocked separately via sseHub.
 vi.mock('ioredis', () => ({
   Redis: class MockRedis {
     on() {}
-    subscribe() {}
+    psubscribe() {}
+    publish() {}
     quit() {}
+  },
+}));
+
+// The SSE hub is mocked so register/unregister can be controlled per test.
+vi.mock('../src/lib/sse-hub.js', () => ({
+  sseHub: {
+    register: mocks.sseRegister,
+    unregister: mocks.sseUnregister,
   },
 }));
 
@@ -53,6 +67,7 @@ beforeEach(() => {
   mocks.userFindUnique.mockResolvedValue({ id: 'user-1', sessionVersion: 0 });
   mocks.taskFindFirst.mockResolvedValue({ id: 'task-1' });
   mocks.eventFindMany.mockResolvedValue([SAMPLE_EVENT]);
+  mocks.sseRegister.mockReturnValue(true);
 });
 
 describe('GET /api/tasks/:id/events (JSON history)', () => {
@@ -99,5 +114,20 @@ describe('GET /api/tasks/:id/events (JSON history)', () => {
       url: '/api/tasks/task-1/events',
     });
     expect(res.statusCode).toBe(401);
+  });
+});
+
+describe('GET /api/tasks/:id/events (SSE per-user cap)', () => {
+  it('returns 429 when the hub rejects the stream registration', async () => {
+    mocks.sseRegister.mockReturnValue(false);
+    const app = await buildApp();
+    const res = await app.inject({
+      method: 'GET',
+      url: '/api/tasks/task-1/events',
+      headers: { accept: 'text/event-stream' },
+      ...AUTH,
+    });
+    expect(res.statusCode).toBe(429);
+    expect(res.json()).toMatchObject({ error: expect.stringContaining('concurrent') });
   });
 });

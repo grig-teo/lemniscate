@@ -50,9 +50,14 @@ vi.mock('../src/lib/proposal-scheduler.js', () => ({
   getAgentTasksQueue: vi.fn(),
 }));
 
-vi.mock('../src/lib/event-trigger-handler.js', () => ({
-  fireEventTrigger: mocks.fireEventTrigger,
-}));
+vi.mock('../src/lib/event-trigger-handler.js', async (importOriginal) => {
+  // Spread the real module so TRIGGERABLE_EVENT_KINDS stays available to
+  // routes/event-triggers.ts at import time; only the side-effecting
+  // fireEventTrigger is stubbed.
+  const actual =
+    await importOriginal<typeof import('../src/lib/event-trigger-handler.js')>();
+  return { ...actual, fireEventTrigger: mocks.fireEventTrigger };
+});
 
 vi.mock('../src/lib/redis.js', () => ({
   getRedisClient: () => ({ set: mocks.redisSet }),
@@ -362,6 +367,36 @@ describe('POST /api/webhooks/:connectionId', () => {
     expect(mocks.fireEventTrigger).toHaveBeenCalledWith(
       expect.objectContaining({ kind: 'ci_failed', headBranch: 'main' }),
     );
+    await app.close();
+  });
+
+  it('still enqueues the merge gate for a check_run:failure on an awaiting PR branch', async () => {
+    // Regression lock: ci_failed on a branch with an awaiting task must kick
+    // the merge gate (its CI-fix loop), not just the event trigger.
+    const prBranchFailure = JSON.stringify({
+      action: 'completed',
+      check_run: {
+        name: 'CI',
+        conclusion: 'failure',
+        check_suite: { head_branch: 'lemniscate/t-1' },
+      },
+      repository: { full_name: 'org/demo' },
+    });
+    const app = await buildApp();
+    const res = await app.inject({
+      method: 'POST',
+      url: `/api/webhooks/${CONNECTION_ID}`,
+      headers: {
+        'content-type': 'application/json',
+        'x-github-event': 'check_run',
+        'x-hub-signature-256': githubSig(prBranchFailure),
+        'x-github-delivery': 'deliv-ci-fail-pr-1',
+      },
+      payload: prBranchFailure,
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().event).toBe('ci_failed');
+    expect(mocks.enqueueMergeGate).toHaveBeenCalledWith(TASK_ID);
     await app.close();
   });
 

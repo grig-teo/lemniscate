@@ -7,6 +7,7 @@ import { config, MONITORED_SECRETS } from './config.js';
 import { logger } from './lib/logger.js';
 import { metrics, registerHttpMetricsHook, registerMetricsRoute } from './lib/metrics.js';
 import { initErrorReporting, reportError } from './lib/sentry.js';
+import { sseHub } from './lib/sse-hub.js';
 import apiRoutes from './routes/index.js';
 import healthRoutes from './routes/health.js';
 import llmConfigRoutes from './routes/llm-configs.js';
@@ -99,5 +100,10 @@ export async function buildApp(): Promise<FastifyInstance> {
   registerHttpMetricsHook(app, metrics);
   await registerPlugins(app);
   await registerRoutes(app);
+  // Drop the shared SSE subscriber on graceful shutdown so the Redis
+  // connection is released alongside the HTTP server.
+  app.addHook('onClose', async () => {
+    await sseHub.close();
+  });
   return app;
 }

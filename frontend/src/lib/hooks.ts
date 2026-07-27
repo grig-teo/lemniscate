@@ -16,5 +16,6 @@ export * from '@/lib/queries/tasks';
 export * from '@/lib/queries/usage';
 export * from '@/lib/queries/skills';
 export * from '@/lib/queries/devices';
+export * from '@/lib/queries/event-triggers';
 export * from '@/lib/queries/services';
 export * from '@/lib/queries/vps-targets';

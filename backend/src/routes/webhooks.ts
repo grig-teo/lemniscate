@@ -118,7 +118,8 @@ async function dispatchEvent(event: WebhookEvent) {
   return { ok: true, event: task ? event.kind : 'no_task' };
 }
 
-/** Dispatches PR-state transitions (pr_merged, pr_closed, ci_status). */
+/** Dispatches PR-state transitions (pr_merged, pr_closed, ci_status) and kicks
+ * the merge gate for ci_failed on an awaiting task's branch. */
 async function dispatchPrStateEvent(
   event: WebhookEvent,
   task: TaskWithConnection,
@@ -134,6 +135,12 @@ async function dispatchPrStateEvent(
   if (event.kind === 'ci_status') {
     await enqueueMergeGate(task.id);
     return { ok: true, event: 'ci_status' };
+  }
+  // A failed check on an awaiting task's branch is still a CI signal: kick the
+  // merge gate so its CI-fix loop runs. Falls through (returns null) so the
+  // event trigger can also fire for the same delivery.
+  if (event.kind === 'ci_failed') {
+    await enqueueMergeGate(task.id);
   }
   return null;
 }

@@ -14,6 +14,7 @@ import { cn } from '@/lib/utils';
 import { OPEN_SETTINGS_EVENT, type SettingsTab } from '@/lib/error-codes';
 
 import { ConnectionsSection } from '@/components/settings/ConnectionsSection';
+import { EventTriggersSection } from '@/components/settings/EventTriggersSection';
 import { LlmConfigsSection } from '@/components/settings/LlmConfigsSection';
 import { NotificationsSection } from '@/components/settings/NotificationsSection';
 import { RepoFlagsSection } from '@/components/settings/RepoFlagsSection';
@@ -79,7 +80,12 @@ export function SettingsDialog() {
         <div className="max-h-[60vh] overflow-y-auto pr-1">
           {tab === 'llm' && <LlmConfigsSection />}
           {tab === 'git' && <ConnectionsSection />}
-          {tab === 'repos' && <RepoFlagsSection />}
+          {tab === 'repos' && (
+            <>
+              <RepoFlagsSection />
+              <EventTriggersSection />
+            </>
+          )}
           {tab === 'notifications' && <NotificationsSection />}
           {tab === 'usage' && <UsageSection />}
           {tab === 'vps' && <VpsTargetsSection />}
