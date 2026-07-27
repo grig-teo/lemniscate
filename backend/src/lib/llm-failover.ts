@@ -109,26 +109,29 @@ function truncateReason(message: string): string {
   return `${message.slice(0, FAILOVER_REASON_MAX_CHARS)}…`;
 }
 
-function logFailover(rt: LlmRuntime, fromModel: string, cfg: LlmConfig, cause: LlmError): void {
-  if (!rt.taskId) return;
-  const line =
-    `⚠ LLM failover: ${fromModel} failed (${truncateReason(cause.message)})` +
-    ` — switching to ${cfg.model} [${cfg.name}]`;
-  void logEvent(rt.taskId, line).catch(() => {});
-}
-
-// Swaps the runtime onto the promoted config: fresh decrypted key (registered
-// on the shared scrub list), reset throttle (the new endpoint has its own
-// rpm), and a console line recording the switch. Token counters carry over —
-// the per-run budget spans all configs used by the run.
-function activateFailoverConfig(rt: LlmRuntime, cfg: LlmConfig, cause: LlmError): void {
+// Swaps the runtime onto another config: fresh decrypted key (registered on
+// the shared scrub list), reset throttle (the new endpoint has its own rpm),
+// and a console line recording the switch. Token counters carry over — the
+// per-run budget spans all configs used by the run. Shared by the failover
+// chain and the mid-run model switch (agent-runtime.ts).
+export function switchRuntimeConfig(rt: LlmRuntime, cfg: LlmConfig, logLine: string): void {
   const apiKey = decrypt(cfg.apiKeyEnc);
   rt.secrets?.push(apiKey);
-  const fromModel = rt.cfg.model;
   rt.cfg = cfg;
   rt.apiKey = apiKey;
   rt.lastCallStartedAt = 0;
-  logFailover(rt, fromModel, cfg, cause);
+  if (rt.taskId) void logEvent(rt.taskId, logLine).catch(() => {});
+}
+
+function logFailover(rt: LlmRuntime, fromModel: string, cfg: LlmConfig, cause: LlmError): string {
+  return (
+    `⚠ LLM failover: ${fromModel} failed (${truncateReason(cause.message)})` +
+    ` — switching to ${cfg.model} [${cfg.name}]`
+  );
+}
+
+function activateFailoverConfig(rt: LlmRuntime, cfg: LlmConfig, cause: LlmError): void {
+  switchRuntimeConfig(rt, cfg, logFailover(rt, rt.cfg.model, cfg, cause));
 }
 
 // Marks the active config as failed and promotes the next enabled candidate.
