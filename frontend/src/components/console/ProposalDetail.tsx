@@ -2,15 +2,15 @@
  * Detail view for a pending task (proposal or saved-for-later prompt): the
  * full task is fetched, then shown as an editable title + prompt with a
  * markdown/image attach row and the library attachments (skills, MCP
- * servers, per-folder AGENTS.md). SAVE persists edits without starting;
- * START posts them to POST /api/tasks/:id/start and the console view takes
- * over once the task flips to queued.
+ * servers, per-folder AGENTS.md). Edits are persisted via debounced autosave
+ * (useAutosave); START posts them to POST /api/tasks/:id/start and the
+ * console view takes over once the task flips to queued.
  *
  * Presentational pieces live in TaskEditorFields.tsx (AGENTS.md section 2).
  */
 import * as React from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { Hammer, Loader2, Paperclip, Save, GitPullRequestClosed } from 'lucide-react';
+import { Hammer, Loader2, Paperclip, GitPullRequestClosed } from 'lucide-react';
 
 import { api } from '@/lib/api';
 import { SUPPRESS_ERROR_TOAST_META } from '@/lib/mutation-error-toast';
@@ -20,6 +20,7 @@ import {
   taskMcpSelections,
   taskSkillSelections,
 } from '@/lib/proposal-detail';
+import { useAutosave } from '@/lib/use-autosave';
 import { useSkills, useImproveTask, useStartTask, useClosePrTask, useTask, type TaskImage } from '@/lib/hooks';
 import { useLibraryAttachments } from '@/lib/library-attachments';
 import { IMAGE_ACCEPT, MAX_IMAGES } from '@/lib/prompt-composer';
@@ -29,6 +30,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
+import { SaveStatusIndicator } from '@/components/console/SaveStatusIndicator';
 import { appendImageFiles, useAutoResizeTextarea } from '@/components/console/composer-utils';
 import { ImageThumbnails } from '@/components/console/TaskComposerFields';
 import {
@@ -86,7 +88,6 @@ function TaskEditorInner({
   const [prompt, setPrompt] = React.useState(task.prompt ?? '');
   const [preview, setPreview] = React.useState(true);
   const [images, setImages] = React.useState<TaskImage[]>([]);
-  const [saved, setSaved] = React.useState(false);
   const textareaRef = useAutoResizeTextarea(prompt, 14);
   const promptResize = useResizablePrompt();
   const attachments = useLibraryAttachments({
@@ -112,11 +113,27 @@ function TaskEditorInner({
       },
     });
 
-  const save = () => {
-    setSaved(false);
-    patchTask.mutate({ id: task.id, body: editBody() }, { onSuccess: () => setSaved(true) });
+  // Debounced autosave: any change to title/prompt/images/attachments triggers
+  // a PATCH after 1s of inactivity.  The snapshot is JSON-compared to the
+  // last-saved baseline; onSave always builds the body from the latest state.
+  const autosave = useAutosave({
+    value: {
+      title: title.trim(),
+      prompt: prompt.trim(),
+      imageKeys: images.map((img) => `${img.name}#${img.dataUrl.length}`),
+      skills: attachments.skills.slugs,
+      mcpServerSlugs: attachments.mcpServers.slugs,
+      agentsMdFiles: attachments.agentsMd.toAssignments(),
+    },
+    onSave: async () => {
+      await patchTask.mutateAsync({ id: task.id, body: editBody() });
+    },
+  });
+
+  const start = () => {
+    autosave.cancel(); // Start sends the body itself — no duplicate PATCH.
+    startTask.mutate({ id: task.id, body: editBody() });
   };
-  const start = () => startTask.mutate({ id: task.id, body: editBody() });
   const improve = () => {
     improveTask.mutate(
       { id: task.id, body: { title: title.trim() || undefined, prompt: prompt.trim() } },
@@ -129,7 +146,7 @@ function TaskEditorInner({
     }
     closePrTask.mutate(task.id);
   };
-  const actionError = startTask.error ?? patchTask.error ?? improveTask.error ?? closePrTask.error;
+  const actionError = startTask.error ?? improveTask.error ?? closePrTask.error;
 
   return (
     <div className="flex h-full min-h-0 flex-1 flex-col gap-3 overflow-hidden p-4">
@@ -223,15 +240,7 @@ function TaskEditorInner({
           disabled={images.length >= MAX_IMAGES}
           onFiles={addImageFiles}
         />
-        {saved && !patchTask.isPending && <span className="text-xs text-muted-foreground">Saved</span>}
-        <Button size="sm" variant="outline" onClick={save} disabled={patchTask.isPending}>
-          {patchTask.isPending ? (
-            <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
-          ) : (
-            <Save className="h-4 w-4" aria-hidden />
-          )}
-          Save
-        </Button>
+        <SaveStatusIndicator status={autosave.status} onRetry={autosave.retry} />
         <Button size="sm" onClick={start} disabled={startTask.isPending} aria-label="Start task">
           {startTask.isPending ? (
             <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
