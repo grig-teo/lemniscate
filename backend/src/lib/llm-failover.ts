@@ -3,11 +3,20 @@ import { z } from 'zod';
 import { logEvent } from './agent-git.js';
 import { decrypt } from './crypto.js';
 import {
+  exhaustionCooldownMs,
+  filterHealthyConfigs,
+  markConfigExhausted,
+  type LlmExhaustion,
+} from './llm-exhaustion.js';
+import {
   LlmError,
   type ChatCompletionsParams,
   type ChatMessage,
   type LlmRetryInfo,
 } from './llm-client.js';
+import { isRateLimited } from './llm-rate-limit.js';
+import { notifyFailover } from './llm-observer.js';
+import { notify, notifyOncePerTask } from './notifications.js';
 import { prisma } from './prisma.js';
 import { assertPublicHttpUrl } from './url-safety.js';
 import { assertSafeLlmBaseUrl } from './agent-runtime-gates.js';
@@ -21,7 +30,12 @@ import type { LlmRuntime } from './agent-runtime.js';
 //      llmCallWithFailover promotes the user's next enabled config and the
 //      call continues there instead of aborting the run. Only LlmError
 //      triggers failover: a TokenBudgetExceededError is a deliberate local
-//      cap, and switching providers must not reset it.
+//      cap, and switching providers must not reset it. A config that failed
+//      with a rate-limit/quota error is additionally PARKED cross-run
+//      (llm-exhaustion.ts) so later runs start directly on the promoted
+//      config until the provider's limit window resets; every switch is
+//      counted (notifyFailover → lemniscate_llm_failovers_total) and alerted
+//      (llm_failover notification).
 
 // ---------------------------------------------------------------------------
 // Per-call params + console logging (moved from agent-runtime.ts)
@@ -77,15 +91,20 @@ const FAILOVER_REASON_MAX_CHARS = 200;
 
 // Candidates for taking over a failed call: the user's other enabled configs,
 // default first — the same precedence findUserFallback (agent-runtime.ts)
-// uses when picking the primary config.
+// uses when picking the primary config. Configs currently parked by the
+// exhaustion registry (llm-exhaustion.ts) are skipped; when EVERY candidate
+// is parked the full list stands — a config whose cooldown may be about to
+// lapse beats failing the run outright.
 export async function findFailoverConfigs(
   userId: string,
   excludeIds: string[],
 ): Promise<LlmConfig[]> {
-  return prisma.llmConfig.findMany({
+  const candidates = await prisma.llmConfig.findMany({
     where: { userId, enabled: true, id: { notIn: excludeIds } },
     orderBy: [{ isDefault: 'desc' }, { id: 'asc' }],
   });
+  const healthy = await filterHealthyConfigs(candidates);
+  return healthy.length > 0 ? healthy : candidates;
 }
 
 function isFailoverEligible(rt: LlmRuntime, err: unknown): err is LlmError {
@@ -174,22 +193,72 @@ export async function applyPendingModelSwitch(rt: LlmRuntime): Promise<void> {
   }
 }
 
+// Parks a config whose provider reported the token/rate limit exhausted, so
+// later runs skip it until the cooldown lapses (llm-exhaustion.ts). Returns
+// the stored record (for the notification's recovery time); null when the
+// cause is not a quota signal — only rate-limit errors park a config.
+async function parkRateLimitedConfig(configId: string, cause: LlmError): Promise<LlmExhaustion | null> {
+  const cooldownMs = exhaustionCooldownMs(cause);
+  if (cooldownMs === null) return null;
+  return markConfigExhausted(configId, cooldownMs, cause.message);
+}
+
+function failoverBody(
+  fromModel: string,
+  candidate: LlmConfig,
+  cause: LlmError,
+  parked: LlmExhaustion | null,
+): string {
+  const base =
+    `${fromModel} failed (${truncateReason(cause.message)}) — ` +
+    `the run continues on ${candidate.model} [${candidate.name}].`;
+  if (!parked) return base;
+  return (
+    `${base} ${fromModel} hit its provider rate/token limit and is parked until ` +
+    `${parked.until}; it becomes the preferred config again automatically afterwards.`
+  );
+}
+
+// User-facing alert for the switch (bell + subscribed webhook/email/browser
+// channels). Deduped per task so a flapping primary cannot spam; never
+// throws into the run (notify swallows its own failures).
+async function emitFailoverNotification(
+  rt: LlmRuntime,
+  fromModel: string,
+  candidate: LlmConfig,
+  cause: LlmError,
+  parked: LlmExhaustion | null,
+): Promise<void> {
+  if (!rt.userId) return;
+  const payload = {
+    title: `LLM failover: ${fromModel} → ${candidate.model}`,
+    body: failoverBody(fromModel, candidate, cause, parked),
+  };
+  if (rt.taskId) await notifyOncePerTask(rt.userId, 'llm_failover', { ...payload, taskId: rt.taskId });
+  else await notify(rt.userId, 'llm_failover', payload);
+}
+
 // Marks the active config as failed and promotes the next enabled candidate.
 // Returns false when nothing usable remains — the caller rethrows the
 // original error so the run fails with the primary cause, not a failover
 // bookkeeping message.
 export async function promoteFailoverConfig(rt: LlmRuntime, cause: LlmError): Promise<boolean> {
   if (!rt.userId) return false;
+  const failedId = rt.cfg.id;
+  const failedModel = rt.cfg.model;
   const tried = (rt.triedConfigIds ??= []);
-  tried.push(rt.cfg.id);
+  tried.push(failedId);
   const candidates = await findFailoverConfigs(rt.userId, tried);
   for (const candidate of candidates) {
     if (!(await hasSafeBaseUrl(candidate.baseUrl))) {
       tried.push(candidate.id);
       continue;
     }
+    const parked = await parkRateLimitedConfig(failedId, cause);
     activateFailoverConfig(rt, candidate, cause);
+    notifyFailover({ reason: isRateLimited(cause) ? 'rate_limit' : 'other' });
     if (rt.taskId) await persistPromotedConfig(rt.taskId, candidate);
+    await emitFailoverNotification(rt, failedModel, candidate, cause, parked);
     return true;
   }
   return false;

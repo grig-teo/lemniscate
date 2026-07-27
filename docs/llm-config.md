@@ -87,6 +87,39 @@ chain in `backend/src/lib/llm-failover.ts`:
   currently active config still applies — the per-run budget itself is a
   deliberate cap and never triggers failover.
 
+### Cross-run exhaustion ("limit reached → switch default")
+
+In-run failover alone would let the NEXT run resolve the same exhausted
+default again and burn its configured retries against the still-limited
+endpoint before failing over. When the failure is a rate-limit/quota signal
+— HTTP 429, `insufficient_quota`, `RESOURCE_EXHAUSTED`, "usage limit reached"
+and friends (the single classifier in `backend/src/lib/llm-rate-limit.ts`) —
+the failed config is additionally **parked** cross-run
+(`backend/src/lib/llm-exhaustion.ts`):
+
+- A Redis record `llm-exhausted:<configId> = {until, reason}` is written with
+  a PX TTL equal to the cooldown. The cooldown honors the provider's own
+  reset time when the error message states one (clamped to [10min, 6h]);
+  otherwise it falls back to `LLM_EXHAUSTION_COOLDOWN_MS` (default 1h).
+- While parked, the config is skipped both by primary resolution
+  (`findLlmConfig` in `llm-config-resolution.ts` → the promoted config
+  effectively becomes the default for new runs) and by the failover
+  candidate list.
+- **Automatic recovery:** TTL expiry is the recovery mechanism — once the
+  provider's limit window resets, the record disappears and the previous
+  default is preferred again. No probe job, no manual switching.
+- Only quota signals park a config: a persistent failure caused by a
+  malformed request (or an endpoint simply being down) fails over within the
+  run but is NOT remembered cross-run, so failover never masks real bugs.
+- Degradation: when every enabled config is parked, or Redis is down, the
+  system falls back to the stored config order — i.e. exactly the pre-
+  existing in-run failover behavior.
+
+Every switch is observable: counted as `lemniscate_llm_failovers_total
+{reason="rate_limit"|"other"}` (see `docs/observability.md`) and surfaced to
+the user as an `llm_failover` notification (bell + subscribed webhook/email/
+browser channels, deduped per task) including the parked-until recovery time.
+
 ## Test connection (implemented)
 
 A **"Test connection"** button in the config form sends a trivial

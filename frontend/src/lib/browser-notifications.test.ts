@@ -298,6 +298,7 @@ describe('SELECTABLE_BROWSER_NOTIFICATION_KINDS', () => {
       'pr_closed',
       'run_failed',
       'budget_exceeded',
+      'llm_failover',
     ]);
   });
 });

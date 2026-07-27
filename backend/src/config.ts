@@ -107,6 +107,12 @@ const envSchema = z.object({
   // the review-feedback poll fallback for hosts without webhooks). The e2e
   // stack shortens it so the poll fallback is observable within the suite.
   PR_STATE_SYNC_INTERVAL_MS: z.coerce.number().int().positive().default(5 * 60 * 1000),
+  // Cross-run cooldown for an LLM config whose provider reported the
+  // rate/token limit exhausted (llm-exhaustion.ts): the config is parked and
+  // the failover chain prefers the user's other enabled configs until the
+  // cooldown lapses. Used only when the provider states no reset time of its
+  // own (a parseable "reset at …" always wins, clamped to [10min, 6h]).
+  LLM_EXHAUSTION_COOLDOWN_MS: z.coerce.number().int().positive().default(60 * 60 * 1000),
 
   // --- Service deployments (Lemniscate Apps) ---
   // Shared secret between Traefik (HTTP provider) and the backend's

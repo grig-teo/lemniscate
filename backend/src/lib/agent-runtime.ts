@@ -204,54 +204,14 @@ export async function llmCall(rt: LlmRuntime, messages: ChatMessage[]): Promise<
 }
 
 // ---------------------------------------------------------------------------
-// Config resolution
-// ---------------------------------------------------------------------------
-
-async function findEnabledById(id: string, userId: string): Promise<LlmConfig | null> {
-  return prisma.llmConfig.findFirst({ where: { id, userId, enabled: true } });
-}
-
-async function findUserFallback(userId: string): Promise<LlmConfig | null> {
-  return (
-    (await prisma.llmConfig.findFirst({ where: { userId, isDefault: true, enabled: true } })) ??
-    (await prisma.llmConfig.findFirst({ where: { userId, enabled: true }, orderBy: { id: 'asc' } }))
-  );
-}
-
-// Resolution order: task.llmConfigId → repo.llmConfigId → user's default →
-// any enabled config of the user. Single source of truth for every caller
-// (task runs, improve, …) — parameterized on llmConfigId so partial task
-// selects fit. Returns null when nothing matches.
-export async function findLlmConfig(
-  task: { llmConfigId: string | null } | null,
-  repository: { llmConfigId: string | null },
-  userId: string,
-): Promise<LlmConfig | null> {
-  for (const id of [task?.llmConfigId, repository.llmConfigId]) {
-    if (!id) continue;
-    const found = await findEnabledById(id, userId);
-    if (found) return found;
-  }
-  return findUserFallback(userId);
-}
-
-export async function resolveLlmConfig(
-  task: { llmConfigId: string | null } | null,
-  repository: { llmConfigId: string | null },
-  userId: string,
-): Promise<LlmConfig> {
-  const fallback = await findLlmConfig(task, repository, userId);
-  if (!fallback) {
-    throw new Error(
-      'No enabled LLM config found (task override, repository config, and user default are all unset)',
-    );
-  }
-  return fallback;
-}
-
-// ---------------------------------------------------------------------------
 // Shared job context: task loading + credential/runtime preparation
 // ---------------------------------------------------------------------------
+
+// Re-exported so existing consumers (routes, tests) keep importing the
+// resolution surface from agent-runtime; implementation lives in
+// llm-config-resolution.ts (split to keep this module under the line guard).
+export { findLlmConfig, resolveLlmConfig } from './llm-config-resolution.js';
+import { resolveLlmConfig } from './llm-config-resolution.js';
 
 export type TaskWithRepo = Task & {
   repository: Repository & { connection: GitConnection };
