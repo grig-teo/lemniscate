@@ -11,9 +11,12 @@
  *   objects — strings, arrays, slugs).  This avoids a deep-equal dependency.
  * - onSave is stored in a ref so a new closure (latest component state) is
  *   always used at save time without re-triggering the debounce effect.
+ * - Saves are strictly serialized via a promise chain (inFlightRef) so two
+ *   PATCH requests can never overlap and race at the backend.
  * - A monotonically increasing sequence number guards the saved-baseline
- *   update so that an older in-flight save completing AFTER a newer save
- *   cannot overwrite the baseline with stale data.
+ *   update as defense-in-depth against any out-of-order completion.
+ * - The status resets to 'idle' the moment new unsaved edits arrive, so the
+ *   indicator never shows 'Saved'/'Error' while changes are still pending.
  */
 import * as React from 'react';
 
@@ -59,13 +62,18 @@ export function useAutosave<T>({
   const timerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
   const saveSeqRef = React.useRef(0);
   const isMountedRef = React.useRef(true);
+  // Promise chain for strict save serialization — every save is chained onto
+  // the previous so overlapping PATCH requests can never race at the backend.
+  const inFlightRef = React.useRef<Promise<void>>(Promise.resolve());
 
   // Refs updated every render so the debounce effect (which depends only on
   // the serialized content) always uses the freshest callback and value.
   const onSaveRef = React.useRef(onSave);
   const valueRef = React.useRef(value);
+  const statusRef = React.useRef(status);
   onSaveRef.current = onSave;
   valueRef.current = value;
+  statusRef.current = status;
 
   const clearTimer = (): void => {
     if (timerRef.current !== null) {
@@ -74,7 +82,10 @@ export function useAutosave<T>({
     }
   };
 
-  const performSave = React.useCallback(async (snapshot: T): Promise<void> => {
+  // Executes a single save — sets status, awaits onSave, updates the baseline.
+  // The sequence guard is defense-in-depth against any out-of-order completion
+  // (serialization in performSave makes this a no-op in the normal flow).
+  const runSave = React.useCallback(async (snapshot: T): Promise<void> => {
     const seq = ++saveSeqRef.current;
     if (isMountedRef.current) {
       setStatus('saving');
@@ -82,7 +93,6 @@ export function useAutosave<T>({
     }
     try {
       await onSaveRef.current(snapshot);
-      // Guard against an older save completing after a newer one has started.
       if (seq !== saveSeqRef.current) return;
       serializedRef.current = JSON.stringify(snapshot);
       if (pendingValueRef.current === snapshot) pendingValueRef.current = null;
@@ -96,6 +106,18 @@ export function useAutosave<T>({
       }
     }
   }, []);
+
+  // Serialize saves: chain behind any in-flight save so two PATCH requests
+  // cannot race at the backend (the older one arriving last would overwrite
+  // newer data). Runs whether the previous resolved or rejected.
+  const performSave = React.useCallback(async (snapshot: T): Promise<void> => {
+    const next = inFlightRef.current.then(
+      () => runSave(snapshot),
+      () => runSave(snapshot),
+    );
+    inFlightRef.current = next;
+    return next;
+  }, [runSave]);
 
   const flush = React.useCallback(async (): Promise<void> => {
     clearTimer();
@@ -126,6 +148,12 @@ export function useAutosave<T>({
       return;
     }
 
+    // Clear stale terminal status so the indicator reflects pending edits
+    // rather than showing 'Saved'/'Error' through the entire debounce window.
+    if (isMountedRef.current && (statusRef.current === 'saved' || statusRef.current === 'error')) {
+      setStatus('idle');
+      setError(null);
+    }
     pendingValueRef.current = valueRef.current;
     clearTimer();
     timerRef.current = setTimeout(() => {
@@ -142,7 +170,12 @@ export function useAutosave<T>({
       clearTimer();
       const pending = pendingValueRef.current;
       if (pending !== null) {
-        Promise.resolve(onSaveRef.current(pending)).catch(() => {});
+        // Chain through the in-flight promise to preserve serialization even
+        // on unmount — prevents an older in-flight save from arriving after
+        // this newer unmount save and overwriting it at the backend.
+        inFlightRef.current = inFlightRef.current
+          .then(() => onSaveRef.current(pending), () => onSaveRef.current(pending))
+          .catch(() => {});
       }
     };
   }, []);

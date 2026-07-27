@@ -277,10 +277,52 @@ describe('useAutosave — flush on unmount', () => {
   });
 });
 
-describe('useAutosave — out-of-order save protection', () => {
+describe('useAutosave — pending status during debounce', () => {
   beforeEach(() => vi.useFakeTimers());
 
-  it('preserves a newer edit queued while a save is in-flight', async () => {
+  it('clears the saved status when new edits arrive during the debounce window', async () => {
+    const onSave = vi.fn().mockResolvedValue(undefined);
+    const { result, rerender } = renderHook(({ v }) => useAutosave({ value: v, onSave }), {
+      initialProps: { v: { a: 1 } },
+    });
+
+    // First edit: save completes → status 'saved'.
+    rerender({ v: { a: 2 } });
+    await flushTimers(1000);
+    expect(result.current.status).toBe('saved');
+
+    // Second edit: status must NOT remain 'saved' while debouncing.
+    rerender({ v: { a: 3 } });
+    expect(result.current.status).toBe('idle');
+
+    // After the debounce elapses, save fires and status returns to 'saved'.
+    await flushTimers(1000);
+    expect(result.current.status).toBe('saved');
+  });
+
+  it('clears the error status when new edits arrive during the debounce window', async () => {
+    const onSave = vi.fn().mockRejectedValueOnce(new Error('fail'));
+    const { result, rerender } = renderHook(({ v }) => useAutosave({ value: v, onSave }), {
+      initialProps: { v: { a: 1 } },
+    });
+
+    // First edit fails → status 'error'.
+    rerender({ v: { a: 2 } });
+    await flushTimers(1000);
+    expect(result.current.status).toBe('error');
+    expect(result.current.error).toBeInstanceOf(Error);
+
+    // Second edit clears the error indicator while debouncing.
+    rerender({ v: { a: 3 } });
+    expect(result.current.status).toBe('idle');
+    expect(result.current.error).toBeNull();
+  });
+});
+
+describe('useAutosave — save serialization', () => {
+  beforeEach(() => vi.useFakeTimers());
+
+  it('queues a newer save behind an in-flight save so PATCH requests cannot race', async () => {
     let resolveFirst: () => void = () => {};
     const onSave = vi.fn().mockImplementation((value: { a: number }) => {
       if (value.a === 2) return new Promise<void>((r) => { resolveFirst = r; });
@@ -295,22 +337,62 @@ describe('useAutosave — out-of-order save protection', () => {
     rerender({ v: { a: 2 } });
     await flushTimers(1000);
     expect(result.current.status).toBe('saving');
+    expect(onSave).toHaveBeenCalledTimes(1);
 
     // Edit again while save is in-flight (value a:3).
     rerender({ v: { a: 3 } });
     await flushTimers(1000);
 
-    // The second save ({a:3}) resolves immediately; status becomes 'saved'.
-    expect(result.current.status).toBe('saved');
-    expect(onSave).toHaveBeenNthCalledWith(2, { a: 3 });
+    // The {a:3} save is queued behind the in-flight {a:2} save — it has NOT
+    // been sent yet (serialization prevents overlapping PATCH requests).
+    expect(onSave).toHaveBeenCalledTimes(1);
+    expect(result.current.status).toBe('saving');
 
-    // Complete the first (stale) save — must NOT overwrite the baseline.
+    // Complete the first save — the queued {a:3} save now runs and resolves.
     await act(async () => {
       resolveFirst();
       await vi.advanceTimersByTimeAsync(0);
     });
 
-    // serializedRef still reflects {a:3}, so no spurious re-save is triggered.
     expect(onSave).toHaveBeenCalledTimes(2);
+    expect(onSave).toHaveBeenNthCalledWith(2, { a: 3 });
+    expect(result.current.status).toBe('saved');
+  });
+
+  it('coalesces rapid edits during an in-flight save into one queued save', async () => {
+    let resolveFirst: () => void = () => {};
+    const onSave = vi.fn().mockImplementation((value: { a: number }) => {
+      if (value.a === 2) return new Promise<void>((r) => { resolveFirst = r; });
+      return Promise.resolve();
+    });
+
+    const { result, rerender } = renderHook(({ v }) => useAutosave({ value: v, onSave }), {
+      initialProps: { v: { a: 1 } },
+    });
+
+    rerender({ v: { a: 2 } });
+    await flushTimers(1000);
+    expect(result.current.status).toBe('saving');
+
+    // Multiple edits while the first save is in-flight.
+    rerender({ v: { a: 3 } });
+    await act(async () => vi.advanceTimersByTimeAsync(300));
+    rerender({ v: { a: 4 } });
+    await act(async () => vi.advanceTimersByTimeAsync(300));
+    rerender({ v: { a: 5 } });
+    await flushTimers(1000);
+
+    // Still only the first save has been sent; the rest are coalesced.
+    expect(onSave).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      resolveFirst();
+      await vi.advanceTimersByTimeAsync(0);
+    });
+
+    // Only one more save fires — with the latest value {a:5}.
+    expect(onSave).toHaveBeenCalledTimes(2);
+    expect(onSave).toHaveBeenNthCalledWith(2, { a: 5 });
+    expect(result.current.status).toBe('saved');
   });
 });
