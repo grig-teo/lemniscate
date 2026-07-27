@@ -62,6 +62,13 @@ function FlagSwitches({
         disabledTitle="Enable auto-review first"
         onChange={(autoMergePr) => onChange({ ...flags, autoMergePr })}
       />
+      <FlagSetting
+        description="When a human writes a review comment on the agent's PR, the agent addresses it with a follow-up commit. Off: comments are left for you."
+        label="feedback"
+        ariaLabel="Address human review comments on all repositories"
+        checked={flags.autoAddressReview}
+        onChange={(autoAddressReview) => onChange({ ...flags, autoAddressReview })}
+      />
     </div>
   );
 }

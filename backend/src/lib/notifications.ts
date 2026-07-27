@@ -25,6 +25,7 @@ export const NOTIFICATION_KINDS = [
   'merge_gate_failed',
   'job_failed',
   'proposal_generation_failed',
+  'review_addressed',
 ] as const;
 
 export type NotificationKind = (typeof NOTIFICATION_KINDS)[number];

@@ -16,6 +16,7 @@ function makeRepo(overrides: Partial<Repository> = {}): Repository {
     autoCreatePr: false,
     autoReviewPr: true,
     autoMergePr: true,
+    autoAddressReview: false,
     autoRunProposals: false,
     hidden: false,
     bare: false,
@@ -45,8 +46,13 @@ describe('setAutoReview', () => {
 });
 
 describe('initialFlags', () => {
-  it('defaults to PR on / review off / merge off when there are no repositories', () => {
-    const defaults: RepoFlags = { autoCreatePr: true, autoReviewPr: false, autoMergePr: false };
+  it('defaults to PR on / everything else off when there are no repositories', () => {
+    const defaults: RepoFlags = {
+      autoCreatePr: true,
+      autoReviewPr: false,
+      autoMergePr: false,
+      autoAddressReview: false,
+    };
     expect(initialFlags(undefined)).toEqual(defaults);
     expect(initialFlags([])).toEqual(defaults);
   });
@@ -56,7 +62,12 @@ describe('initialFlags', () => {
       makeRepo({ autoCreatePr: false, autoReviewPr: true, autoMergePr: true }),
       makeRepo({ id: 'r2', autoCreatePr: true, autoReviewPr: false, autoMergePr: false }),
     ]);
-    expect(flags).toEqual({ autoCreatePr: false, autoReviewPr: true, autoMergePr: true });
+    expect(flags).toEqual({
+      autoCreatePr: false,
+      autoReviewPr: true,
+      autoMergePr: true,
+      autoAddressReview: false,
+    });
   });
 });
 
@@ -67,6 +78,7 @@ describe('REPO_FLAG_INFO', () => {
       'autoReviewPr',
       'autoMergePr',
       'autoRunProposals',
+      'autoAddressReview',
     ]);
   });
 

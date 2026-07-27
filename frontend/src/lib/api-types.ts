@@ -159,6 +159,8 @@ export type Repository = {
   autoCreatePr: boolean;
   autoReviewPr: boolean;
   autoMergePr: boolean;
+  /** Human PR review feedback loop (address-review job); default off. */
+  autoAddressReview: boolean;
   autoRunProposals: boolean;
   hidden: boolean;
   /** True for near-empty (README-only) repositories — the composer invites a from-scratch app prompt. */

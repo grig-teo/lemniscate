@@ -4,7 +4,8 @@ import { getProviderWebhookApi } from '../lib/git-providers/webhook-registry.js'
 import type { ProviderName } from '../lib/git-providers/types.js';
 import { applyTaskPrStateSafe, type TaskWithConnection } from '../lib/pr-merged-handler.js';
 import { prisma } from '../lib/prisma.js';
-import { enqueueMergeGate } from '../lib/proposal-scheduler.js';
+import { enqueueAddressReview, enqueueMergeGate } from '../lib/proposal-scheduler.js';
+import { reviewFeedbackSkipReason } from '../lib/review-feedback.js';
 import { getRedisClient } from '../lib/redis.js';
 import type { WebhookEvent } from '../lib/git-providers/webhook-types.js';
 import { fireEventTrigger } from '../lib/event-trigger-handler.js';
@@ -67,7 +68,7 @@ const webhookRoutes: FastifyPluginAsync = async (app) => {
         return reply.code(200).send({ ok: true, event: 'duplicate' });
       }
 
-      return dispatchEvent(event);
+      return dispatchEvent(connection.id, event);
     },
   );
 };
@@ -102,8 +103,11 @@ async function isReplay(deliveryId: string | null): Promise<boolean> {
   return result === null;
 }
 
-async function dispatchEvent(event: WebhookEvent) {
-  const task = await findAwaitingTask(event.repoFullName, event.headBranch);
+async function dispatchEvent(connectionId: string, event: WebhookEvent) {
+  const task = await findAwaitingTask(connectionId, event.repoFullName, event.headBranch);
+  if (event.kind === 'pr_review_comment') {
+    return dispatchReviewComment(event, task);
+  }
   if (task) {
     const prStateResult = await dispatchPrStateEvent(event, task);
     if (prStateResult) return prStateResult;
@@ -116,6 +120,29 @@ async function dispatchEvent(event: WebhookEvent) {
     return { ok: true, event: event.kind };
   }
   return { ok: true, event: task ? event.kind : 'no_task' };
+}
+
+// A human PR review comment on an awaiting task's branch enqueues the
+// address-review job — gated per repo by autoAddressReview, self-comments
+// and already-addressed ids are ignored (the job re-checks everything at
+// execution time; this layer only avoids queue noise).
+async function dispatchReviewComment(
+  event: WebhookEvent,
+  task: TaskWithConnection | null,
+): Promise<{ ok: true; event: string }> {
+  const comment = event.reviewComment;
+  if (!comment || !task) return { ok: true, event: 'no_task' };
+  const skip = reviewFeedbackSkipReason({
+    taskStatus: task.status,
+    branchName: task.branchName,
+    lastAddressedReviewId: task.lastAddressedReviewId,
+    autoAddressReview: task.repository.autoAddressReview,
+    connectionUsername: task.repository.connection.username,
+    comment,
+  });
+  if (skip) return { ok: true, event: `pr_review_comment_${skip}` };
+  await enqueueAddressReview(task.id, comment);
+  return { ok: true, event: 'pr_review_comment' };
 }
 
 /** Dispatches PR-state transitions (pr_merged, pr_closed, ci_status) and kicks
@@ -145,7 +172,12 @@ async function dispatchPrStateEvent(
   return null;
 }
 
+// The repository lookup is scoped to the verified connection: two users can
+// connect the same forge host (or identically-named repos on different
+// hosts), and an event verified for connection A must never dispatch a task
+// belonging to connection B.
 async function findAwaitingTask(
+  connectionId: string,
   repoFullName: string,
   headBranch: string,
 ): Promise<TaskWithConnection | null> {
@@ -153,7 +185,7 @@ async function findAwaitingTask(
     where: {
       status: { in: ['awaiting_review', 'reviewing_code'] },
       branchName: headBranch,
-      repository: { fullName: repoFullName },
+      repository: { fullName: repoFullName, connectionId },
     },
     include: { repository: { include: { connection: true } } },
   });

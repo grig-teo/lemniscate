@@ -6,6 +6,7 @@ import { z } from 'zod';
 import { config, MONITORED_SECRETS } from './config.js';
 import { planWorkdirSweep } from './lib/agent-git.js';
 import { generateProposals, stampProposalFailure, stampProposalSuccess, reviewTask, runTask } from './lib/agent-loop.js';
+import { addressReviewTask } from './lib/address-review.js';
 import { mergeGateTask } from './lib/merge-gate.js';
 import { deployService } from './lib/deploy/deploy-service.js';
 import { prisma } from './lib/prisma.js';
@@ -45,6 +46,16 @@ const mergeGateDataSchema = z.object({
   ciFixes: z.number().int().min(0).default(0),
 });
 const deployServiceDataSchema = z.object({ deploymentId: z.string().min(1) });
+const addressReviewDataSchema = z.object({
+  taskId: z.string().min(1),
+  comment: z.object({
+    id: z.string().min(1),
+    body: z.string().min(1),
+    author: z.string().min(1),
+    path: z.string().optional(),
+    line: z.number().int().optional(),
+  }),
+});
 const generateProposalsDataSchema = z.object({ repositoryId: z.string().min(1) });
 const proposalsTopUpDataSchema = z.object({}).strict();
 const notificationDeliveryDataSchema = z.object({ deliveryId: z.string().min(1) });
@@ -90,6 +101,7 @@ await initErrorReporting(config.SENTRY_DSN, MONITORED_SECRETS);
 const KNOWN_JOB_NAMES = new Set([
   'run-task',
   'review-pr',
+  'address-review',
   'merge-gate',
   'deploy-service',
   'generate-proposals',
@@ -147,6 +159,11 @@ async function processJob(job: Job): Promise<void> {
     case 'review-pr': {
       const { taskId, attempt } = reviewPrDataSchema.parse(job.data);
       await reviewTask(taskId, attempt);
+      return;
+    }
+    case 'address-review': {
+      const { taskId, comment } = addressReviewDataSchema.parse(job.data);
+      await addressReviewTask(taskId, comment);
       return;
     }
     case 'merge-gate': {

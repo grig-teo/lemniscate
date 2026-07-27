@@ -14,6 +14,8 @@ import {
   encodeRepoPath,
   fetchAllPages,
   gitverseDiffFileSchema,
+  githubPrReviewCommentListSchema,
+  mapGithubPrReviewComments,
   matchesHeadBaseRef,
   PR_LIST_PAGE_SIZE,
   prStateFromOpenMerged,
@@ -23,6 +25,7 @@ import {
   type OpenPullRequestResult,
   type PrConnectionInput,
   type ProviderPrApi,
+  type PrReviewComment,
   type PrState,
   type PullRequestRefInput,
 } from './pr-shared.js';
@@ -223,6 +226,19 @@ async function gitverseListPullRequests(
   }));
 }
 
+// Human review comments on the PR (GitHub-shaped payload — the schema and
+// mapper are shared with pr-github.ts via pr-shared.ts).
+async function gitversePullReviewComments(
+  connection: PrConnectionInput,
+  token: string,
+  input: PullRequestRefInput,
+): Promise<PrReviewComment[]> {
+  const { number } = await gitverseLookupPullNumber(connection, token, input);
+  const url = `${gitversePullsUrl(connection, input.repoFullName)}/${number}/comments?per_page=100`;
+  const { body } = await apiRequest('gitverse', 'GET', url, gitverseHeaders(token), token);
+  return mapGithubPrReviewComments(githubPrReviewCommentListSchema.parse(body));
+}
+
 export function gitversePrApi(connection: PrConnectionInput, token: string): ProviderPrApi {
   return {
     open: (input) => gitverseOpenPullRequest(connection, token, input),
@@ -233,5 +249,6 @@ export function gitversePrApi(connection: PrConnectionInput, token: string): Pro
     close: (input) => gitverseClosePullRequest(connection, token, input),
     deleteBranch: (repoFullName, branch) =>
       gitverseDeleteBranch(connection, token, repoFullName, branch),
+    reviewComments: (input) => gitversePullReviewComments(connection, token, input),
   };
 }

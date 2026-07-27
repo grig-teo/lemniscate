@@ -10,11 +10,13 @@ const mocks = vi.hoisted(() => ({
   taskEventCount: vi.fn().mockResolvedValue(0),
   taskEventFindFirst: vi.fn().mockResolvedValue(null),
   enqueueReviewTask: vi.fn().mockResolvedValue(undefined),
+  enqueueAddressReview: vi.fn().mockResolvedValue(undefined),
   setTaskStatus: vi.fn().mockResolvedValue(undefined),
   logEvent: vi.fn().mockResolvedValue(undefined),
   cleanupWorkdir: vi.fn().mockResolvedValue(undefined),
   pullRequestState: vi.fn(),
   listPullRequests: vi.fn(),
+  listPrReviewComments: vi.fn(),
   notify: vi.fn().mockResolvedValue(undefined),
 }));
 
@@ -33,15 +35,18 @@ vi.mock('../src/lib/agent-git.js', () => ({
 vi.mock('../src/lib/pull-requests.js', () => ({
   pullRequestState: mocks.pullRequestState,
   listPullRequests: mocks.listPullRequests,
+  listPrReviewComments: mocks.listPrReviewComments,
 }));
 vi.mock('../src/lib/notifications.js', () => ({ notify: mocks.notify }));
 vi.mock('../src/lib/proposal-scheduler.js', () => ({
   getAgentTasksQueue: vi.fn(),
   enqueueReviewTask: mocks.enqueueReviewTask,
+  enqueueAddressReview: mocks.enqueueAddressReview,
 }));
 vi.mock('ioredis', () => ({ Redis: vi.fn() }));
 
 import {
+  pollReviewFeedback,
   recoverStuckReviews,
   syncMergedPullRequests,
   taskStatusForPrState,
@@ -69,6 +74,7 @@ beforeEach(() => {
   // Default: the repo listing finds nothing, so legacy per-task tests exercise
   // the per-branch fallback path. Batching tests override this per case.
   mocks.listPullRequests.mockResolvedValue([]);
+  mocks.listPrReviewComments.mockResolvedValue([]);
 });
 
 describe('taskStatusForPrState', () => {
@@ -275,5 +281,70 @@ describe('recoverStuckReviews', () => {
     await recoverStuckReviews();
 
     expect(mocks.enqueueReviewTask).not.toHaveBeenCalled();
+  });
+});
+
+describe('pollReviewFeedback (webhook fallback)', () => {
+  function feedbackTask(overrides: Record<string, unknown> = {}) {
+    return awaitingTask({
+      lastAddressedReviewId: null,
+      repository: {
+        fullName: 'org/demo',
+        defaultBranch: 'main',
+        autoAddressReview: true,
+        connection: { provider: 'github', baseUrl: null, accessTokenEnc: 'enc', username: 'agent-bot' },
+      },
+      ...overrides,
+    });
+  }
+
+  it('enqueues address-review for unseen human comments on opted-in repos', async () => {
+    mocks.taskFindMany.mockResolvedValue([feedbackTask()]);
+    mocks.listPrReviewComments.mockResolvedValue([
+      { id: 'rc-1', body: 'first nit', author: 'human-reviewer' },
+      { id: 'rc-2', body: 'handle the null case', author: 'human-reviewer' },
+    ]);
+
+    await pollReviewFeedback();
+
+    expect(mocks.listPrReviewComments).toHaveBeenCalledWith(
+      feedbackTask().repository.connection,
+      { repoFullName: 'org/demo', headBranch: 'lemniscate/t-1', baseBranch: 'main' },
+    );
+    expect(mocks.enqueueAddressReview).toHaveBeenCalledTimes(2);
+    expect(mocks.enqueueAddressReview).toHaveBeenCalledWith(
+      't1',
+      expect.objectContaining({ id: 'rc-2' }),
+    );
+  });
+
+  it('skips self-authored and already-addressed comments', async () => {
+    mocks.taskFindMany.mockResolvedValue([feedbackTask({ lastAddressedReviewId: 'rc-5' })]);
+    mocks.listPrReviewComments.mockResolvedValue([
+      { id: 'rc-4', body: 'old feedback', author: 'human-reviewer' },
+      { id: 'rc-6', body: 'agent talking to itself', author: 'Agent-Bot' },
+    ]);
+
+    await pollReviewFeedback();
+
+    expect(mocks.enqueueAddressReview).not.toHaveBeenCalled();
+  });
+
+  it('does not call the provider when the repo flag is off', async () => {
+    mocks.taskFindMany.mockResolvedValue([awaitingTask()]);
+
+    await pollReviewFeedback();
+
+    expect(mocks.listPrReviewComments).not.toHaveBeenCalled();
+    expect(mocks.enqueueAddressReview).not.toHaveBeenCalled();
+  });
+
+  it('logs and skips a task whose provider call fails', async () => {
+    mocks.taskFindMany.mockResolvedValue([feedbackTask()]);
+    mocks.listPrReviewComments.mockRejectedValue(new Error('github: HTTP 500'));
+
+    await expect(pollReviewFeedback()).resolves.toBeUndefined();
+
+    expect(mocks.enqueueAddressReview).not.toHaveBeenCalled();
   });
 });

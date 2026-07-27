@@ -211,6 +211,121 @@ describe('verifyGitlabWebhook', () => {
 });
 
 // ---------------------------------------------------------------------------
+// GitHub human PR review feedback (pr_review_comment)
+// ---------------------------------------------------------------------------
+
+const GITHUB_PR_REVIEW_COMMENT = {
+  action: 'created',
+  comment: {
+    id: 1234,
+    body: 'Please handle the null case here',
+    user: { login: 'human-reviewer' },
+    path: 'src/a.ts',
+    line: 42,
+  },
+  pull_request: {
+    number: 42,
+    head: { ref: 'lemniscate/t-1', repo: { full_name: 'org/demo' } },
+  },
+  repository: { full_name: 'org/demo' },
+};
+
+const GITHUB_PR_REVIEW_SUBMITTED = {
+  action: 'submitted',
+  review: {
+    id: 555,
+    body: 'Missing tests for the new branch',
+    state: 'changes_requested',
+    user: { login: 'human-reviewer' },
+  },
+  pull_request: {
+    number: 42,
+    head: { ref: 'lemniscate/t-1', repo: { full_name: 'org/demo' } },
+  },
+  repository: { full_name: 'org/demo' },
+};
+
+describe('parseGithubWebhook — human review feedback', () => {
+  it('maps pull_request_review_comment created to pr_review_comment', () => {
+    const headers = { 'x-github-event': 'pull_request_review_comment', 'x-github-delivery': 'd-rc-1' };
+    const event = parseGithubWebhook(GITHUB_PR_REVIEW_COMMENT, headers);
+    expect(event).toEqual<WebhookEvent>({
+      kind: 'pr_review_comment',
+      repoFullName: 'org/demo',
+      headBranch: 'lemniscate/t-1',
+      deliveryId: 'd-rc-1',
+      reviewComment: {
+        id: 'rc-1234',
+        body: 'Please handle the null case here',
+        author: 'human-reviewer',
+        path: 'src/a.ts',
+        line: 42,
+      },
+    });
+  });
+
+  it('maps pull_request_review submitted with a body to pr_review_comment', () => {
+    const headers = { 'x-github-event': 'pull_request_review', 'x-github-delivery': 'd-rv-1' };
+    const event = parseGithubWebhook(GITHUB_PR_REVIEW_SUBMITTED, headers);
+    expect(event).toEqual<WebhookEvent>({
+      kind: 'pr_review_comment',
+      repoFullName: 'org/demo',
+      headBranch: 'lemniscate/t-1',
+      deliveryId: 'd-rv-1',
+      reviewComment: {
+        id: 'review-555',
+        body: 'Missing tests for the new branch',
+        author: 'human-reviewer',
+      },
+    });
+  });
+
+  it('synthesizes a body for a changes_requested review without one', () => {
+    const payload = {
+      ...GITHUB_PR_REVIEW_SUBMITTED,
+      review: { ...GITHUB_PR_REVIEW_SUBMITTED.review, body: '' },
+    };
+    const headers = { 'x-github-event': 'pull_request_review', 'x-github-delivery': 'd-rv-2' };
+    const event = parseGithubWebhook(payload, headers);
+    expect(event?.kind).toBe('pr_review_comment');
+    expect(event?.reviewComment?.body.length).toBeGreaterThan(0);
+  });
+
+  it('ignores an approving review without a body (nothing to act on)', () => {
+    const payload = {
+      ...GITHUB_PR_REVIEW_SUBMITTED,
+      review: { ...GITHUB_PR_REVIEW_SUBMITTED.review, body: '', state: 'approved' },
+    };
+    const headers = { 'x-github-event': 'pull_request_review', 'x-github-delivery': 'd-rv-3' };
+    expect(parseGithubWebhook(payload, headers)).toBeNull();
+  });
+
+  it('ignores edited/deleted review comments (only created is actionable)', () => {
+    const headers = { 'x-github-event': 'pull_request_review_comment', 'x-github-delivery': 'd-rc-2' };
+    expect(
+      parseGithubWebhook({ ...GITHUB_PR_REVIEW_COMMENT, action: 'edited' }, headers),
+    ).toBeNull();
+    expect(
+      parseGithubWebhook({ ...GITHUB_PR_REVIEW_COMMENT, action: 'deleted' }, headers),
+    ).toBeNull();
+  });
+
+  it('ignores a review comment without an author or body', () => {
+    const headers = { 'x-github-event': 'pull_request_review_comment', 'x-github-delivery': 'd-rc-3' };
+    const noAuthor = {
+      ...GITHUB_PR_REVIEW_COMMENT,
+      comment: { ...GITHUB_PR_REVIEW_COMMENT.comment, user: {} },
+    };
+    expect(parseGithubWebhook(noAuthor, headers)).toBeNull();
+    const noBody = {
+      ...GITHUB_PR_REVIEW_COMMENT,
+      comment: { ...GITHUB_PR_REVIEW_COMMENT.comment, body: '  ' },
+    };
+    expect(parseGithubWebhook(noBody, headers)).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
 // GitLab webhook event parsing
 // ---------------------------------------------------------------------------
 
@@ -415,6 +530,56 @@ describe('parseGitlabWebhook — event-driven triggers', () => {
       headBranch: '',
       deliveryId: 'gl-issue-1',
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// GitLab human MR review feedback (Note Hook → pr_review_comment)
+// ---------------------------------------------------------------------------
+
+const GITLAB_MR_NOTE = {
+  object_kind: 'note',
+  object_attributes: {
+    id: 9001,
+    note: 'Can you split this function?',
+    noteable_type: 'MergeRequest',
+  },
+  user: { username: 'human-reviewer' },
+  merge_request: { iid: 7, source_branch: 'lemniscate/t-1' },
+  project: { path_with_namespace: 'org/demo' },
+};
+
+const GITLAB_COMMIT_NOTE = {
+  object_kind: 'note',
+  object_attributes: {
+    id: 9002,
+    note: 'Nice commit',
+    noteable_type: 'Commit',
+  },
+  user: { username: 'human-reviewer' },
+  project: { path_with_namespace: 'org/demo' },
+};
+
+describe('parseGitlabWebhook — human review feedback', () => {
+  it('maps a Note Hook on a merge request to pr_review_comment', () => {
+    const headers = { 'x-gitlab-event': 'Note Hook', 'x-gitlab-event-uuid': 'gl-note-1' };
+    const event = parseGitlabWebhook(GITLAB_MR_NOTE, headers);
+    expect(event).toEqual<WebhookEvent>({
+      kind: 'pr_review_comment',
+      repoFullName: 'org/demo',
+      headBranch: 'lemniscate/t-1',
+      deliveryId: 'gl-note-1',
+      reviewComment: {
+        id: 'note-9001',
+        body: 'Can you split this function?',
+        author: 'human-reviewer',
+      },
+    });
+  });
+
+  it('ignores notes on other noteables (commits, issues)', () => {
+    const headers = { 'x-gitlab-event': 'Note Hook', 'x-gitlab-event-uuid': 'gl-note-2' };
+    expect(parseGitlabWebhook(GITLAB_COMMIT_NOTE, headers)).toBeNull();
   });
 });
 

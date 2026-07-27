@@ -28,6 +28,8 @@ const patchBodySchema = z
     autoCreatePr: z.boolean().optional(),
     autoReviewPr: z.boolean().optional(),
     autoMergePr: z.boolean().optional(),
+    // Human review feedback loop (address-review job); default off.
+    autoAddressReview: z.boolean().optional(),
     autoRunProposals: z.boolean().optional(),
     hidden: z.boolean().optional(),
     // null explicitly detaches the LLM config.
@@ -49,6 +51,9 @@ export const bulkFlagsSchema = z
     autoCreatePr: z.boolean(),
     autoReviewPr: z.boolean(),
     autoMergePr: z.boolean(),
+    // Optional: older clients bulk-set only the three core flags; absent
+    // leaves each repo's autoAddressReview untouched.
+    autoAddressReview: z.boolean().optional(),
     // Optional: bulk-set the review LLM on all repositories; null detaches.
     reviewLlmConfigId: z.string().min(1).nullable().optional(),
   })
@@ -63,6 +68,7 @@ export function buildPatchData(data: PatchBody) {
     ...(data.autoCreatePr !== undefined ? { autoCreatePr: data.autoCreatePr } : {}),
     ...(data.autoReviewPr !== undefined ? { autoReviewPr: data.autoReviewPr } : {}),
     ...(data.autoMergePr !== undefined ? { autoMergePr: data.autoMergePr } : {}),
+    ...(data.autoAddressReview !== undefined ? { autoAddressReview: data.autoAddressReview } : {}),
     ...(data.autoRunProposals !== undefined ? { autoRunProposals: data.autoRunProposals } : {}),
     ...(data.hidden !== undefined ? { hidden: data.hidden } : {}),
     ...(data.llmConfigId !== undefined ? { llmConfigId: data.llmConfigId } : {}),
@@ -81,6 +87,7 @@ export function buildBulkFlagsUpdate(data: BulkFlagsBody) {
     autoCreatePr: data.autoCreatePr,
     autoReviewPr: data.autoReviewPr,
     autoMergePr: data.autoMergePr,
+    ...(data.autoAddressReview !== undefined ? { autoAddressReview: data.autoAddressReview } : {}),
     ...(data.reviewLlmConfigId !== undefined
       ? { reviewLlmConfigId: data.reviewLlmConfigId }
       : {}),

@@ -148,6 +148,11 @@ model Repository {
   // proposals-autorun job (every 20 min) starts pending proposals one at a
   // time per repo when this is on; default off.
   autoRunProposals Boolean   @default(false)
+  // Human PR review feedback loop: when on, a human review comment on an
+  // agent-authored PR enqueues an address-review job (agent fixes the code
+  // and pushes to the same branch). Default off — the product's mission is
+  // to not intervene in the autonomous loop unless a repo opts in.
+  autoAddressReview Boolean @default(false)
   hidden        Boolean      @default(false)
   // Slugs of skills (Skill model) injected into the agent's system prompt
   // for tasks on this repository; string[] stored as JSON.
@@ -249,6 +254,10 @@ model Task {
   // recorded by the worker after the push; null for old tasks or when the
   // diff failed (run-targets falls back to the repository platform).
   changedPaths Json?
+  // Last human PR review comment id the address-review job completed
+  // (namespaced, e.g. 'rc-1234' / 'note-42'); dedupes webhook redeliveries
+  // and the pr-state-sync poll fallback.
+  lastAddressedReviewId String?
   error        String?
   // Structured error code from the classifyError() mapping (errors.ts);
   // null for tasks that succeeded or haven't run yet. The frontend maps

@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { ProviderError, type ProviderName } from './git-providers.js';
 import { errorMessage, redactSecrets } from './utils.js';
+import type { ReviewFeedbackComment } from './review-feedback.js';
 
 // Shared types and HTTP plumbing for the pull-request provider modules
 // (pr-github.ts, pr-gitlab.ts, pr-gitverse.ts, pr-gitee.ts). Kept separate
@@ -59,6 +60,43 @@ export interface PrChecksStatus {
 
 export type PrState = 'open' | 'merged' | 'closed';
 
+// A human-written PR review comment fetched via a provider API (the
+// pr-state-sync poll fallback for hosts without webhooks). Same shape the
+// webhook pipeline normalizes to — ReviewFeedbackComment is the single home
+// (lib/review-feedback.ts), aliased here for the PR API modules.
+export type { ReviewFeedbackComment as PrReviewComment } from './review-feedback.js';
+type PrReviewComment = ReviewFeedbackComment;
+
+// GitHub-shaped review-comment payload (GitHub pulls/{n}/comments, also
+// Gitea/GitVerse) — ONE schema + mapper shared by those providers
+// (AGENTS.md §6), not three copies.
+export const githubPrReviewCommentListSchema = z.array(
+  z.object({
+    id: z.number(),
+    body: z.string(),
+    user: z.object({ login: z.string() }).nullable(),
+    path: z.string().optional(),
+    line: z.number().nullable().optional(),
+  }),
+);
+
+export function mapGithubPrReviewComments(
+  raw: z.infer<typeof githubPrReviewCommentListSchema>,
+): PrReviewComment[] {
+  const comments: PrReviewComment[] = [];
+  for (const c of raw) {
+    if (!c.user?.login || !c.body.trim()) continue;
+    comments.push({
+      id: `rc-${c.id}`,
+      body: c.body.trim(),
+      author: c.user.login,
+      ...(c.path ? { path: c.path } : {}),
+      ...(typeof c.line === 'number' ? { line: c.line } : {}),
+    });
+  }
+  return comments;
+}
+
 /** One PR as returned by the batched per-repo listing (pr-state-sync job). */
 export interface ListedPullRequest {
   headBranch: string;
@@ -112,6 +150,8 @@ export interface ProviderPrApi {
   deleteBranch(repoFullName: string, branch: string): Promise<void>;
   /** Commit/PR check statuses; absent when the provider has no checks API. */
   checks?(input: PullRequestRefInput): Promise<PrChecksStatus>;
+  /** Human review comments on the PR; absent when the provider has no such API. */
+  reviewComments?(input: PullRequestRefInput): Promise<PrReviewComment[]>;
 }
 
 // Maps a provider "not mergeable" status to a conflict result; rethrows

@@ -104,6 +104,33 @@ async function proposeFixes(
   return result;
 }
 
+// The fix tail shared by the review loop and the address-review job
+// (AGENTS.md §6 — single home): assumes the task branch is already checked
+// out in `workdir`; proposes/applies fixes and pushes to the same branch.
+export async function applyReviewFixes(
+  task: TaskWithRepo,
+  rt: LlmRuntime,
+  review: PrReview,
+  headBranch: string,
+  workdir: string,
+  cloneUrl: string,
+  secrets: string[],
+  auth: GitAuth,
+): Promise<void> {
+  if (config.AGENT_EXECUTOR === 'hermes') {
+    await runHermesFixIteration(task, rt, review, headBranch, workdir, secrets, auth);
+    return;
+  }
+  const { summary, changes } = await proposeFixes(task, rt, review, workdir);
+  const applied = await applyChanges(task.id, workdir, changes, secrets);
+  if (applied === 0 || !(await hasDirtyWorkdir(workdir))) {
+    await logEvent(task.id, 'no fix changes produced; the branch is unchanged');
+    return;
+  }
+  await commitAndPush(task, rt, workdir, summary, ['push', 'origin', headBranch], secrets, auth);
+  await logEvent(task.id, `pushed review fixes to ${headBranch}`);
+}
+
 // Clones the repo, checks out the task branch, applies LLM fixes for the
 // review issues, commits, and pushes back to the same branch.
 async function runReviewFixIteration(
@@ -125,14 +152,7 @@ async function runReviewFixIteration(
     secrets,
     auth,
   );
-  const { summary, changes } = await proposeFixes(task, rt, review, workdir);
-  const applied = await applyChanges(task.id, workdir, changes, secrets);
-  if (applied === 0 || !(await hasDirtyWorkdir(workdir))) {
-    await logEvent(task.id, 'no fix changes produced; re-reviewing the existing branch');
-    return;
-  }
-  await commitAndPush(task, rt, workdir, summary, ['push', 'origin', headBranch], secrets, auth);
-  await logEvent(task.id, `pushed review fixes to ${headBranch}`);
+  await applyReviewFixes(task, rt, review, headBranch, workdir, cloneUrl, secrets, auth);
 }
 
 // ---------------------------------------------------------------------------

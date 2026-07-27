@@ -1,11 +1,13 @@
 import {
+  listPrReviewComments,
   listPullRequests,
   pullRequestState,
   type ListedPullRequest,
   type PrState,
 } from './pull-requests.js';
-import { enqueueReviewTask, getAgentTasksQueue } from './proposal-scheduler.js';
+import { enqueueAddressReview, enqueueReviewTask, getAgentTasksQueue } from './proposal-scheduler.js';
 import { applyTaskPrStateSafe, type TaskWithConnection } from './pr-merged-handler.js';
+import { reviewFeedbackSkipReason } from './review-feedback.js';
 import { logEvent } from './agent-git.js';
 import { prisma } from './prisma.js';
 import { logger } from './logger.js';
@@ -147,6 +149,72 @@ export async function syncMergedPullRequests(): Promise<void> {
     logger.info({ marked, total: tasks.length }, 'pr-state-sync: resolved awaiting-review tasks');
   }
   await recoverStuckReviews();
+  await pollReviewFeedback();
+}
+
+// ---------------------------------------------------------------------------
+// Human review-feedback poll (fallback for hosts without webhooks)
+// ---------------------------------------------------------------------------
+
+// A reviewer leaving more than this many comments between two ticks gets
+// the newest ones addressed; the rest stays for a human (token-spend cap).
+const MAX_FEEDBACK_COMMENTS_PER_TASK = 5;
+
+// Hosts without configured webhooks never deliver pr_review_comment — this
+// poll (same 5-min cadence as the state sync) fetches the PR's review
+// comments via the provider API and enqueues address-review for the
+// actionable ones. Per-task failures are logged and skipped; the next tick
+// retries. Providers without a review-comment API report an empty list.
+export async function pollReviewFeedback(): Promise<void> {
+  const tasks = await prisma.task.findMany({
+    where: {
+      status: { in: ['awaiting_review', 'reviewing_code'] },
+      archivedAt: null,
+      branchName: { not: null },
+      repository: { autoAddressReview: true, connection: { disconnectedAt: null } },
+    },
+    include: { repository: { include: { connection: true } } },
+  });
+  let enqueued = 0;
+  for (const task of tasks) {
+    enqueued += await pollTaskReviewFeedback(task).catch((err: unknown) => {
+      logger.warn({ taskId: task.id, err }, 'pr-state-sync: review feedback poll failed');
+      return 0;
+    });
+  }
+  if (enqueued > 0) {
+    logger.info({ enqueued, total: tasks.length }, 'pr-state-sync: enqueued address-review jobs');
+  }
+}
+
+// Fetches the PR's comments and enqueues address-review for each actionable
+// one (not self-authored, not already addressed). Returns the enqueue count.
+async function pollTaskReviewFeedback(task: TaskWithConnection): Promise<number> {
+  // Defensive re-check: the query filters on these, but a flag flipped
+  // between query and use must not slip a job through.
+  if (!task.branchName || !task.repository.autoAddressReview) return 0;
+  const comments = await listPrReviewComments(task.repository.connection, {
+    repoFullName: task.repository.fullName,
+    headBranch: task.branchName,
+    baseBranch: task.repository.defaultBranch,
+  });
+  const actionable = comments.filter(
+    (comment) =>
+      reviewFeedbackSkipReason({
+        taskStatus: task.status,
+        branchName: task.branchName,
+        lastAddressedReviewId: task.lastAddressedReviewId,
+        autoAddressReview: task.repository.autoAddressReview,
+        connectionUsername: task.repository.connection.username,
+        comment,
+      }) === null,
+  );
+  let enqueued = 0;
+  for (const comment of actionable.slice(-MAX_FEEDBACK_COMMENTS_PER_TASK)) {
+    await enqueueAddressReview(task.id, comment);
+    enqueued += 1;
+  }
+  return enqueued;
 }
 
 // ---------------------------------------------------------------------------

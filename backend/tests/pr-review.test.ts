@@ -11,6 +11,7 @@ import {
   HERMES_REVIEW_FILENAME,
   parsePrReview,
   parseResolvedFile,
+  reviewFromHumanComment,
   type PrReview,
 } from '../src/lib/pr-review.js';
 
@@ -208,5 +209,57 @@ describe('hermes prompt builders', () => {
     expect(prompt).toContain('.github/workflows');
     expect(prompt).toContain('until they pass locally');
     expect(prompt).toContain('Do NOT git commit, push, or create branches');
+  });
+
+  it('fix prompt marks review text as untrusted content (prompt-injection bound)', () => {
+    const review: PrReview = { verdict: 'changes_requested', summary: 's', issues: [] };
+    const prompt = buildHermesFixPrompt({
+      taskTitle: 'T',
+      taskPrompt: null,
+      review,
+      systemPromptExtra: null,
+    });
+    expect(prompt).toContain('untrusted content');
+    expect(prompt).toContain('exfiltrat');
+  });
+});
+
+describe('reviewFromHumanComment', () => {
+  it('shapes a human comment into a changes_requested review', () => {
+    const review = reviewFromHumanComment({
+      body: 'handle the null case',
+      author: 'human-reviewer',
+      path: 'src/a.ts',
+      line: 42,
+    });
+    expect(review.verdict).toBe('changes_requested');
+    expect(review.summary).toContain('@human-reviewer');
+    expect(review.summary).toContain('src/a.ts');
+    expect(review.issues).toEqual([
+      { path: 'src/a.ts', comment: 'handle the null case (line 42)' },
+    ]);
+  });
+
+  it('omits path and line for conversation-level comments', () => {
+    const review = reviewFromHumanComment({ body: 'missing tests', author: 'reviewer' });
+    expect(review.issues).toEqual([{ comment: 'missing tests' }]);
+  });
+
+  it('feeds buildHermesFixPrompt verbatim (single fix machinery)', () => {
+    const review = reviewFromHumanComment({ body: 'fix the typo', author: 'reviewer' });
+    const prompt = buildHermesFixPrompt({
+      taskTitle: 'T',
+      taskPrompt: null,
+      review,
+      systemPromptExtra: null,
+    });
+    expect(prompt).toContain('fix the typo');
+    expect(prompt).toContain('@reviewer');
+  });
+
+  it('caps oversized comments', () => {
+    const review = reviewFromHumanComment({ body: 'x'.repeat(10_000), author: 'reviewer' });
+    expect(review.issues[0]?.comment.length).toBeLessThanOrEqual(4_000);
+    expect(review.summary.length).toBeLessThanOrEqual(4_000);
   });
 });
