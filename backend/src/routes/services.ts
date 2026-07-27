@@ -1,9 +1,10 @@
-import type { FastifyPluginAsync } from 'fastify';
+import type { FastifyPluginAsync, FastifyReply } from 'fastify';
 import { z } from 'zod';
 import { config } from '../config.js';
 import { encrypt, decrypt } from '../lib/crypto.js';
 import { queueDeployment } from '../lib/deploy/deploy-service.js';
 import { stopRemoveContainer, tailContainerLogs } from '../lib/deploy/docker-apps.js';
+import { stopVpsContainer } from '../lib/deploy/vps-deploy.js';
 import { servicePath, slugify } from '../lib/deploy/slug.js';
 import { buildTraefikConfig } from '../lib/deploy/traefik-config.js';
 import { prisma } from '../lib/prisma.js';
@@ -22,6 +23,10 @@ const createBodySchema = z
     name: z.string().min(1).max(100).optional(),
     port: z.number().int().min(1).max(65535).optional(),
     autoDeploy: z.boolean().optional(),
+    // Where to deploy: the platform apps network (default) or the user's VPS.
+    deployTarget: z.enum(['lemniscate', 'vps']).optional(),
+    // Required when deployTarget='vps'; ignored otherwise.
+    vpsTargetId: z.string().min(1).optional(),
   })
   .strict();
 
@@ -30,6 +35,8 @@ const patchBodySchema = z
     name: z.string().min(1).max(100).optional(),
     port: z.number().int().min(1).max(65535).optional(),
     autoDeploy: z.boolean().optional(),
+    deployTarget: z.enum(['lemniscate', 'vps']).optional(),
+    vpsTargetId: z.string().min(1).nullable().optional(),
   })
   .strict();
 
@@ -70,6 +77,43 @@ async function slugTaken(ownerUsername: string, slug: string, excludeId?: string
   return clash !== null;
 }
 
+// Public service shape: envEnc stripped (keys only), url computed. VPS
+// services carry their profile summary so the UI can show host:port without
+// a second round-trip. Accepts a row that may or may not include `vpsTarget`.
+type ServiceRow = {
+  id: string;
+  repositoryId: string;
+  name: string;
+  port: number;
+  envEnc: string | null;
+  autoDeploy: boolean;
+  status: string;
+  activeContainer: string | null;
+  deployTarget: 'lemniscate' | 'vps';
+  vpsTargetId: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+  vpsTarget?: { id: string; name: string; host: string; port: number } | null;
+};
+
+function serializeService(
+  service: ServiceRow,
+  ownerUsername: string,
+  deployments: unknown[] = [],
+): Record<string, unknown> {
+  const { envEnc, vpsTarget, ...rest } = service;
+  const publicTarget = vpsTarget
+    ? { id: vpsTarget.id, name: vpsTarget.name, host: vpsTarget.host, port: vpsTarget.port }
+    : undefined;
+  return {
+    ...rest,
+    envKeys: envEnc ? envKeys(envEnc) : [],
+    url: serviceUrl(ownerUsername, service.name),
+    ...(publicTarget ? { vpsTarget: publicTarget } : {}),
+    deployments,
+  };
+}
+
 async function ownedService(userId: string, id: string) {
   return prisma.service.findFirst({
     where: { id, repository: { connection: { userId } } },
@@ -82,9 +126,36 @@ async function ownedService(userId: string, id: string) {
           connection: { select: { username: true, provider: true } },
         },
       },
+      vpsTarget: { select: { id: true, name: true, host: true, port: true, username: true, authMethod: true, secretEnc: true } },
       deployments: { orderBy: { createdAt: 'desc' }, take: 1 },
     },
   });
+}
+
+// Validates the deployTarget/vpsTargetId pair: 'vps' requires an owned
+// VpsTarget; 'lemniscate' must clear any vpsTargetId. Returns the normalized
+// {deployTarget, vpsTargetId} to persist, or null (with reply sent) on error.
+async function resolveDeployTarget(
+  userId: string,
+  deployTarget: 'lemniscate' | 'vps' | undefined,
+  vpsTargetId: string | null | undefined,
+  reply: FastifyReply,
+): Promise<{ deployTarget: 'lemniscate' | 'vps'; vpsTargetId: string | null } | null> {
+  const target = deployTarget ?? 'lemniscate';
+  if (target === 'lemniscate') return { deployTarget: 'lemniscate', vpsTargetId: null };
+  if (!vpsTargetId) {
+    reply.code(400).send({ error: 'vpsTargetId is required when deployTarget is "vps"' });
+    return null;
+  }
+  const owned = await prisma.vpsTarget.findFirst({
+    where: { id: vpsTargetId, userId },
+    select: { id: true },
+  });
+  if (!owned) {
+    reply.code(404).send({ error: 'VPS target not found' });
+    return null;
+  }
+  return { deployTarget: 'vps', vpsTargetId };
 }
 
 const servicesRoutes: FastifyPluginAsync = async (app) => {
@@ -98,19 +169,15 @@ const servicesRoutes: FastifyPluginAsync = async (app) => {
         repository: {
           select: { fullName: true, connection: { select: { username: true, provider: true } } },
         },
+        vpsTarget: { select: { id: true, name: true, host: true, port: true } },
         deployments: { orderBy: { createdAt: 'desc' }, take: 1 },
       },
       orderBy: { createdAt: 'asc' },
     });
     return {
-      services: services.map((svc) => {
-        const { envEnc, ...rest } = svc;
-        return {
-          ...rest,
-          envKeys: envEnc ? envKeys(envEnc) : [],
-          url: serviceUrl(svc.repository.connection.username, svc.name),
-        };
-      }),
+      services: services.map((svc) =>
+        serializeService(svc, svc.repository.connection.username, svc.deployments),
+      ),
     };
   });
 
@@ -132,15 +199,19 @@ const servicesRoutes: FastifyPluginAsync = async (app) => {
     if (await slugTaken(owner, slug)) {
       return reply.code(409).send({ error: `/${owner}/${slug} is already taken` });
     }
+    const target = await resolveDeployTarget(userId, data.deployTarget, data.vpsTargetId, reply);
+    if (target === null) return;
     const service = await prisma.service.create({
       data: {
         repositoryId: repository.id,
         name: slug,
         ...(data.port !== undefined ? { port: data.port } : {}),
         ...(data.autoDeploy !== undefined ? { autoDeploy: data.autoDeploy } : {}),
+        deployTarget: target.deployTarget,
+        vpsTargetId: target.vpsTargetId,
       },
     });
-    return reply.code(201).send({ service: { ...service, url: serviceUrl(owner, slug) } });
+    return reply.code(201).send({ service: serializeService(service, owner) });
   });
 
   app.patch('/services/:id', async (request, reply) => {
@@ -152,7 +223,7 @@ const servicesRoutes: FastifyPluginAsync = async (app) => {
     const service = await ownedService(userId, params.id);
     if (!service) return reply.code(404).send({ error: 'Service not found' });
     const owner = service.repository.connection.username;
-    const update: { name?: string; port?: number; autoDeploy?: boolean } = {};
+    const update: { name?: string; port?: number; autoDeploy?: boolean; deployTarget?: 'lemniscate' | 'vps'; vpsTargetId?: string | null } = {};
     if (data.name !== undefined) {
       const slug = slugify(data.name);
       if (!slug) return reply.code(400).send({ error: 'Service name has no usable characters' });
@@ -163,8 +234,19 @@ const servicesRoutes: FastifyPluginAsync = async (app) => {
     }
     if (data.port !== undefined) update.port = data.port;
     if (data.autoDeploy !== undefined) update.autoDeploy = data.autoDeploy;
+    if (data.deployTarget !== undefined || data.vpsTargetId !== undefined) {
+      const target = await resolveDeployTarget(
+        userId,
+        data.deployTarget ?? service.deployTarget,
+        data.vpsTargetId === undefined ? service.vpsTargetId : data.vpsTargetId,
+        reply,
+      );
+      if (target === null) return;
+      update.deployTarget = target.deployTarget;
+      update.vpsTargetId = target.vpsTargetId;
+    }
     const updated = await prisma.service.update({ where: { id: service.id }, data: update });
-    return { service: { ...updated, url: serviceUrl(owner, updated.name) } };
+    return { service: serializeService(updated, owner) };
   });
 
   // Env vars are write-only over the API (same convention as LLM API keys):
@@ -221,7 +303,13 @@ const servicesRoutes: FastifyPluginAsync = async (app) => {
     if (params === null) return;
     const service = await ownedService(userId, params.id);
     if (!service) return reply.code(404).send({ error: 'Service not found' });
-    if (service.activeContainer) await stopRemoveContainer(service.activeContainer);
+    if (service.activeContainer) {
+      if (service.deployTarget === 'vps') {
+        await stopVpsContainer(service.vpsTarget, service.activeContainer);
+      } else {
+        await stopRemoveContainer(service.activeContainer);
+      }
+    }
     const updated = await prisma.service.update({
       where: { id: service.id },
       data: { activeContainer: null, status: 'stopped' },
@@ -235,7 +323,13 @@ const servicesRoutes: FastifyPluginAsync = async (app) => {
     if (params === null) return;
     const service = await ownedService(userId, params.id);
     if (!service) return reply.code(404).send({ error: 'Service not found' });
-    if (service.activeContainer) await stopRemoveContainer(service.activeContainer);
+    if (service.activeContainer) {
+      if (service.deployTarget === 'vps') {
+        await stopVpsContainer(service.vpsTarget, service.activeContainer);
+      } else {
+        await stopRemoveContainer(service.activeContainer);
+      }
+    }
     await prisma.service.delete({ where: { id: service.id } });
     return reply.code(204).send();
   });
@@ -287,7 +381,7 @@ export const servicesInternalRoutes: FastifyPluginAsync = async (app) => {
       return reply.code(401).send({ error: 'invalid traefik token' });
     }
     const services = await prisma.service.findMany({
-      where: { status: 'online', activeContainer: { not: null } },
+      where: { deployTarget: 'lemniscate', status: 'online', activeContainer: { not: null } },
       include: { repository: { include: { connection: { select: { username: true } } } } },
     });
     return buildTraefikConfig(
@@ -319,7 +413,7 @@ export const appsIndexRoute: FastifyPluginAsync = async (app) => {
   app.get(APPS_INDEX_ROUTE, async (request, reply) => {
     const { owner } = request.params as { owner: string };
     const services = await prisma.service.findMany({
-      where: { status: 'online', activeContainer: { not: null } },
+      where: { deployTarget: 'lemniscate', status: 'online', activeContainer: { not: null } },
       include: { repository: { include: { connection: { select: { username: true } } } } },
     });
     const owned = services.filter(
