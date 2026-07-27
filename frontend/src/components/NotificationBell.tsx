@@ -18,6 +18,7 @@ import {
 import { useFireBrowserNotifications } from '@/lib/browser-notifications';
 import type { Task } from '@/lib/hooks';
 import { useWorkspaceSelection } from '@/lib/selection';
+import { useCloseOnOutside } from '@/lib/use-close-on-outside';
 
 const QUERY_KEY = ['notifications'] as const;
 
@@ -32,6 +33,11 @@ const NO_NOTIFICATIONS: readonly AppNotification[] = [];
  */
 export function NotificationBell() {
   const [open, setOpen] = React.useState(false);
+  const close = React.useCallback(() => setOpen(false), []);
+  // Wraps bell + dropdown so outside mousedown/Escape close the panel while
+  // bell clicks keep their toggle behavior (bell is "inside" the ref).
+  const containerRef = React.useRef<HTMLDivElement>(null);
+  useCloseOnOutside(containerRef, close);
   const queryClient = useQueryClient();
   const query = useQuery({
     queryKey: QUERY_KEY,
@@ -63,11 +69,12 @@ export function NotificationBell() {
   // seen-id set on first run, so it only fires for events arriving after mount.
   useFireBrowserNotifications(query.data?.notifications ?? NO_NOTIFICATIONS);
   return (
-    <div className="relative">
+    <div className="relative" ref={containerRef}>
       <Button
         variant="ghost"
         size="icon"
         aria-label={unreadCount > 0 ? `Notifications (${unreadCount} unread)` : 'Notifications'}
+        aria-expanded={open}
         onClick={() => setOpen((value) => !value)}
       >
         <Bell className="h-5 w-5" />
@@ -82,7 +89,7 @@ export function NotificationBell() {
           notifications={query.data?.notifications ?? []}
           onRead={(id) => readMutation.mutate(id)}
           onReadAll={() => readAllMutation.mutate()}
-          onClose={() => setOpen(false)}
+          onClose={close}
         />
       )}
     </div>

@@ -1,8 +1,9 @@
-import { useEffect, useRef, useState, type RefObject } from 'react';
+import { useRef, useState } from 'react';
 import { Info } from 'lucide-react';
 
 import { useUpdateRepositoryFlags, type Repository } from '@/lib/hooks';
 import { REPO_FLAG_INFO, setAutoReview, type RepoFlagInfo } from '@/lib/repo-flags';
+import { useCloseOnOutside } from '@/lib/use-close-on-outside';
 import { cn } from '@/lib/utils';
 import { Switch } from '@/components/ui/switch';
 
@@ -10,24 +11,6 @@ const SWITCH_CLASS =
   'h-4 w-7 [&>span]:h-3 [&>span]:w-3 [&>span]:data-[state=checked]:translate-x-3';
 
 type FlagsPatch = Parameters<ReturnType<typeof useUpdateRepositoryFlags>['mutate']>[0]['patch'];
-
-/** Closes the dropdown on outside mousedown or Escape. */
-function useCloseOnOutside(ref: RefObject<HTMLElement | null>, onClose: () => void) {
-  useEffect(() => {
-    const onDown = (event: MouseEvent) => {
-      if (ref.current && !ref.current.contains(event.target as Node)) onClose();
-    };
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') onClose();
-    };
-    document.addEventListener('mousedown', onDown);
-    document.addEventListener('keydown', onKey);
-    return () => {
-      document.removeEventListener('mousedown', onDown);
-      document.removeEventListener('keydown', onKey);
-    };
-  }, [ref, onClose]);
-}
 
 function flagPatch(repo: Repository, info: RepoFlagInfo, checked: boolean): FlagsPatch {
   return info.key === 'autoReviewPr' ? setAutoReview(repo, checked) : { [info.key]: checked };
