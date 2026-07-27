@@ -16,17 +16,30 @@ export interface ServiceDeployment {
   finishedAt: string | null;
 }
 
+export interface VpsTargetSummary {
+  id: string;
+  name: string;
+  host: string;
+  port: number;
+}
+
 export interface AppService {
   id: string;
   repositoryId: string;
   name: string;
   port: number;
+  /** VPS host port (docker -p left side); null for lemniscate services. */
+  hostPort: number | null;
   autoDeploy: boolean;
   status: ServiceStatus;
   activeContainer: string | null;
   /** Env var NAMES only — values are write-only over the API. */
   envKeys: string[];
   url: string;
+  deployTarget: 'lemniscate' | 'vps';
+  vpsTargetId: string | null;
+  /** Present on the serialized payload when deployTarget='vps'. */
+  vpsTarget?: VpsTargetSummary;
   repository: { fullName: string; connection: { username: string; provider: string } };
   deployments: ServiceDeployment[];
 }

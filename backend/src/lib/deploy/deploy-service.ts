@@ -1,6 +1,6 @@
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
-import type { DeployStatus, Deployment, Prisma } from '@prisma/client';
+import type { Deployment, Prisma } from '@prisma/client';
 import { config } from '../../config.js';
 import { logger } from '../logger.js';
 import { cloneRepository, git, type GitAuth } from '../agent-git.js';
@@ -12,38 +12,27 @@ import { errorMessage } from '../utils.js';
 import { buildImage, runAppContainer, stopRemoveContainer, tailContainerLogs, waitForHealthy } from './docker-apps.js';
 import { enqueueDeployService } from '../proposal-scheduler.js';
 import { servicePath } from './slug.js';
+import { appendLog, parseServiceEnv, setDeployStatus } from './shared.js';
+import { deployToVps } from './vps-deploy.js';
 
-// Job: deploy-service — clone the default branch tip, docker build, start
-// the new container on the isolated apps network, health-check it, and only
-// then flip Service.activeContainer (Traefik routes it ~5s later). A failed
-// build or health check removes the new container and keeps the old one
-// serving (keep-old-on-failure).
-
-const LOG_CAP_CHARS = 50_000;
+// Job: deploy-service — dispatches on Service.deployTarget.
+//
+// lemniscate (default): clone the default-branch tip locally, docker build,
+// start the new container on the isolated apps network, health-check it, then
+// flip Service.activeContainer (Traefik routes it ~5s later). A failed build
+// or health check removes the new container and keeps the old one serving.
+//
+// vps: ship the clone/build/run over SSH to the user's own VPS
+// (lib/deploy/vps-deploy.ts). No Traefik routing; the app is reachable at
+// http://<vps-host>:<port>.
 
 type DeploymentWithService = Prisma.DeploymentGetPayload<{
-  include: { service: { include: { repository: { include: { connection: true } } } } };
+  include: {
+    service: {
+      include: { repository: { include: { connection: true } }; vpsTarget: true };
+    };
+  };
 }>;
-
-async function appendLog(deploymentId: string, line: string): Promise<void> {
-  const dep = await prisma.deployment.findUnique({
-    where: { id: deploymentId },
-    select: { log: true },
-  });
-  const log = `${dep?.log ?? ''}${line}\n`.slice(-LOG_CAP_CHARS);
-  await prisma.deployment.update({ where: { id: deploymentId }, data: { log } });
-}
-
-async function setDeployStatus(
-  deploymentId: string,
-  status: DeployStatus,
-  finish = false,
-): Promise<void> {
-  await prisma.deployment.update({
-    where: { id: deploymentId },
-    data: { status, ...(finish ? { finishedAt: new Date() } : {}) },
-  });
-}
 
 // Creates the Deployment row and enqueues the worker job. Shared by the
 // manual redeploy route and the merge-gate auto-deploy hook.
@@ -55,14 +44,7 @@ export async function queueDeployment(serviceId: string, taskId: string | null):
   return deployment;
 }
 
-function parseServiceEnv(envEnc: string | null, secrets: string[]): Record<string, string> {
-  if (!envEnc) return {};
-  const env = JSON.parse(decrypt(envEnc)) as Record<string, string>;
-  secrets.push(...Object.values(env));
-  return env;
-}
-
-async function runDeploy(deployment: DeploymentWithService, secrets: string[]): Promise<void> {
+async function runLemniscateDeploy(deployment: DeploymentWithService, secrets: string[]): Promise<void> {
   const { service } = deployment;
   const workdir = path.join(config.AGENT_WORKDIR, `deploy-${deployment.id}`);
   try {
@@ -126,10 +108,23 @@ async function runDeploy(deployment: DeploymentWithService, secrets: string[]): 
   }
 }
 
+// Dispatches to the right target runner based on Service.deployTarget.
+async function runDeploy(deployment: DeploymentWithService, secrets: string[]): Promise<void> {
+  if (deployment.service.deployTarget === 'vps') {
+    await deployToVps(deployment, secrets);
+    return;
+  }
+  await runLemniscateDeploy(deployment, secrets);
+}
+
 export async function deployService(deploymentId: string): Promise<void> {
   const deployment = await prisma.deployment.findUnique({
     where: { id: deploymentId },
-    include: { service: { include: { repository: { include: { connection: true } } } } },
+    include: {
+      service: {
+        include: { repository: { include: { connection: true } }, vpsTarget: true },
+      },
+    },
   });
   if (!deployment) {
     logger.error({ deploymentId }, 'deploy-service: deployment not found');

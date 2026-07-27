@@ -18,6 +18,7 @@ import { LlmConfigsSection } from '@/components/settings/LlmConfigsSection';
 import { NotificationsSection } from '@/components/settings/NotificationsSection';
 import { RepoFlagsSection } from '@/components/settings/RepoFlagsSection';
 import { UsageSection } from '@/components/settings/UsageSection';
+import { VpsTargetsSection } from '@/components/settings/VpsTargetsSection';
 
 /**
  * Settings dialog: LLM configurations, git host connections, and repository
@@ -70,6 +71,9 @@ export function SettingsDialog() {
           <TabButton active={tab === 'usage'} onClick={() => setTab('usage')}>
             Usage
           </TabButton>
+          <TabButton active={tab === 'vps'} onClick={() => setTab('vps')}>
+            VPS targets
+          </TabButton>
         </div>
 
         <div className="max-h-[60vh] overflow-y-auto pr-1">
@@ -78,6 +82,7 @@ export function SettingsDialog() {
           {tab === 'repos' && <RepoFlagsSection />}
           {tab === 'notifications' && <NotificationsSection />}
           {tab === 'usage' && <UsageSection />}
+          {tab === 'vps' && <VpsTargetsSection />}
         </div>
       </DialogContent>
     </Dialog>
