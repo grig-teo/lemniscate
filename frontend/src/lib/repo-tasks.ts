@@ -1,4 +1,5 @@
 import type { Task } from '@/lib/hooks';
+import type { SelectedTask } from '@/lib/selection';
 
 /** How many fresh proposals a repo should keep in stock — shown as the "n/5" badge. */
 export const PROPOSAL_TARGET_COUNT = 5;
@@ -61,6 +62,19 @@ export function groupRepoTasks(tasks: Task[]): RepoTaskGroups {
 /** Archived tasks, most recently archived first (null timestamps sort last). */
 export function sortByArchivedAtDesc(tasks: Task[]): Task[] {
   return [...tasks].sort((a, b) => (b.archivedAt ?? '').localeCompare(a.archivedAt ?? ''));
+}
+
+/** Task → the lean selection snapshot stored by the workspace selection. */
+export function toSelectedTask(task: Task): SelectedTask {
+  return {
+    id: task.id,
+    title: task.title,
+    status: task.status,
+    kind: task.kind,
+    repositoryId: task.repositoryId,
+    branchName: task.branchName ?? null,
+    prUrl: task.prUrl ?? null,
+  };
 }
 
 /**
