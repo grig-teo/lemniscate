@@ -123,7 +123,7 @@ async function findAwaitingTask(
 ): Promise<TaskWithConnection | null> {
   return prisma.task.findFirst({
     where: {
-      status: 'awaiting_review',
+      status: { in: ['awaiting_review', 'reviewing_code'] },
       branchName: headBranch,
       repository: { fullName: repoFullName },
     },

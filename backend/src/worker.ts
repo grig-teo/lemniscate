@@ -57,7 +57,7 @@ const connection = new Redis(config.REDIS_URL, {
 async function sweepOrphanedWorkdirs(): Promise<void> {
   const active = await prisma.task.findMany({
     where: {
-      status: { in: ['queued', 'running', 'awaiting_review'] },
+      status: { in: ['queued', 'running', 'awaiting_review', 'reviewing_code'] },
       archivedAt: null,
     },
     select: { id: true },

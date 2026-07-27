@@ -4,7 +4,7 @@ import { archivedTasksWhere, isArchivable } from '../src/routes/tasks.js';
 // Locking tests for POST /tasks/:id/archive eligibility: tasks in any status
 // except running and queued (about to run) can be archived.
 describe('isArchivable', () => {
-  it.each(['running', 'queued'])('rejects %s tasks', (status) => {
+  it.each(['running', 'queued', 'reviewing_code'])('rejects %s tasks', (status) => {
     expect(isArchivable(status)).toBe(false);
   });
 

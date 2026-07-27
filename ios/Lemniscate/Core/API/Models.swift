@@ -101,7 +101,7 @@ struct AgentTask: Decodable, Identifiable {
     let updatedAt: String?
 
     var isRunning: Bool {
-        status == "queued" || status == "running"
+        status == "queued" || status == "running" || status == "reviewing_code"
     }
 }
 

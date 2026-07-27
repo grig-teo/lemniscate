@@ -199,7 +199,7 @@ function TaskEditorInner({
         <LibraryAttachments state={attachments} columns repositoryId={task.repositoryId} />
       </div>
       <div className="flex shrink-0 items-center gap-2">
-        {task.status === 'awaiting_review' && task.branchName && (
+        {(task.status === 'awaiting_review' || task.status === 'reviewing_code') && task.branchName && (
           <Button
             size="sm"
             variant="destructive"

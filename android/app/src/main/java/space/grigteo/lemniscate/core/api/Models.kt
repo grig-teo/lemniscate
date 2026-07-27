@@ -77,7 +77,7 @@ data class TaskDto(
     val createdAt: String? = null,
     val updatedAt: String? = null,
 ) {
-    val isRunning: Boolean get() = status == "queued" || status == "running"
+    val isRunning: Boolean get() = status == "queued" || status == "running" || status == "reviewing_code"
 }
 
 @Serializable

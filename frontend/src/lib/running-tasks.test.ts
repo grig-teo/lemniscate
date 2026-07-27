@@ -48,9 +48,10 @@ function makeRepo(id: string, name: string): Repository {
 }
 
 describe('isRunningStatus', () => {
-  it('is true only for queued and running', () => {
+  it('is true for queued, running, and reviewing_code', () => {
     expect(isRunningStatus('queued')).toBe(true);
     expect(isRunningStatus('running')).toBe(true);
+    expect(isRunningStatus('reviewing_code')).toBe(true);
     for (const status of ['pending', 'awaiting_review', 'done', 'failed', 'archived']) {
       expect(isRunningStatus(status)).toBe(false);
     }
@@ -58,11 +59,12 @@ describe('isRunningStatus', () => {
 });
 
 describe('hasInFlightTasks', () => {
-  it('is true while any task is queued or running', () => {
+  it('is true while any task is queued, running, or reviewing code', () => {
     expect(hasInFlightTasks([makeTask('t1', 'r1', 'queued')])).toBe(true);
     expect(hasInFlightTasks([makeTask('t1', 'r1', 'done'), makeTask('t2', 'r1', 'running')])).toBe(
       true,
     );
+    expect(hasInFlightTasks([makeTask('t1', 'r1', 'reviewing_code')])).toBe(true);
   });
 
   it('is false when nothing is in flight', () => {
@@ -75,9 +77,12 @@ describe('hasInFlightTasks', () => {
 });
 
 describe('inFlightPollInterval', () => {
-  it('polls while any task is queued or running', () => {
+  it('polls while any task is queued, running, or reviewing code', () => {
     expect(inFlightPollInterval([makeTask('t1', 'r1', 'queued')])).toBe(IN_FLIGHT_POLL_INTERVAL_MS);
     expect(inFlightPollInterval([makeTask('t1', 'r1', 'running')])).toBe(
+      IN_FLIGHT_POLL_INTERVAL_MS,
+    );
+    expect(inFlightPollInterval([makeTask('t1', 'r1', 'reviewing_code')])).toBe(
       IN_FLIGHT_POLL_INTERVAL_MS,
     );
   });
@@ -90,8 +95,9 @@ describe('inFlightPollInterval', () => {
 });
 
 describe('isActiveProcessStatus', () => {
-  it('is true only for running and awaiting_review (active work)', () => {
+  it('is true for running, reviewing_code, and awaiting_review (active work)', () => {
     expect(isActiveProcessStatus('running')).toBe(true);
+    expect(isActiveProcessStatus('reviewing_code')).toBe(true);
     expect(isActiveProcessStatus('awaiting_review')).toBe(true);
     for (const status of ['pending', 'queued', 'done', 'failed', 'closed', 'archived']) {
       expect(isActiveProcessStatus(status)).toBe(false);
@@ -119,9 +125,12 @@ describe('hasActiveProcesses', () => {
 });
 
 describe('activityPollInterval', () => {
-  it('polls while any task is in flight, running or awaiting review', () => {
+  it('polls while any task is in flight, running, reviewing, or awaiting review', () => {
     expect(activityPollInterval([makeTask('t1', 'r1', 'queued')])).toBe(IN_FLIGHT_POLL_INTERVAL_MS);
     expect(activityPollInterval([makeTask('t1', 'r1', 'running')])).toBe(IN_FLIGHT_POLL_INTERVAL_MS);
+    expect(activityPollInterval([makeTask('t1', 'r1', 'reviewing_code')])).toBe(
+      IN_FLIGHT_POLL_INTERVAL_MS,
+    );
     expect(activityPollInterval([makeTask('t1', 'r1', 'awaiting_review')])).toBe(
       IN_FLIGHT_POLL_INTERVAL_MS,
     );
@@ -136,16 +145,17 @@ describe('activityPollInterval', () => {
 });
 
 describe('selectRunningTasks', () => {
-  it('keeps only queued and running tasks, preserving order', () => {
+  it('keeps queued, running, and reviewing_code tasks, preserving order', () => {
     const tasks = [
       makeTask('t1', 'r1', 'pending'),
       makeTask('t2', 'r1', 'queued'),
       makeTask('t3', 'r1', 'running'),
-      makeTask('t4', 'r1', 'awaiting_review'),
-      makeTask('t5', 'r1', 'done'),
-      makeTask('t6', 'r1', 'failed'),
+      makeTask('t4', 'r1', 'reviewing_code'),
+      makeTask('t5', 'r1', 'awaiting_review'),
+      makeTask('t6', 'r1', 'done'),
+      makeTask('t7', 'r1', 'failed'),
     ];
-    expect(selectRunningTasks(tasks).map((t) => t.id)).toEqual(['t2', 't3']);
+    expect(selectRunningTasks(tasks).map((t) => t.id)).toEqual(['t2', 't3', 't4']);
   });
 
   it('returns an empty list when nothing is queued or running', () => {

@@ -8,7 +8,7 @@ import { TokensBadge } from '@/components/TokensBadge';
 import { Button } from '@/components/ui/button';
 
 const CANCELLABLE = new Set(['queued', 'running']);
-const RUNNABLE_ON_DEVICE = new Set(['done', 'awaiting_review']);
+const RUNNABLE_ON_DEVICE = new Set(['done', 'awaiting_review', 'reviewing_code']);
 
 /** Live token consumption for the header badge, polled by the console pane. */
 export interface ConsoleUsage {

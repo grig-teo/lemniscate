@@ -150,6 +150,7 @@ export type TaskStatus =
   | 'queued'
   | 'running'
   | 'awaiting_review'
+  | 'reviewing_code'
   | 'done'
   | 'failed'
   | 'closed'
