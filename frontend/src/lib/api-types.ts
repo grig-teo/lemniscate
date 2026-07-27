@@ -252,3 +252,15 @@ export type UsageReport = {
   byRepository: UsageRepositoryBucket[];
   byDay: UsageDayBucket[];
 };
+
+/** Core agent executor options (Settings → Agent). Mirrors the backend
+ *  AGENT_EXECUTORS constant in backend/src/lib/agent-executor.ts. */
+export type AgentExecutor = 'hermes' | 'internal';
+
+/** GET /api/settings response. agentExecutor is the effective executor
+ *  (override ?? env default); override is null when the user never chose. */
+export type AgentSettings = {
+  agentExecutor: AgentExecutor;
+  defaultAgentExecutor: AgentExecutor;
+  override: AgentExecutor | null;
+};

@@ -28,6 +28,7 @@ import {
   type LlmRuntime,
   type TaskWithRepo,
 } from './agent-runtime.js';
+import { resolveAgentExecutor } from './agent-executor.js';
 import { runHermesForTask } from './agent-run-hermes.js';
 import { classifyError } from './errors.js';
 import { notify, notifyTaskCompleted } from './notifications.js';
@@ -223,7 +224,8 @@ async function recordChangedPaths(task: TaskWithRepo, workdir: string): Promise<
   }
 }
 
-// Runs the configured task executor. Returns the change summary for the
+// Runs the executor chosen for the task's owner (Settings → Agent override,
+// else the AGENT_EXECUTOR env default). Returns the change summary for the
 // commit/PR, or null when the workdir has nothing to commit.
 async function implementTask(
   task: TaskWithRepo,
@@ -232,7 +234,8 @@ async function implementTask(
   secrets: string[],
   resume: boolean,
 ): Promise<string | null> {
-  if (config.AGENT_EXECUTOR === 'hermes') {
+  const executor = await resolveAgentExecutor(task.repository.connection.userId);
+  if (executor === 'hermes') {
     await runHermesForTask(task, rt, workdir, secrets, resume);
     return (await hasDirtyWorkdir(workdir)) ? task.title : null;
   }

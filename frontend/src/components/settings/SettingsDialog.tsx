@@ -13,6 +13,7 @@ import {
 import { cn } from '@/lib/utils';
 import { OPEN_SETTINGS_EVENT, type SettingsTab } from '@/lib/error-codes';
 
+import { AgentSection } from '@/components/settings/AgentSection';
 import { ConnectionsSection } from '@/components/settings/ConnectionsSection';
 import { EventTriggersSection } from '@/components/settings/EventTriggersSection';
 import { LlmConfigsSection } from '@/components/settings/LlmConfigsSection';
@@ -57,6 +58,9 @@ export function SettingsDialog() {
         </DialogHeader>
 
         <div className="flex gap-1 border-b" role="tablist" aria-label="Settings sections">
+          <TabButton active={tab === 'agent'} onClick={() => setTab('agent')}>
+            Agent
+          </TabButton>
           <TabButton active={tab === 'llm'} onClick={() => setTab('llm')}>
             LLM configs
           </TabButton>
@@ -78,6 +82,7 @@ export function SettingsDialog() {
         </div>
 
         <div className="max-h-[60vh] overflow-y-auto pr-1">
+          {tab === 'agent' && <AgentSection />}
           {tab === 'llm' && <LlmConfigsSection />}
           {tab === 'git' && <ConnectionsSection />}
           {tab === 'repos' && (

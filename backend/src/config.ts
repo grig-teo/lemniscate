@@ -113,6 +113,8 @@ const envSchema = z.object({
   AGENT_WORKER_CONCURRENCY: z.coerce.number().int().positive().default(4),
   // Task executor: 'hermes' runs the Hermes Agent CLI inside the cloned repo;
   // 'internal' uses the built-in single-shot LLM propose/apply loop.
+  // This is the deployment default — a per-user override (Settings → Agent,
+  // User.agentExecutor) wins. Resolution lives in lib/agent-executor.ts.
   AGENT_EXECUTOR: z.enum(['hermes', 'internal']).default('hermes'),
   // Hard kill for one `hermes chat` run; the job then fails the task.
   AGENT_HERMES_TIMEOUT_MINUTES: z.coerce.number().int().positive().default(45),

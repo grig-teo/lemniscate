@@ -49,6 +49,10 @@ model User {
   // Session revocation: JWTs embed the sessionVersion they were issued at
   // (`sv` claim); a mismatch (logout, last git connection removed) 401s.
   sessionVersion Int             @default(0)
+  // Core agent override (Settings → Agent): null = deployment default
+  // (AGENT_EXECUTOR env). 'hermes' runs the Hermes CLI; 'internal' the
+  // built-in single-shot LLM loop. Resolved by lib/agent-executor.ts.
+  agentExecutor  String?
   gitConnections GitConnection[]
   llmConfigs     LlmConfig[]
   skills         Skill[]

@@ -12,6 +12,7 @@ export * from '@/lib/queries/connections';
 export * from '@/lib/queries/llm-configs';
 export * from '@/lib/queries/notification-channels';
 export * from '@/lib/queries/repositories';
+export * from '@/lib/queries/settings';
 export * from '@/lib/queries/tasks';
 export * from '@/lib/queries/usage';
 export * from '@/lib/queries/skills';

@@ -21,7 +21,7 @@ export type TaskErrorCode =
   | (string & {});
 
 /** Settings dialog tab that addresses this error, or undefined. */
-export type SettingsTab = 'llm' | 'git' | 'repos' | 'notifications' | 'usage' | 'vps';
+export type SettingsTab = 'agent' | 'llm' | 'git' | 'repos' | 'notifications' | 'usage' | 'vps';
 
 export interface ErrorBannerInfo {
   title: string;

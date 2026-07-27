@@ -14,6 +14,7 @@ import {
   type LlmProposals,
   type ProposalPriority,
 } from './agent-prompts.js';
+import { resolveAgentExecutor } from './agent-executor.js';
 import { prepareAgentRuntime, type LlmRuntime } from './agent-runtime.js';
 import { runHermesTask, type HermesLlmConfig } from './hermes-runner.js';
 import { extractJsonArray } from './llm-json.js';
@@ -214,7 +215,8 @@ async function generateProposalList(
   secrets: string[],
   repoContext: string,
 ): Promise<LlmProposals> {
-  if (config.AGENT_EXECUTOR !== 'hermes') return requestProposals(rt, repository, repoContext);
+  const executor = await resolveAgentExecutor(repository.connection.userId);
+  if (executor !== 'hermes') return requestProposals(rt, repository, repoContext);
   const proposals = await requestProposalsViaHermes(repository, rt, workdir, secrets);
   if (proposals) return proposals;
   logger.warn({ repository: repository.fullName }, `generate-proposals: no valid ${PROPOSALS_FILENAME} from hermes, falling back to direct LLM request`);
