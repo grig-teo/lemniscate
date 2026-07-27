@@ -16,6 +16,7 @@ import mcpServersRoutes from './routes/mcp-servers.js';
 import libraryRoutes from './routes/library.js';
 import tasksRoutes from './routes/tasks.js';
 import usageRoutes from './routes/usage.js';
+import settingsRoutes from './routes/settings.js';
 import notificationsRoutes from './routes/notifications.js';
 import devicesRoutes from './routes/devices.js';
 import servicesRoutes, { servicesInternalRoutes, appsIndexRoute } from './routes/services.js';
@@ -48,6 +49,8 @@ async function registerRoutes(app: FastifyInstance) {
   // repositories.ts), so it mounts under /api, not /api/tasks.
   await app.register(tasksRoutes, { prefix: '/api' });
   await app.register(usageRoutes, { prefix: '/api' });
+  // Per-user settings (core agent executor); routes are /api/settings...
+  await app.register(settingsRoutes, { prefix: '/api/settings' });
   await app.register(notificationsRoutes, { prefix: '/api/notifications' });
   await app.register(servicesRoutes, { prefix: '/api' });
   await app.register(vpsTargetRoutes, { prefix: '/api' });
