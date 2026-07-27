@@ -10,6 +10,12 @@ export interface UsageConfigInfo {
   maxTokensPerRun: number | null;
   inputPricePerMillion: number | null;
   outputPricePerMillion: number | null;
+  // Console footer fields: active-model label and the context-window size
+  // backing the session context indicator.
+  name: string;
+  model: string;
+  contextWindow: number;
+  apiPattern: string;
 }
 
 // The llmConfig columns every usage query needs — one select, shared by the
@@ -20,6 +26,10 @@ export const USAGE_CONFIG_SELECT = {
   maxTokensPerRun: true,
   inputPricePerMillion: true,
   outputPricePerMillion: true,
+  name: true,
+  model: true,
+  contextWindow: true,
+  apiPattern: true,
 } as const;
 
 export interface UsageTaskRow {
@@ -95,6 +105,16 @@ export interface TaskUsagePayload {
   maxTokensPerRun: number | null;
   /** Present only when the split is known AND the config has both prices. */
   estimatedCostUsd?: number;
+  // Console footer: the resolved config's identity and context window (null
+  // when no config resolves, e.g. a fresh account without configs).
+  /** Effective config id (task → repo → default resolution); null when none. */
+  effectiveLlmConfigId: string | null;
+  /** Effective config display name. */
+  llmConfigName: string | null;
+  /** Effective config's model id. */
+  llmModel: string | null;
+  /** Effective config's context window — the session context indicator's 100%. */
+  contextWindow: number | null;
 }
 
 interface TaskUsageColumns {
@@ -117,6 +137,10 @@ export function taskUsagePayload(
     llmCompletionTokens: task.llmCompletionTokens,
     maxTokensPerRun: cfg?.maxTokensPerRun ?? null,
     ...(cost != null ? { estimatedCostUsd: roundCost(cost) } : {}),
+    effectiveLlmConfigId: cfg?.id ?? null,
+    llmConfigName: cfg?.name ?? null,
+    llmModel: cfg?.model ?? null,
+    contextWindow: cfg?.contextWindow ?? null,
   };
 }
 
