@@ -119,10 +119,11 @@ describe('showsStatusBadge', () => {
   });
 });
 
-// Archive availability mirrors the backend: anything except running and
-// queued (about to run) tasks can be archived.
+// Archive availability mirrors the backend UNARCHIVABLE_STATUSES: anything
+// except running, queued (about to run), and reviewing_code (review in
+// progress) tasks can be archived.
 describe('isArchivable', () => {
-  it.each(['running', 'queued'])('rejects %s tasks', (status) => {
+  it.each(['running', 'queued', 'reviewing_code'])('rejects %s tasks', (status) => {
     expect(isArchivable(status)).toBe(false);
   });
 

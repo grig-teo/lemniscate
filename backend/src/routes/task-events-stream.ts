@@ -13,7 +13,7 @@ import { idParamsSchema } from './task-schemas.js';
 // `task-events:<taskId>`, message JSON {id, kind, payload, createdAt} with
 // createdAt as an ISO string. Payloads:
 //   log    → { line: string } | { lines: string[] }
-//   status → { status: 'pending'|'queued'|'running'|'awaiting_review'|'done'|'failed'|'closed' }
+//   status → { status: 'pending'|'queued'|'running'|'reviewing_code'|'awaiting_review'|'done'|'failed'|'closed' }
 //   diff   → { path: string, diff: string } | { path: string, action: 'created'|'modified'|'deleted' }
 
 const SSE_HEARTBEAT_MS = 15_000;
