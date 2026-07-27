@@ -11,15 +11,34 @@ import type { LifecycleConfig } from 'minio';
 
 export const DEVICE_ARTIFACTS_BUCKET = 'device-artifacts';
 
+/** TTL days per bucket — null means no expiry (the library bucket is
+ *  permanent). Single home for which buckets get a lifecycle rule: transient
+ *  build/archive buckets only. */
+function ttlDaysFor(
+  bucket: string,
+  cfg: {
+    DEVICE_ARTIFACT_TTL_DAYS: number;
+    WORKDIR_ARCHIVE_TTL_DAYS: number;
+    WORKDIR_ARCHIVE_BUCKET: string;
+  },
+): number | null {
+  if (bucket === DEVICE_ARTIFACTS_BUCKET) return cfg.DEVICE_ARTIFACT_TTL_DAYS;
+  if (bucket === cfg.WORKDIR_ARCHIVE_BUCKET) return cfg.WORKDIR_ARCHIVE_TTL_DAYS;
+  return null;
+}
+
 let client: Client | null = null;
 const readyBuckets = new Set<string>();
 
-/** Lifecycle rule expiring every object in the bucket after `ttlDays` days. */
-export function lifecycleRuleFor(ttlDays: number): LifecycleConfig {
+/** Lifecycle rule expiring every object in the bucket after `ttlDays` days.
+ *  `id` defaults to the device-artifacts name to keep the established tested
+ *  contract; callers pass a bucket-derived id so each bucket has a distinct,
+ *  traceable rule id. */
+export function lifecycleRuleFor(ttlDays: number, id = 'expire-device-artifacts'): LifecycleConfig {
   return {
     Rule: [
       {
-        ID: 'expire-device-artifacts',
+        ID: id,
         Status: 'Enabled',
         Filter: { Prefix: '' },
         Expiration: { Days: ttlDays },
@@ -29,11 +48,15 @@ export function lifecycleRuleFor(ttlDays: number): LifecycleConfig {
 }
 
 // Best-effort: a lifecycle failure must not block uploads (availability of
-// the artifact store beats policy strictness), so log and continue.
-async function applyArtifactLifecycle(minio: Client, bucket: string): Promise<void> {
+// the artifact store beats policy strictness), so log and continue. Applied
+// to every bucket with a non-null TTL in ttlDaysFor — one home for bucket
+// expiry policy (device-artifacts and workdir-archives).
+async function applyBucketLifecycle(minio: Client, bucket: string): Promise<void> {
   const { config } = await import('../config.js');
+  const ttlDays = ttlDaysFor(bucket, config);
+  if (ttlDays === null) return;
   try {
-    await minio.setBucketLifecycle(bucket, lifecycleRuleFor(config.DEVICE_ARTIFACT_TTL_DAYS));
+    await minio.setBucketLifecycle(bucket, lifecycleRuleFor(ttlDays, `expire-${bucket}`));
   } catch (err) {
     logger.warn({ bucket, err }, 'minio: failed to apply lifecycle');
   }
@@ -91,9 +114,7 @@ export async function getMinioBucket(bucket: string): Promise<{ client: Client }
   if (!minio) return null;
   if (!readyBuckets.has(bucket)) {
     await ensureBucket(minio, bucket);
-    if (bucket === DEVICE_ARTIFACTS_BUCKET) {
-      await applyArtifactLifecycle(minio, bucket);
-    }
+    await applyBucketLifecycle(minio, bucket);
     readyBuckets.add(bucket);
   }
   return { client: minio };

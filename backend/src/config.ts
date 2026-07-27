@@ -88,6 +88,23 @@ const envSchema = z.object({
   // (Redis counter); the (N+1)th upload is rejected with 429.
   DEVICE_ARTIFACT_MAX_PER_DAY: z.coerce.number().int().positive().default(20),
 
+  // --- Workdir post-mortem archives ---
+  // Best-effort tarball of a finished task's workdir, uploaded to the
+  // 'lemniscate-workdir-archives' bucket. Set to 'false' to skip archiving
+  // entirely (cleanup still deletes the workdir and never fails). The tarball
+  // excludes .git/node_modules/build outputs (see workdir-archive.ts) so it
+  // stays small; workdirs beyond WORKDIR_ARCHIVE_MAX_MB are skipped instead of
+  // staged, with an 'archive_skipped_size' task event recorded.
+  WORKDIR_ARCHIVE_ENABLED: z
+    .enum(['true', 'false'])
+    .default('true')
+    .transform((value) => value === 'true'),
+  WORKDIR_ARCHIVE_BUCKET: z.string().min(1).default('lemniscate-workdir-archives'),
+  WORKDIR_ARCHIVE_MAX_MB: z.coerce.number().int().positive().default(100),
+  // Days before workdir-archive objects expire (bucket lifecycle rule, applied
+  // alongside the device-artifacts TTL so bucket policies have one home).
+  WORKDIR_ARCHIVE_TTL_DAYS: z.coerce.number().int().positive().default(14),
+
   // --- Agent loop ---
   AGENT_WORKDIR: z.string().min(1).default('/tmp/lemniscate-repos'),
   AGENT_BRANCH_PREFIX: z.string().min(1).default('lemniscate/'),
