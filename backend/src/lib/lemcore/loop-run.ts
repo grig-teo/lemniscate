@@ -1,13 +1,8 @@
-import fs from 'node:fs';
-import path from 'node:path';
+import { config } from '../config.js';
 import { publishTaskEvent } from '../task-events.js';
-import type { LemcoreStep, LemcoreMessage, LemcoreRunOptions } from './loop-types.js';
-import { MAX_TURNS, MAX_TOOL_FAILURES, TRANSCRIPT_FILE, REVIEW_FILENAME, lemcoreSystemPrompt } from './loop-constants.js';
-import { executeToolCall, loadTranscript, saveTranscript, checkReviewFile } from './loop-helpers.js';
-import type { ChatMessage } from '../llm-client.js';
-import { chatCompletions } from '../llm-client.js';
-import type { LlmRuntime, TaskWithRepo } from '../agent-runtime.js';
 import { redactSecrets } from '../utils.js';
+import { chatCompletions, type ChatMessage } from '../llm-client.js';
+import type { LlmRuntime, TaskWithRepo } from '../agent-runtime.js';
 import { toolReadFile, toolWriteFile, toolEditFile, toolBash, toolGrep, toolGlob, toolWebSearch } from './tools.js';
 import type { ToolResult } from './tools.js';
 
@@ -28,20 +23,4 @@ export async function publishStepEvent(taskId: string, step: LemcoreStep): Promi
     durationMs: step.durationMs,
     tokensUsed: step.tokensUsed,
   });
-}
-
-export async function loadTranscriptSafe(workdir: string): Promise<LemcoreMessage[] | null> {
-  return loadTranscript(workdir);
-}
-
-export async function saveTranscriptSafe(workdir: string, messages: LemcoreMessage[]): Promise<void> {
-  saveTranscript(workdir, messages);
-}
-
-export async function checkReviewFileSafe(workdir: string): Promise<boolean> {
-  return checkReviewFile(workdir);
-}
-
-export function lemcoreSystemPrompt(): string {
-  return lemcoreSystemPrompt();
 }

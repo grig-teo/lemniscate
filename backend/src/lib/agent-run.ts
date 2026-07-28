@@ -225,8 +225,7 @@ async function recordChangedPaths(task: TaskWithRepo, workdir: string): Promise<
   }
 }
 
-// Runs the executor chosen for the task's owner (Settings → Agent override,
-// else the AGENT_EXECUTOR env default). Returns the change summary for the
+// Runs the configured task executor. Returns the change summary for the
 // commit/PR, or null when the workdir has nothing to commit.
 async function implementTask(
   task: TaskWithRepo,
@@ -235,8 +234,7 @@ async function implementTask(
   secrets: string[],
   resume: boolean,
 ): Promise<string | null> {
-  const executor = await resolveAgentExecutor(task.repository.connection.userId);
-  if (executor === 'hermes') {
+  if (config.AGENT_EXECUTOR === 'hermes') {
     await runHermesForTask(task, rt, workdir, secrets, resume);
     return (await hasDirtyWorkdir(workdir)) ? task.title : null;
   }

@@ -85,7 +85,7 @@ export interface ChatCompletionTool {
 
 export interface ChatCompletionsParams {
   baseUrl: string;
-  apiKey: ***
+  apiKey: string;
   model: string;
   messages: ChatMessage[];
   temperature?: number;
