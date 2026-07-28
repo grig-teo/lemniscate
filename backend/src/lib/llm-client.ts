@@ -73,6 +73,52 @@ export interface LlmRetryInfo {
   reason: string;
 }
 
+// OpenAI function-calling tool definition.
+export interface ChatCompletionTool {
+  type: 'function';
+  function: {
+    name: string;
+    description: string;
+    parameters: Record<string, unknown>;
+  };
+}
+
+export interface ChatCompletionsParams {
+  baseUrl: string;
+  apiKey: ***
+  model: string;
+  messages: ChatMessage[];
+  temperature?: number;
+  maxTokens?: number;
+  /** Maps to `reasoning_effort` when set; transparently dropped on HTTP 400. */
+  thinkingLevel?: ThinkingLevel;
+  /** First-attempt timeout. Defaults to 120s. Each retry doubles it (cap 600s). */
+  timeoutSeconds?: number;
+  /** Retries on 429 / 5xx / network errors. Defaults to 3. */
+  maxRetries?: number;
+  customHeaders?: Record<string, string>;
+  /** Called before each backoff wait, with 1-based attempt info. */
+  onRetry?: (info: LlmRetryInfo) => void;
+  /**
+   * Called with the response headers of every HTTP attempt (success or
+   * error) — used to snapshot provider rate-limit headers (llm-quota.ts).
+   */
+  onResponseHeaders?: (headers: Headers) => void;
+  /**
+   * Connectivity probes (test-connection): return the result with
+   * `truncated: true` instead of throwing when finish_reason is 'length'.
+   * Any reply — even cut short by the tiny probe budget — proves the
+   * URL/key/model work. Real agent calls leave this unset.
+   */
+  allowTruncated?: boolean;
+  /**
+   * OpenAI-compatible tool definitions. When set, the request body
+   * includes `tools` and the response is parsed for `tool_calls` in
+   * addition to `content`. Supported on the 'openai' apiPattern.
+   */
+  tools?: ChatCompletionTool[];
+}
+
 export interface ChatUsage {
   promptTokens: number;
   completionTokens: number;
@@ -87,6 +133,14 @@ export interface ChatCompletionsResult {
   latencyMs: number;
   /** Set only when allowTruncated is on and the reply hit the token cap. */
   truncated?: boolean;
+  /** Tool-call results returned by the model (OpenAI format). */
+  toolCalls?: Array<{
+    id: string;
+    type: 'function';
+    function: { name: string; arguments: string };
+  }>;
+  /** Whether the model asked the caller to run a tool (not just a text reply). */
+  hasToolCalls?: boolean;
 }
 
 export class LlmError extends Error {
@@ -133,13 +187,28 @@ export function backoffMs(attempt: number, retryAfterHeader: string | null): num
 }
 
 interface ChatCompletionsResponseBody {
-  choices?: { message?: { content?: string }; finish_reason?: string }[];
+  choices?: {
+    message?: {
+      content?: string;
+      tool_calls?: Array<{
+        id: string;
+        type: 'function';
+        function: { name: string; arguments: string };
+      }>;
+    };
+    finish_reason?: string;
+  }[];
   model?: string;
   usage?: {
     prompt_tokens?: number;
     completion_tokens?: number;
     total_tokens?: number;
   };
+  tool_calls?: Array<{
+    id: string;
+    type: 'function';
+    function: { name: string; arguments: string };
+  }>;
 }
 
 // Mutable per-call state threaded through the retry loop.
@@ -162,6 +231,7 @@ interface RequestState {
   includeReasoningEffort: boolean;
   /** Flipped off after an HTTP 400 so the retry drops temperature. */
   includeTemperature: boolean;
+  tools?: ChatCompletionTool[];
 }
 
 function makeRequestState(params: ChatCompletionsParams): RequestState {
@@ -176,6 +246,7 @@ function makeRequestState(params: ChatCompletionsParams): RequestState {
     startedAt: Date.now(),
     includeReasoningEffort: params.thinkingLevel !== undefined,
     includeTemperature: params.temperature !== undefined,
+    tools: params.tools,
   };
   if (params.temperature !== undefined) state.temperature = params.temperature;
   if (params.maxTokens !== undefined) state.maxTokens = params.maxTokens;
@@ -194,6 +265,9 @@ function buildRequestBody(state: RequestState): Record<string, unknown> {
   if (state.maxTokens !== undefined) body.max_tokens = state.maxTokens;
   if (state.includeReasoningEffort && state.thinkingLevel !== undefined) {
     body.reasoning_effort = toReasoningEffort(state.thinkingLevel);
+  }
+  if (state.tools !== undefined && state.tools.length > 0) {
+    body.tools = state.tools;
   }
   return body;
 }
