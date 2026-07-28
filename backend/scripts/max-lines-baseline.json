@@ -24,12 +24,6 @@
     "reason": "Pre-existing at max-lines enforcement rollout"
   },
   {
-    "path": "src/lib/agent-runtime.ts",
-    "lines": 330,
-    "date": "2026-07-27",
-    "reason": "Shrunk: call-wrapper section moved to llm-failover.ts"
-  },
-  {
     "path": "src/lib/llm-client.ts",
     "lines": 396,
     "date": "2026-07-26",
