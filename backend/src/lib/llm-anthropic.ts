@@ -17,8 +17,10 @@ import {
   type ChatCompletionsResult,
   type ChatMessage,
   type ChatUsage,
+  type ChatCompletionTool,
   type ContentPart,
   type LlmRetryInfo,
+  type ThinkingLevel,
 } from './llm-client.js';
 import { errorMessage, redactSecrets, sleep } from './utils.js';
 
@@ -43,6 +45,10 @@ export interface AnthropicMessagesParams {
   onResponseHeaders?: (headers: Headers) => void;
   /** Connectivity probes: a max_tokens cut-off still proves the config works. */
   allowTruncated?: boolean;
+  /** Thinking level (maps to Claude's thinking config). Phase 3. */
+  thinkingLevel?: ThinkingLevel;
+  /** OpenAI-compatible tool definitions mapped to Anthropic tool_use. Phase 3. */
+  tools?: ChatCompletionTool[];
 }
 
 // ---------------------------------------------------------------------------
