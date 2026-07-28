@@ -117,7 +117,13 @@ export function toAnthropicRequest(messages: ChatMessage[]): {
 // ---------------------------------------------------------------------------
 
 interface MessagesResponseBody {
-  content?: { type?: string; text?: string }[];
+  content?: {
+    type?: string;
+    text?: string;
+    name?: string;
+    id?: string;
+    input?: Record<string, unknown>;
+  }[];
   model?: string;
   stop_reason?: string;
   usage?: { input_tokens?: number; output_tokens?: number };
@@ -146,17 +152,38 @@ function toResult(
       `LLM response truncated at maxTokens=${params.maxTokens} — raise maxTokens in the LLM config`,
     );
   }
-  const text = (parsed.content ?? [])
-    .filter((block) => block.type === 'text' && typeof block.text === 'string')
-    .map((block) => block.text as string)
-    .join('\n');
-  if (!text) {
+  const textParts: string[] = [];
+  const toolCalls: Array<{
+    id: string;
+    type: 'function';
+    function: { name: string; arguments: string };
+  }> = [];
+
+  for (const block of parsed.content ?? []) {
+    if (block.type === 'text' && typeof block.text === 'string') {
+      textParts.push(block.text);
+    } else if (block.type === 'tool_use') {
+      toolCalls.push({
+        id: block.id ?? '',
+        type: 'function',
+        function: {
+          name: block.name ?? '',
+          arguments: JSON.stringify(block.input ?? {}),
+        },
+      });
+    }
+  }
+
+  const text = textParts.join('\n');
+  if (!text && toolCalls.length === 0) {
     throw new LlmError('protocol', 'Anthropic response is missing a text content block');
   }
   const usage = extractUsage(parsed.usage);
   return {
     content: text,
     model: parsed.model ?? params.model,
+    ...(toolCalls.length > 0 ? { toolCalls } : {}),
+    ...(toolCalls.length > 0 ? { hasToolCalls: true } : {}),
     ...(usage ? { usage } : {}),
     latencyMs: Date.now() - startedAt,
     ...(truncated ? { truncated: true } : {}),
