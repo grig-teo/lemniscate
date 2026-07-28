@@ -61,41 +61,6 @@ export interface LemcoreMessage {
   toolArgs?: Record<string, unknown>;
 }
 
-export const MAX_TURNS = 60;
-export const MAX_TOOL_FAILURES = 2;
-export const TRANSCRIPT_FILE = 'lemcore-transcript.json';
-export const REVIEW_FILENAME = '.lemniscate-review.json';
-
-export interface LemcoreStep {
-  stepId: string;
-  status: 'running' | 'done' | 'error';
-  kind: 'assistant' | 'tool';
-  tool?: string;
-  title: string;
-  detail?: string;
-  outputPreview?: string;
-  durationMs?: number;
-  tokensUsed?: number;
-}
-
-export interface LemcoreRunOptions {
-  taskId: string;
-  task: TaskWithRepo;
-  workdir: string;
-  rt: LlmRuntime;
-  prompt: string;
-  secrets: string[];
-  resumeTranscript?: LemcoreMessage[];
-}
-
-export interface LemcoreMessage {
-  role: 'system' | 'user' | 'assistant' | 'tool-result';
-  content: string;
-  toolCallId?: string;
-  toolName?: string;
-  toolArgs?: Record<string, unknown>;
-}
-
 let stepCounter = 0;
 function nextStepId(): string {
   return `step-${++stepCounter}`;
