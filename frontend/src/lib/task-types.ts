@@ -90,7 +90,7 @@ export type StartTaskBody = {
   images?: TaskImage[];
 };
 
-export type TaskEventKind = 'log' | 'diff' | 'status' | (string & {});
+export type TaskEventKind = 'log' | 'diff' | 'status' | 'agent_step' | (string & {});
 
 export type TaskEventItem = {
   id: string;

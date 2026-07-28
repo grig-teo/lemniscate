@@ -7,7 +7,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { API_BASE_URL, type TaskEventItem } from '@/lib/hooks';
 import { api } from '@/lib/api';
-import { payloadToDiffText, payloadToLogText, statusFromPayload } from '@/lib/event-payload';
+import { payloadToDiffText, payloadToLogText, statusFromPayload, agentStepToLogText } from '@/lib/event-payload';
 import { useWorkspaceSelection } from '@/lib/selection';
 import { applyTaskStatusToCaches } from '@/lib/task-status-cache';
 
@@ -52,6 +52,7 @@ function parseStreamEvent(data: string): StreamEvent | null {
 function eventToLogText(kind: string, payload: unknown): string | null {
   if (kind === 'log') return payloadToLogText(payload);
   if (kind === 'diff') return payloadToDiffText(payload);
+  if (kind === 'agent_step') return agentStepToLogText(payload);
   return null;
 }
 
