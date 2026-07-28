@@ -32,6 +32,7 @@ export const SELECTABLE_BROWSER_NOTIFICATION_KINDS: readonly NotificationKind[] 
   'pr_closed',
   'run_failed',
   'budget_exceeded',
+  'llm_failover',
 ];
 
 /** Kinds enabled by default once the user turns the master toggle on. */
@@ -40,6 +41,7 @@ export const DEFAULT_BROWSER_NOTIFICATION_KINDS: NotificationKind[] = [
   'pr_merged',
   'run_failed',
   'budget_exceeded',
+  'llm_failover',
 ];
 
 export type BrowserNotificationSettings = {

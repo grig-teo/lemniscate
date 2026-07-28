@@ -89,6 +89,7 @@ export const NOTIFICATION_CHANNEL_EVENTS: ReadonlyArray<{ kind: string; label: s
   { kind: 'pr_closed', label: 'PR closed' },
   { kind: 'run_failed', label: 'Run failed' },
   { kind: 'budget_exceeded', label: 'Budget exceeded' },
+  { kind: 'llm_failover', label: 'LLM failover' },
   { kind: 'task_completed', label: 'Task completed' },
   { kind: 'merge_gate_failed', label: 'Merge gate gave up' },
   { kind: 'job_failed', label: 'Scheduled job failed' },

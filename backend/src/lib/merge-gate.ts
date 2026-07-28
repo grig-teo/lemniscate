@@ -17,6 +17,7 @@ import {
   type LlmRuntime,
   type TaskWithRepo,
 } from './agent-runtime.js';
+import { resolveAgentExecutor } from './agent-executor.js';
 import { runHermesTask } from './hermes-runner.js';
 import { runLemcoreTask } from './lemcore/run.js';
 import type { GateContext } from './merge-gate-context.js';
@@ -183,7 +184,7 @@ async function mergeWithConflictResolution(ctx: GateContext): Promise<void> {
       ? 'main moved since the branch started — rebasing the task branch onto it'
       : 'merge conflict — rebasing the task branch onto main',
   );
-  if (config.AGENT_EXECUTOR === 'hermes') {
+  if ((await resolveAgentExecutor(task.repository.connection.userId)) === 'hermes') {
     await rebaseHeadBranchViaHermes(ctx);
   } else if (config.AGENT_EXECUTOR === 'lemcore') {
     // lemcore conflict resolution: run the agent loop on the rebased branch
@@ -275,7 +276,7 @@ async function runCiFixAndRequeue(ctx: GateContext): Promise<void> {
       task.id,
       'CI is failing and main moved — rebasing the task branch onto it before diagnosing further',
     );
-    if (config.AGENT_EXECUTOR === 'hermes') {
+    if ((await resolveAgentExecutor(task.repository.connection.userId)) === 'hermes') {
       await rebaseHeadBranchViaHermes(ctx);
     } else {
       await rebaseHeadBranchWithLlm(ctx);
@@ -345,7 +346,8 @@ export async function mergeGateTask(taskId: string, attempt = 0, ciFixes = 0): P
       headBranch,
       baseBranch: task.repository.defaultBranch,
     });
-    const action = mergeGateAction(checks, attempt, ciFixes, config.AGENT_EXECUTOR);
+    const executor = await resolveAgentExecutor(task.repository.connection.userId);
+    const action = mergeGateAction(checks, attempt, ciFixes, executor);
     if (!(await dispatchGateAction(action, checks, task, attempt, ciFixes))) return;
     if (!checks.supported) {
       await logEvent(task.id, 'provider check statuses unavailable; merging on the review verdict alone');

@@ -12,6 +12,7 @@ export type NotificationKind =
   | 'pr_closed'
   | 'run_failed'
   | 'budget_exceeded'
+  | 'llm_failover'
   | (string & {});
 
 export type AppNotification = {
@@ -65,6 +66,8 @@ export function notificationKindLabel(kind: NotificationKind): string {
       return 'Run failed';
     case 'budget_exceeded':
       return 'Budget exceeded';
+    case 'llm_failover':
+      return 'LLM failover';
     default:
       return 'Notification';
   }

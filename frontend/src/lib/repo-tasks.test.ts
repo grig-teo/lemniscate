@@ -9,6 +9,7 @@ import {
   proposalPollInterval,
   showsStatusBadge,
   sortByArchivedAtDesc,
+  toSelectedTask,
   PROPOSAL_POLL_INTERVAL_MS,
   PROPOSAL_TARGET_COUNT,
 } from '@/lib/repo-tasks';
@@ -145,4 +146,33 @@ describe('isRerunnable', () => {
       expect(isRerunnable(status)).toBe(false);
     },
   );
+});
+
+describe('toSelectedTask', () => {
+  it('maps a task to the lean selection snapshot, defaulting nullables', () => {
+    const task = makeTask({
+      id: 'a1',
+      title: 'Fix the flaky test',
+      status: 'done',
+      kind: 'prompt',
+      repositoryId: 'r9',
+      branchName: 'lemniscate/fix-flaky',
+      prUrl: 'https://github.com/acme/repo/pull/12',
+    });
+    expect(toSelectedTask(task)).toEqual({
+      id: 'a1',
+      title: 'Fix the flaky test',
+      status: 'done',
+      kind: 'prompt',
+      repositoryId: 'r9',
+      branchName: 'lemniscate/fix-flaky',
+      prUrl: 'https://github.com/acme/repo/pull/12',
+    });
+  });
+
+  it('defaults missing branch and PR to null', () => {
+    const selected = toSelectedTask(makeTask({ id: 'a2' }));
+    expect(selected.branchName).toBeNull();
+    expect(selected.prUrl).toBeNull();
+  });
 });

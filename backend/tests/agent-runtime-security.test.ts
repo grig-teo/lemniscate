@@ -3,13 +3,17 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const mocks = vi.hoisted(() => ({
   assertPushAccess: vi.fn(),
   llmFindFirst: vi.fn(),
+  llmFindMany: vi.fn(),
   logEvent: vi.fn(),
 }));
 
 vi.mock('../src/lib/llm-client.js', () => ({ chatCompletions: vi.fn() }));
 vi.mock('../src/lib/agent-git.js', () => ({ logEvent: mocks.logEvent }));
 vi.mock('../src/lib/prisma.js', () => ({
-  prisma: { llmConfig: { findFirst: mocks.llmFindFirst } },
+  prisma: { llmConfig: { findFirst: mocks.llmFindFirst, findMany: mocks.llmFindMany } },
+}));
+vi.mock('../src/lib/redis.js', () => ({
+  getRedisClient: () => ({ mget: vi.fn(async (...keys: string[]) => keys.map(() => null)) }),
 }));
 vi.mock('../src/lib/crypto.js', () => ({ decrypt: vi.fn(() => 'sk-test') }));
 vi.mock('../src/lib/git-providers.js', async (importOriginal) => {
@@ -51,7 +55,7 @@ function makeRepository(overrides: Record<string, unknown> = {}) {
 }
 
 function stubLlmConfig(baseUrl = 'https://93.184.216.34/v1'): void {
-  mocks.llmFindFirst.mockResolvedValue({
+  const cfg = {
     id: 'llm-1',
     userId: 'user-1',
     baseUrl,
@@ -59,7 +63,9 @@ function stubLlmConfig(baseUrl = 'https://93.184.216.34/v1'): void {
     model: 'model-x',
     thinkingLevel: 'off',
     customHeaders: null,
-  });
+  };
+  mocks.llmFindFirst.mockResolvedValue(cfg);
+  mocks.llmFindMany.mockResolvedValue([cfg]);
 }
 
 beforeEach(() => {

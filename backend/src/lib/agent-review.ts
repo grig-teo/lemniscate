@@ -13,6 +13,7 @@ import {
   recordJobFailure,
   type GitAuth,
 } from './agent-git.js';
+import { resolveAgentExecutor } from './agent-executor.js';
 import { buildSkillsSection, requestChanges, type LlmChangesResponse } from './agent-prompts.js';
 import {
   llmCall,
@@ -118,7 +119,7 @@ export async function applyReviewFixes(
   secrets: string[],
   auth: GitAuth,
 ): Promise<void> {
-  if (config.AGENT_EXECUTOR === 'hermes') {
+  if ((await resolveAgentExecutor(task.repository.connection.userId)) === 'hermes') {
     await runHermesFixIteration(task, rt, review, headBranch, workdir, secrets, auth);
     return;
   }
@@ -227,7 +228,7 @@ async function executeReviewTask(
     task.llmTokensUsed,
     task.repository.reviewLlmConfigId,
   );
-  if (config.AGENT_EXECUTOR === 'hermes') {
+  if ((await resolveAgentExecutor(task.repository.connection.userId)) === 'hermes') {
     return executeHermesReview(task, rt, headBranch, attempt, workdir, cloneUrl, secrets, gitAuth);
   }
   if (config.AGENT_EXECUTOR === 'lemcore') {
@@ -320,6 +321,6 @@ export async function reviewTask(taskId: string, attempt = 0): Promise<void> {
       rt?.usedTokens ?? task.llmTokensUsed,
       rt ? tokenSplit(rt) : undefined,
     );
-    await cleanupWorkdir(workdir);
+    await cleanupWorkdir(workdir, taskId);
   }
 }

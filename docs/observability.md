@@ -48,6 +48,10 @@ scrape_configs:
 - `llm_requests_total{outcome}`, `llm_request_duration_seconds{outcome}` —
   every chat-completions call; outcome is `success` or the `LlmError` kind
   (`http` / `timeout` / `network` / `protocol`).
+- `llm_failovers_total{reason}` — cross-config failovers
+  (`lib/llm-failover.ts`); `rate_limit` when the provider's quota/token limit
+  triggered the switch (the failed config is then parked cross-run, see
+  `docs/llm-config.md`), `other` for any other endpoint failure.
 
 Label cardinality is bounded by construction: route templates, job names
 and error constructor names only — never job IDs, task IDs, URLs or model

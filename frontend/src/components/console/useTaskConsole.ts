@@ -140,12 +140,32 @@ function lastHistoryStatus(events: TaskEventItem[] | undefined): string | null {
 }
 
 /**
+ * History-only view of a task's events (REST, no SSE): the raw query, the
+ * derived console log lines, and the last status seen in history. Shared by
+ * the live console (which layers the SSE stream on top) and the read-only
+ * archived-task detail (history alone — archived tasks never stream).
+ */
+export function useTaskEventHistory(taskId: string | null) {
+  const historyQuery = useTaskEventsQuery(taskId);
+  const historyLogs = React.useMemo<LogLine[]>(
+    () =>
+      (historyQuery.data ?? []).flatMap((event) => {
+        const text = eventToLogText(event.kind, event.payload);
+        return text === null ? [] : [{ key: event.id, text }];
+      }),
+    [historyQuery.data],
+  );
+  const historyStatus = React.useMemo(() => lastHistoryStatus(historyQuery.data), [historyQuery.data]);
+  return { historyQuery, historyLogs, historyStatus };
+}
+
+/**
  * Everything the console needs for the selected task: history query and
  * derived log lines/status, plus the live stream state.
  */
 export function useTaskConsole(taskId: string | null) {
   const { setLiveStatus } = useWorkspaceSelection();
-  const historyQuery = useTaskEventsQuery(taskId);
+  const { historyQuery, historyLogs, historyStatus } = useTaskEventHistory(taskId);
   const seenEventIds = React.useRef<Set<string>>(new Set());
 
   useHistoryIngest(historyQuery.data, seenEventIds);
@@ -156,16 +176,6 @@ export function useTaskConsole(taskId: string | null) {
     stream.setLiveLogs([]);
     stream.setStreamError(false);
   }, [taskId]);
-
-  const historyLogs = React.useMemo<LogLine[]>(
-    () =>
-      (historyQuery.data ?? []).flatMap((event) => {
-        const text = eventToLogText(event.kind, event.payload);
-        return text === null ? [] : [{ key: event.id, text }];
-      }),
-    [historyQuery.data],
-  );
-  const historyStatus = React.useMemo(() => lastHistoryStatus(historyQuery.data), [historyQuery.data]);
 
   return {
     historyQuery,

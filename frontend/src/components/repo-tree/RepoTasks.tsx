@@ -8,7 +8,7 @@ import {
   useTasks,
   type Task,
 } from '@/lib/hooks';
-import { groupRepoTasks, isArchivable, isRerunnable, isStartableTask, showsStatusBadge, sortByArchivedAtDesc } from '@/lib/repo-tasks';
+import { groupRepoTasks, isArchivable, isRerunnable, isStartableTask, showsStatusBadge, sortByArchivedAtDesc, toSelectedTask } from '@/lib/repo-tasks';
 import { inFlightPollInterval } from '@/lib/running-tasks';
 import { useWorkspaceSelection } from '@/lib/selection';
 import { cn } from '@/lib/utils';
@@ -176,18 +176,6 @@ function TaskRow({ task }: { task: Task }) {
       </button>
     </li>
   );
-}
-
-function toSelectedTask(task: Task) {
-  return {
-    id: task.id,
-    title: task.title,
-    status: task.status,
-    kind: task.kind,
-    repositoryId: task.repositoryId,
-    branchName: task.branchName ?? null,
-    prUrl: task.prUrl ?? null,
-  };
 }
 
 /** Play button that queues a pending proposal or saved-for-later prompt. */

@@ -21,6 +21,7 @@ export const NOTIFICATION_KINDS = [
   'pr_closed',
   'run_failed',
   'budget_exceeded',
+  'llm_failover',
   'task_completed',
   'merge_gate_failed',
   'job_failed',
