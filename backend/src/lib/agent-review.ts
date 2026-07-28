@@ -23,6 +23,7 @@ import {
   type TaskWithRepo,
 } from './agent-runtime.js';
 import { requestReviewViaHermes, runHermesFixIteration } from './agent-review-hermes.js';
+import { runLemcoreReview } from './lemcore/review.js';
 import { enqueueMergeGate, enqueueReviewTask } from './proposal-scheduler.js';
 import { deferRateLimitedReview } from './review-defer.js';
 import { setTaskStatus } from './task-events.js';
@@ -228,6 +229,9 @@ async function executeReviewTask(
   );
   if (config.AGENT_EXECUTOR === 'hermes') {
     return executeHermesReview(task, rt, headBranch, attempt, workdir, cloneUrl, secrets, gitAuth);
+  }
+  if (config.AGENT_EXECUTOR === 'lemcore') {
+    return runLemcoreReview(task, rt, headBranch, attempt, workdir, cloneUrl, secrets, gitAuth);
   }
   const diff = await fetchReviewDiff(task, headBranch);
   await logEvent(task.id, `reviewing pull request (attempt ${attempt + 1})`);

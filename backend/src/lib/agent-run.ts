@@ -29,6 +29,7 @@ import {
   type TaskWithRepo,
 } from './agent-runtime.js';
 import { runHermesForTask } from './agent-run-hermes.js';
+import { runLemcoreTask } from './lemcore/run.js';
 import { classifyError } from './errors.js';
 import { notify, notifyTaskCompleted } from './notifications.js';
 import { prisma } from './prisma.js';
@@ -235,6 +236,17 @@ async function implementTask(
   if (config.AGENT_EXECUTOR === 'hermes') {
     await runHermesForTask(task, rt, workdir, secrets, resume);
     return (await hasDirtyWorkdir(workdir)) ? task.title : null;
+  }
+  if (config.AGENT_EXECUTOR === 'lemcore') {
+    const result = await runLemcoreTask({
+      taskId: task.id,
+      task,
+      workdir,
+      rt,
+      secrets,
+      resume,
+    });
+    return result.changed ? task.title : null;
   }
   const { summary, changes } = await proposeTaskChanges(task, rt, workdir);
   const applied = await applyChanges(task.id, workdir, changes, secrets);

@@ -18,6 +18,7 @@ import {
   type TaskWithRepo,
 } from './agent-runtime.js';
 import { runHermesTask } from './hermes-runner.js';
+import { runLemcoreTask } from './lemcore/run.js';
 import type { GateContext } from './merge-gate-context.js';
 import {
   hermesLlm,
@@ -50,7 +51,7 @@ export const MERGE_GATE_MAX_ATTEMPTS = 30;
 export const MAX_CI_FIX_ATTEMPTS = 3;
 
 // ---------------------------------------------------------------------------
-// CI fix (hermes)
+// CI fix (hermes or lemcore)
 // ---------------------------------------------------------------------------
 
 async function runCiFixViaHermes(ctx: GateContext): Promise<void> {
@@ -63,33 +64,59 @@ async function runCiFixViaHermes(ctx: GateContext): Promise<void> {
     secrets,
     auth,
   );
-  await runHermesTask({
-    workdir,
-    prompt: buildHermesCiFixPrompt({
-      taskTitle: task.title,
-      baseBranch: task.repository.defaultBranch,
-      headBranch,
-      systemPromptExtra: rt.cfg.systemPromptExtra,
-    }),
-    llm: hermesLlm(rt),
-    taskId: task.id,
-    secrets,
-    timeoutMs: config.AGENT_HERMES_TIMEOUT_MINUTES * 60_000,
-  });
-  if (!(await hasDirtyWorkdir(workdir))) {
-    await logEvent(task.id, 'hermes produced no CI fix changes');
-    return;
+  if (config.AGENT_EXECUTOR === 'hermes') {
+    await runHermesTask({
+      workdir,
+      prompt: buildHermesCiFixPrompt({
+        taskTitle: task.title,
+        baseBranch: task.repository.defaultBranch,
+        headBranch,
+        systemPromptExtra: rt.cfg.systemPromptExtra,
+      }),
+      llm: hermesLlm(rt),
+      taskId: task.id,
+      secrets,
+      timeoutMs: config.AGENT_HERMES_TIMEOUT_MINUTES * 60_000,
+    });
+    if (!(await hasDirtyWorkdir(workdir))) {
+      await logEvent(task.id, 'hermes produced no CI fix changes');
+      return;
+    }
+    await commitAndPush(
+      task,
+      rt,
+      workdir,
+      'fix failing CI checks',
+      ['push', 'origin', headBranch],
+      secrets,
+      auth,
+    );
+    await logEvent(task.id, `pushed CI fixes to ${headBranch}`);
+  } else {
+    // lemcore CI fix: run the agent loop in the workdir, then commit/push changes
+    await runLemcoreTask({
+      taskId: task.id,
+      task,
+      workdir,
+      rt,
+      secrets,
+      resume: false,
+    });
+    if (!(await hasDirtyWorkdir(workdir))) {
+      await logEvent(task.id, 'lemcore produced no CI fix changes');
+      return;
+    }
+    await commitAndPush(
+      task,
+      rt,
+      workdir,
+      'fix failing CI checks (lemcore)',
+      ['push', 'origin', headBranch],
+      secrets,
+      auth,
+    );
+    await logEvent(task.id, `pushed CI fixes to ${headBranch} (lemcore)`);
   }
-  await commitAndPush(
-    task,
-    rt,
-    workdir,
-    'fix failing CI checks',
-    ['push', 'origin', headBranch],
-    secrets,
-    auth,
-  );
-  await logEvent(task.id, `pushed CI fixes to ${headBranch}`);
 }
 
 // Auto-deploy: a merged PR redeploys the repository's service when it has
@@ -158,6 +185,33 @@ async function mergeWithConflictResolution(ctx: GateContext): Promise<void> {
   );
   if (config.AGENT_EXECUTOR === 'hermes') {
     await rebaseHeadBranchViaHermes(ctx);
+  } else if (config.AGENT_EXECUTOR === 'lemcore') {
+    // lemcore conflict resolution: run the agent loop on the rebased branch
+    const { task, rt, headBranch, workdir, cloneUrl, secrets, auth } = ctx;
+    const { runLemcoreTask } = await import('./lemcore/run.js');
+    await runLemcoreTask({
+      taskId: task.id,
+      task,
+      workdir,
+      rt,
+      secrets,
+      resume: false,
+    });
+    const hasChanges = await hasDirtyWorkdir(workdir);
+    if (hasChanges) {
+      await commitAndPush(
+        task,
+        rt,
+        workdir,
+        `resolve merge conflicts (lemcore)`,
+        ['push', 'origin', headBranch],
+        secrets,
+        auth,
+      );
+      await logEvent(task.id, 'pushed conflict resolution (lemcore)');
+    } else {
+      await logEvent(task.id, 'lemcore produced no conflict resolution changes');
+    }
   } else {
     await rebaseHeadBranchWithLlm(ctx);
   }
@@ -194,7 +248,7 @@ export function mergeGateAction(
 ): MergeGateAction {
   if (!checks.supported || checks.state === 'green') return 'merge';
   if (checks.state === 'pending') return attempt >= MERGE_GATE_MAX_ATTEMPTS ? 'manual' : 'wait';
-  if (ciFixes >= MAX_CI_FIX_ATTEMPTS || executor !== 'hermes') return 'manual';
+  if (ciFixes >= MAX_CI_FIX_ATTEMPTS || (executor !== 'hermes' && executor !== 'lemcore')) return 'manual';
   return 'fix-ci';
 }
 
