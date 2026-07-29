@@ -259,7 +259,7 @@ export type UsageReport = {
 
 /** Core agent executor options (Settings → Agent). Mirrors the backend
  *  AGENT_EXECUTORS constant in backend/src/lib/agent-executor.ts. */
-export type AgentExecutor = 'hermes' | 'internal';
+export type AgentExecutor = 'hermes' | 'internal' | 'lemcore';
 
 /** GET /api/settings response. agentExecutor is the effective executor
  *  (override ?? env default); override is null when the user never chose. */
