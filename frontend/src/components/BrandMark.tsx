@@ -22,7 +22,6 @@ export function BrandMark({ animate = true }: BrandMarkProps) {
     <span className="flex items-center gap-2 text-lg">
       <LemniscateSwarm className="h-[2em] w-[2em] text-foreground" animate={animate} />
       <span className="font-semibold tracking-tight">{BRAND_NAME}</span>
-      <span>hello</span>
     </span>
   );
 }
