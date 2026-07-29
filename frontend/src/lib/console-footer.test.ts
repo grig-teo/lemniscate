@@ -6,14 +6,37 @@ import {
   quotaLines,
   quotaWindowLabel,
   resetCountdownLabel,
+  tokenSplitParts,
 } from '@/lib/console-footer';
 import type { LlmQuotaInfo, QuotaWindow } from '@/lib/hooks';
 
 // Locking tests for the console footer helpers: the session context indicator
-// thresholds (green <60%, amber 60–85%, red >85%) and the rate-limit window
-// labels (5-hour / weekly / per-minute fallbacks, "n/a" on missing data).
+// thresholds (green <60%, amber 60–85%, red >85%), the rate-limit window
+// labels (5-hour / weekly / per-minute fallbacks, "n/a" on missing data), and
+// the LLM token split pane (prompt sent vs completion received).
 
 const NOW = Date.parse('2026-07-27T12:00:00Z');
+
+describe('tokenSplitParts', () => {
+  it('is null while no split has been recorded (both fields null)', () => {
+    expect(tokenSplitParts(null, null)).toBeNull();
+    expect(tokenSplitParts(undefined, undefined)).toBeNull();
+  });
+
+  it('compacts prompt/completion with the shared formatTokens helper', () => {
+    expect(tokenSplitParts(12_500, 500)).toEqual({ sent: '12.5k', received: '500' });
+    expect(tokenSplitParts(1_500_000, 750_000)).toEqual({ sent: '1.5M', received: '750k' });
+  });
+
+  it('fills the missing side with 0 instead of dropping it', () => {
+    expect(tokenSplitParts(1000, null)).toEqual({ sent: '1k', received: '0' });
+    expect(tokenSplitParts(null, 800)).toEqual({ sent: '0', received: '800' });
+  });
+
+  it('treats undefined like null (legacy tasks missing the columns)', () => {
+    expect(tokenSplitParts(undefined, 0)).toEqual({ sent: '0', received: '0' });
+  });
+});
 
 describe('contextUsageLevel', () => {
   it('is ok below 60% of the context window', () => {

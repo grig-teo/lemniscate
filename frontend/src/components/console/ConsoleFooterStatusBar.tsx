@@ -1,6 +1,11 @@
-import { Activity, Gauge } from 'lucide-react';
+import { Activity, ArrowDown, ArrowUp, Gauge } from 'lucide-react';
 
-import { contextUsageLabel, contextUsageLevel, quotaLines } from '@/lib/console-footer';
+import {
+  contextUsageLabel,
+  contextUsageLevel,
+  quotaLines,
+  tokenSplitParts,
+} from '@/lib/console-footer';
 import { useLlmConfigQuota, type Task } from '@/lib/hooks';
 import { cn } from '@/lib/utils';
 
@@ -47,6 +52,40 @@ function ContextIndicator({ task }: { task: Task }) {
 }
 
 /**
+ * LLM token split — the RIGHT-SIDE pane of the footer. Shows how many prompt
+ * tokens were SENT to the active LLM provider and how many completion tokens
+ * were RECEIVED back this run (cumulative, from the polled task row). The footer
+ * is only mounted while the task is running or reviewing code (`isRunningStatus`
+ * in ConsolePane), so this pane is implicitly gated on those statuses. Hides
+ * itself when the task predates the split columns (both fields null) so the bar
+ * layout doesn't grow an empty right cluster. Exported for a renderToStaticMarkup
+ * unit test that needs no query-client wiring.
+ */
+export function TokenSplitIndicator({ task }: { task: Task }) {
+  const prompt = task.llmPromptTokens ?? null;
+  const completion = task.llmCompletionTokens ?? null;
+  const parts = tokenSplitParts(prompt, completion);
+  if (!parts) return null;
+  const promptTitle = prompt != null ? `${prompt.toLocaleString()} tokens` : 'not recorded';
+  const completionTitle = completion != null ? `${completion.toLocaleString()} tokens` : 'not recorded';
+  const title = `Tokens sent to the LLM provider (prompt): ${promptTitle} · tokens received back (completion): ${completionTitle}`;
+  return (
+    <span
+      className="ml-auto flex items-center gap-1.5 text-muted-foreground"
+      title={title}
+      data-testid="console-footer-token-split"
+    >
+      <ArrowUp className="h-3.5 w-3.5" aria-hidden />
+      <span className="font-mono">{parts.sent}</span>
+      <span className="text-muted-foreground/70">sent</span>
+      <ArrowDown className="h-3.5 w-3.5" aria-hidden />
+      <span className="font-mono">{parts.received}</span>
+      <span className="text-muted-foreground/70">received</span>
+    </span>
+  );
+}
+
+/**
  * Rate-limit / quota indicator: the 5-hour (short) and weekly windows parsed
  * from the provider's response headers (backend llm-quota.ts). Providers
  * that expose nothing render "limits n/a" — the UI never blocks on it.
@@ -67,10 +106,11 @@ function QuotaIndicator({ configId }: { configId: string | null }) {
 
 /**
  * Status footer bar at the bottom of the agent console, mounted while a task
- * is queued/running/reviewing code. Three elements: the session context
- * indicator, the active-model dropdown (mid-run switching), and the provider
- * rate-limit indicator. Data comes from the polled task row (usage payload
- * fields) and GET /api/llm-configs/:id/quota.
+ * is queued/running/reviewing code. Left side: the session context indicator,
+ * the active-model dropdown (mid-run switching), and the provider rate-limit
+ * indicator. Right side: the LLM token split (`TokenSplitIndicator`) — tokens
+ * sent to vs received from the active provider this run. Data comes from the
+ * polled task row (usage payload fields) and GET /api/llm-configs/:id/quota.
  */
 export function ConsoleFooterStatusBar({ task }: { task: Task }) {
   return (
@@ -81,6 +121,7 @@ export function ConsoleFooterStatusBar({ task }: { task: Task }) {
       <ContextIndicator task={task} />
       <ModelSwitchDropdown task={task} />
       <QuotaIndicator configId={task.effectiveLlmConfigId ?? null} />
+      <TokenSplitIndicator task={task} />
     </div>
   );
 }
