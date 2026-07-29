@@ -1,6 +1,7 @@
 /**
- * Bottom-left model dropdown of the pending (not-started) proposal/prompt
- * detail editor: shows the LLM config currently selected to IMPLEMENT the task
+ * Right-side pane, bottom, left-aligned model dropdown for a pending
+ * (not-started) proposal/prompt: shows the LLM config currently selected to
+ * IMPLEMENT the task
  * and PATCHes it to another enabled config on selection. Unlike the console
  * footer's ModelSwitchDropdown (mid-run switch via POST /tasks/:id/model), this
  * only applies before START — the chosen config is stored on the task and

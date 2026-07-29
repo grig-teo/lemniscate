@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
 /**
- * Locking tests for the pending-task model dropdown (the bottom-left control of
- * the proposal/prompt detail editor). It reuses the composer's LlmConfigSelect
+ * Locking tests for the pending-task model dropdown (right-side pane, bottom,
+ * left-aligned control of the proposal/prompt detail editor). It reuses the
+ * composer's LlmConfigSelect
  * with `allowDefault={false}` (no inherit option — the per-task override is
  * always a concrete config), shows the currently selected config, and PATCHes
  * /api/tasks/:id with { llmConfigId } on change.
