@@ -9,6 +9,7 @@ import {
 } from '../agent-git.js';
 import type { LlmRuntime, TaskWithRepo } from '../agent-runtime.js';
 import { continueOrFinishReview } from '../review-finish.js';
+import { fetchReviewDiff, requestReview } from '../agent-review.js';
 import { runLemcoreLoop } from './loop.js';
 import {
   buildHermesReviewPrompt,
@@ -64,9 +65,9 @@ export async function runLemcoreReview(
   } catch {
     await logEvent(
       task.id,
-      `no valid ${HERMES_REVIEW_FILENAME} from lemcore; caller should fall back if needed`,
+      `no valid ${HERMES_REVIEW_FILENAME} from lemcore, falling back to a direct LLM review`,
     );
-    return rt;
+    review = await requestReview(rt, task, await fetchReviewDiff(task, headBranch));
   }
 
   await logReview(task.id, review, rt.usedTokens);
