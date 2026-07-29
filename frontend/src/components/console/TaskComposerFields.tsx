@@ -5,7 +5,7 @@
  * (AGENTS.md section 2); form state lives in useTaskComposer.ts.
  */
 import * as React from 'react';
-import { Loader2, Paperclip, Send, X } from 'lucide-react';
+import { BookmarkPlus, Loader2, Paperclip, Send, X } from 'lucide-react';
 
 import type { TaskImage } from '@/lib/hooks';
 import { IMAGE_ACCEPT, MAX_IMAGES } from '@/lib/prompt-composer';
@@ -18,6 +18,7 @@ import {
 } from '@/components/console/TaskComposerControls';
 import { LibraryAttachments } from '@/components/library/LibraryAttachments';
 import { Button } from '@/components/ui/button';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 
 function AttachImagesButton({
   disabled,
@@ -100,7 +101,7 @@ function SendButton({ canSend, pending, onClick }: { canSend: boolean; pending: 
 }
 
 /** Secondary action: park the prompt as a pending task to start later. */
-function SaveLaterButton({
+export function SaveLaterButton({
   canSave,
   pending,
   onClick,
@@ -110,16 +111,23 @@ function SaveLaterButton({
   onClick: () => void;
 }) {
   return (
-    <Button
-      type="button"
-      variant="secondary"
-      size="sm"
-      onClick={onClick}
-      disabled={!canSave || pending}
-      aria-label="Save prompt for later"
-    >
-      Save for later
-    </Button>
+    <TooltipProvider delayDuration={300}>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button
+            type="button"
+            variant="secondary"
+            size="icon"
+            onClick={onClick}
+            disabled={!canSave || pending}
+            aria-label="Save prompt for later"
+          >
+            <BookmarkPlus className="h-4 w-4" aria-hidden />
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent>Save for later</TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
   );
 }
 
