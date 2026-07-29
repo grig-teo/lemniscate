@@ -25,8 +25,8 @@ import {
 } from './agent-runtime.js';
 import { requestReviewViaHermes, runHermesFixIteration } from './agent-review-hermes.js';
 import { runLemcoreReview } from './lemcore/review.js';
-import { enqueueMergeGate, enqueueReviewTask } from './proposal-scheduler.js';
 import { deferRateLimitedReview } from './review-defer.js';
+import { continueOrFinishReview } from './review-finish.js';
 import { setTaskStatus } from './task-events.js';
 import { getPullRequestDiff } from './pull-requests.js';
 import {
@@ -44,7 +44,6 @@ import { loadAgentsMdTemplate, loadTaskSkills } from './task-skills.js';
 // CLI as the implementation run (verdict via a JSON file), 'internal' uses
 // direct structured LLM calls. Merging lives in merge-gate.ts (CI-gated).
 
-const MAX_REVIEW_FIX_ATTEMPTS = 3;
 const MAX_REVIEW_DIFF_CHARS = 24_000;
 
 async function requestReview(rt: LlmRuntime, task: Task, diff: string): Promise<PrReview> {
@@ -165,48 +164,8 @@ async function runReviewFixIteration(
 // sends hermes to fix failing checks, and resolves conflicts (again waiting
 // for CI on the resolution). The review job ends here — flip the task back
 // to awaiting_review so the landing page no longer shows it as "reviewing".
-async function finishReview(task: TaskWithRepo, review: PrReview): Promise<void> {
-  await setTaskStatus(task.id, 'awaiting_review');
-  if (review.verdict === 'changes_requested') {
-    await logEvent(
-      task.id,
-      `review fix limit reached (${MAX_REVIEW_FIX_ATTEMPTS}); continuing with the latest state`,
-    );
-  }
-  if (!task.repository.autoMergePr) {
-    await logEvent(
-      task.id,
-      review.verdict === 'approve'
-        ? 'approved by LLM, awaiting manual merge'
-        : 'changes still requested, awaiting manual review',
-    );
-    return;
-  }
-  await logEvent(task.id, 'queued the merge gate — auto-merge once CI is green');
-  await enqueueMergeGate(task.id, 0, 0);
-}
-
-// Shared tail of both executors' review flows (single home — it used to be
-// duplicated verbatim between the internal and hermes paths): while the
-// reviewer keeps requesting changes and the attempt cap allows it, run one
-// fix iteration and queue a re-review; otherwise hand the PR to the merge
-// gate / manual review.
-async function continueOrFinishReview(
-  task: TaskWithRepo,
-  rt: LlmRuntime,
-  review: PrReview,
-  attempt: number,
-  runFixIteration: () => Promise<void>,
-): Promise<void> {
-  if (review.verdict === 'changes_requested' && attempt < MAX_REVIEW_FIX_ATTEMPTS) {
-    await runFixIteration();
-    await persistTokenUsage(task.id, rt.usedTokens, tokenSplit(rt));
-    await enqueueReviewTask(task.id, attempt + 1);
-    await logEvent(task.id, 'queued re-review of the updated pull request');
-    return;
-  }
-  await finishReview(task, review);
-}
+// finishReview / continueOrFinishReview live in review-finish.ts (SSoT for
+// internal, hermes, and lemcore).
 
 // Returns the runtime so the caller can persist cumulative token usage.
 async function executeReviewTask(
