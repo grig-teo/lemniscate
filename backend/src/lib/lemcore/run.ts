@@ -5,6 +5,7 @@ import { buildSkillsSection } from '../agent-prompts.js';
 import type { LlmRuntime, TaskWithRepo } from '../agent-runtime.js';
 import { loadTaskSkills } from '../task-skills.js';
 import { buildLemcoreImplContext } from './graph-context.js';
+import { clearGraphSession } from './graph/session.js';
 import { scanRepositoryGraph } from './graph-scan.js';
 import { runLemcoreLoop, loadTranscript, scrubLegacyInCloneTranscript, type LemcoreMessage } from './loop.js';
 
@@ -29,21 +30,25 @@ function lemcorePrompt(task: TaskWithRepo, rt: LlmRuntime, resume = false): stri
   ].join('\n');
 }
 
-/** Attach graph-derived context once; avoid duplicating identical blocks. */
-function appendGraphContext(
+/**
+ * Attach graph-derived context once.
+ * Prefer implContext (summary + optional task neighborhood); fall back to the
+ * scan-only summary when impl context is empty. Never paste both — impl text
+ * already embeds summarizeGraph when a session graph exists.
+ */
+export function appendGraphContext(
   basePrompt: string,
   scanSummary: string,
   implContext: string,
 ): string {
-  const blocks = [basePrompt.trimEnd(), '', scanSummary.trim()];
-  if (implContext.trim() && implContext.trim() !== scanSummary.trim()) {
-    blocks.push('', implContext.trim());
-  }
-  blocks.push(
+  const graphBlock = implContext.trim() || scanSummary.trim();
+  return [
+    basePrompt.trimEnd(),
+    '',
+    graphBlock,
     '',
     'Use the codebase graph summary above for navigation. Prefer graph_* tools and selective file reads over dumping large source corpora.',
-  );
-  return blocks.join('\n');
+  ].join('\n');
 }
 
 /** Write selected skills under .agents/skills/<slug>/SKILL.md (hermes parity). */
@@ -117,6 +122,33 @@ export async function runLemcoreTask(opts: {
   /** When set, used as the user prompt instead of the default task prompt. */
   promptOverride?: string;
   existingTranscript?: unknown;
+}): Promise<LemcoreTaskResult> {
+  const { taskId, task, workdir, rt, secrets, resume, promptOverride } = opts;
+
+  try {
+    return await executeLemcoreTask({
+      taskId,
+      task,
+      workdir,
+      rt,
+      secrets,
+      resume,
+      promptOverride,
+    });
+  } finally {
+    // Drop in-memory graph so long-lived workers do not retain multi-MB sessions.
+    clearGraphSession(workdir);
+  }
+}
+
+async function executeLemcoreTask(opts: {
+  taskId: string;
+  task: TaskWithRepo;
+  workdir: string;
+  rt: LlmRuntime;
+  secrets: string[];
+  resume: boolean;
+  promptOverride?: string;
 }): Promise<LemcoreTaskResult> {
   const { taskId, task, workdir, rt, secrets, resume, promptOverride } = opts;
 
