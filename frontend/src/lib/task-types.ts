@@ -50,6 +50,8 @@ export type Task = {
   /** Prompt/completion split; null for tasks that predate the split columns. */
   llmPromptTokens?: number | null;
   llmCompletionTokens?: number | null;
+  /** Per-task LLM config override chosen in the composer / proposal detail; null = inherit (repo → user default). */
+  llmConfigId?: string | null;
   /** Effective run budget (task config → repo config → user default); null = uncapped. */
   maxTokensPerRun?: number | null;
   /** Estimated USD at the effective config's prices; absent when unpriced or split unknown. */

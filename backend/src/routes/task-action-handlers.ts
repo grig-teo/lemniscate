@@ -17,6 +17,7 @@ import {
   buildStartUpdate,
   CANCELLABLE_STATUSES,
   closePrBlocker,
+  findOwnedLlmConfig,
   ownedTaskWhere,
   rerunBlocker,
   resolveAttachmentUpdate,
@@ -115,6 +116,18 @@ export async function patchTask(request: FastifyRequest, reply: FastifyReply) {
   if (validationError) {
     return reply.code(400).send({ error: validationError });
   }
+  // Per-task model override (the proposal/prompt detail's bottom dropdown):
+  // when present, verify the config is owned+enabled before storing it. Absent
+  // = leave the stored llmConfigId untouched (findOwnedLlmConfig: §6 SSoT,
+  // shared with POST /tasks/:id/model).
+  let llmConfigId: string | undefined;
+  if (body.llmConfigId !== undefined) {
+    const config = await findOwnedLlmConfig(userId, body.llmConfigId);
+    if (!config) {
+      return reply.code(400).send({ error: 'LLM config not found or disabled' });
+    }
+    llmConfigId = config.id;
+  }
   const updated = await prisma.task.update({
     where: { id: task.id },
     data: {
@@ -122,6 +135,7 @@ export async function patchTask(request: FastifyRequest, reply: FastifyReply) {
       ...(body.prompt !== undefined ? { prompt: body.prompt } : {}),
       ...attachmentsData(body.images),
       ...(body.skills !== undefined ? { skills: body.skills } : {}),
+      ...(llmConfigId !== undefined ? { llmConfigId } : {}),
       ...(await resolveAttachmentUpdate(body, userId)),
     },
   });

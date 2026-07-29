@@ -1,0 +1,46 @@
+/**
+ * Bottom-left model dropdown of the pending (not-started) proposal/prompt
+ * detail editor: shows the LLM config currently selected to IMPLEMENT the task
+ * and PATCHes it to another enabled config on selection. Unlike the console
+ * footer's ModelSwitchDropdown (mid-run switch via POST /tasks/:id/model), this
+ * only applies before START — the chosen config is stored on the task and
+ * resolved when the task is queued.
+ *
+ * Reuses the composer's LlmConfigSelect (Radix) for visual consistency; the
+ * `allowDefault={false}` variant omits the inherit option because the per-task
+ * override is always a concrete config (§6: one parameterized select, not a copy).
+ */
+import { useLlmConfigs, usePatchTaskLlmConfig, type Task } from '@/lib/hooks';
+import { pushToast } from '@/lib/toasts';
+import { LlmConfigSelect } from '@/components/console/TaskComposerControls';
+
+export function PendingTaskModelSelect({ task }: { task: Task }) {
+  const configs = useLlmConfigs();
+  const patch = usePatchTaskLlmConfig();
+  const enabled = (configs.data ?? []).filter((config) => config.enabled);
+  const value = task.llmConfigId ?? null;
+
+  function choose(id: string | null) {
+    // allowDefault={false} never yields null, but guard regardless: there is no
+    // PATCH path to clear the override, so a null selection is a no-op.
+    if (id === null || id === task.llmConfigId) return;
+    patch.mutate(
+      { id: task.id, llmConfigId: id },
+      {
+        onSuccess: () => {
+          const chosen = enabled.find((config) => config.id === id);
+          pushToast(`Model set to ${chosen?.name ?? id} — applies when you Start`);
+        },
+      },
+    );
+  }
+
+  return (
+    <LlmConfigSelect
+      configs={enabled}
+      value={value}
+      allowDefault={false}
+      onChange={choose}
+    />
+  );
+}
