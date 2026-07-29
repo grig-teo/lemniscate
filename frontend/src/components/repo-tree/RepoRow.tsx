@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { ChevronDown, ChevronRight, Settings } from 'lucide-react';
+import { ChevronDown, ChevronRight, GitMerge, Settings } from 'lucide-react';
 
 import { type Repository } from '@/lib/hooks';
 import { repoDisplayName } from '@/lib/repo-display';
@@ -19,10 +19,21 @@ export function RepoRow({
   onToggle: () => void;
 }) {
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const { openPrReview } = useWorkspaceSelection();
   return (
     <div className="px-2 pb-2">
       <div className="relative flex items-center gap-1.5 rounded-md px-1.5 py-1 hover:bg-accent">
         <RepoToggle repo={repo} expanded={expanded} onToggle={onToggle} />
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-6 w-6 shrink-0"
+          aria-label={`Pull requests for ${repo.fullName}`}
+          title="Pull requests"
+          onClick={() => openPrReview(repo.id)}
+        >
+          <GitMerge className="h-3.5 w-3.5" />
+        </Button>
         <Button
           variant="ghost"
           size="icon"

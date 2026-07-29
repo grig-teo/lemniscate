@@ -21,7 +21,7 @@ afterEach(() => cleanup());
 beforeEach(() => window.localStorage.clear());
 
 function SelectionState() {
-  const { selectedTask, archivedTask, archivedRepoId, selectedServiceId } =
+  const { selectedTask, archivedTask, archivedRepoId, selectedServiceId, prReviewRepoId } =
     useWorkspaceSelection();
   return (
     <div>
@@ -29,6 +29,7 @@ function SelectionState() {
       <span data-testid="archived-task">{archivedTask?.id ?? 'none'}</span>
       <span data-testid="archived-repo">{archivedRepoId ?? 'none'}</span>
       <span data-testid="service">{selectedServiceId ?? 'none'}</span>
+      <span data-testid="pr-review-repo">{prReviewRepoId ?? 'none'}</span>
     </div>
   );
 }
@@ -43,6 +44,8 @@ function SelectionActions() {
       <button onClick={() => sel.openArchived('r1')}>open-archived-list</button>
       <button onClick={() => sel.closeArchived()}>close-archived-list</button>
       <button onClick={() => sel.selectService('s1')}>select-service</button>
+      <button onClick={() => sel.openPrReview('r1')}>open-pr-review</button>
+      <button onClick={() => sel.closePrReview()}>close-pr-review</button>
     </div>
   );
 }
@@ -62,6 +65,7 @@ function state() {
     archivedTask: screen.getByTestId('archived-task').textContent,
     archivedRepo: screen.getByTestId('archived-repo').textContent,
     service: screen.getByTestId('service').textContent,
+    prReviewRepo: screen.getByTestId('pr-review-repo').textContent,
   };
 }
 
@@ -81,6 +85,7 @@ describe('archived-task selection', () => {
       archivedTask: 'a1',
       archivedRepo: 'r1', // list stays open underneath for the way back
       service: 'none',
+      prReviewRepo: 'none',
     });
   });
 
@@ -105,6 +110,7 @@ describe('archived-task selection', () => {
       archivedTask: 'none',
       archivedRepo: 'none',
       service: 'none',
+      prReviewRepo: 'none',
     });
   });
 
