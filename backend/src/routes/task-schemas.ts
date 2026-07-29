@@ -62,11 +62,15 @@ export const startBodySchema = z
 export type StartBody = z.infer<typeof startBodySchema>;
 
 // PATCH /tasks/:id — save edits on a pending task without starting it.
+// llmConfigId overrides the stored implementation config before START pins it
+// (the bottom model dropdown of the proposal/prompt detail editor); omitted =
+// leave the stored config untouched. The handler verifies ownership+enabled.
 export const patchBodySchema = z
   .object({
     title: z.string().min(1).max(200).optional(),
     prompt: promptSchema.optional(),
     images: taskImagesSchema.optional(),
+    llmConfigId: z.string().min(1).optional(),
   })
   .merge(attachmentFieldsSchema)
   .strict();
