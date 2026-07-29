@@ -1,6 +1,6 @@
 import type { LlmConfig } from '@prisma/client';
 import { proposalDocumentSectionLines } from './agent-prompts.js';
-import { decrypt } from './crypto.js';
+import { resolveLlmAccessToken } from './llm-access-token.js';
 import { chatCompletion } from './llm-dispatch.js';
 
 // POST /tasks/:id/improve helpers — the console pane's Improve button asks
@@ -58,7 +58,7 @@ export async function requestImprovedPrompt(
 ): Promise<string> {
   const result = await chatCompletion({
     baseUrl: cfg.baseUrl,
-    apiKey: decrypt(cfg.apiKeyEnc),
+    apiKey: await resolveLlmAccessToken(cfg),
     model: cfg.model,
     apiPattern: cfg.apiPattern,
     messages: [

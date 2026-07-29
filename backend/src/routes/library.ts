@@ -1,6 +1,6 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
-import { decrypt } from '../lib/crypto.js';
+import { resolveLlmAccessToken } from '../lib/llm-access-token.js';
 import { chatCompletion } from '../lib/llm-dispatch.js';
 import { extractJsonObject } from '../lib/llm-json.js';
 import { prisma } from '../lib/prisma.js';
@@ -56,7 +56,7 @@ async function requestStructureFolders(prompt: string, userId: string): Promise<
   if (!cfg) return null;
   const result = await chatCompletion({
     baseUrl: cfg.baseUrl,
-    apiKey: decrypt(cfg.apiKeyEnc),
+    apiKey: await resolveLlmAccessToken(cfg),
     model: cfg.model,
     apiPattern: cfg.apiPattern,
     messages: [

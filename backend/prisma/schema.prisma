@@ -112,6 +112,13 @@ model LlmConfig {
   // Provider preset id from the registry ('openai'|'anthropic'|'zai'|'kimi'|
   // 'grok'); null for custom endpoints (lib/llm-providers.ts).
   provider          String?
+  // Credential source: 'api_key' (pasted secret) or 'oauth' (device-code
+  // login; access token in apiKeyEnc, refresh in refreshTokenEnc).
+  authType          String        @default("api_key")
+  refreshTokenEnc   String?
+  tokenExpiresAt    DateTime?
+  // Cached OIDC token_endpoint for oauth refresh (must stay on *.x.ai).
+  oauthTokenEndpoint String?
   thinkingLevel     ThinkingLevel @default(off)
   temperature       Float         @default(0.2)
   maxTokens         Int

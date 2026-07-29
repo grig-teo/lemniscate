@@ -37,6 +37,8 @@ export interface LlmProviderPreset {
     /** Weekly window (Anthropic unified 7d headers). */
     weekly: boolean;
   };
+  /** When true, Settings offers a "Connect with …" OAuth device-code button. */
+  supportsOauth?: boolean;
 }
 
 export const LLM_PROVIDER_PRESETS: LlmProviderPreset[] = [
@@ -92,11 +94,22 @@ export const LLM_PROVIDER_PRESETS: LlmProviderPreset[] = [
     label: 'Grok (xAI)',
     pattern: 'openai',
     baseUrl: 'https://api.x.ai/v1',
-    defaultModel: 'grok-4',
-    models: ['grok-4', 'grok-4-fast', 'grok-3-mini'],
+    // Default coding model for agent runs (OAuth "Connect with xAI" uses the same).
+    defaultModel: 'grok-4.5',
+    models: [
+      'grok-4.5',
+      'grok-build-0.1',
+      'grok-4',
+      'grok-4-fast',
+      'grok-4.20-0309-reasoning',
+      'grok-4.20-0309-non-reasoning',
+      'grok-3-mini',
+    ],
     contextWindow: 256_000,
     maxTokens: 8_192,
     quota: { shortWindow: false, weekly: false },
+    /** SuperGrok / X Premium+ browser login (device code) is supported. */
+    supportsOauth: true,
   },
 ];
 

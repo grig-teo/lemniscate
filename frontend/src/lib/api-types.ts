@@ -63,6 +63,8 @@ export type LlmProviderPreset = {
   maxTokens: number;
   /** Which quota windows this provider can ever report (5h / weekly). */
   quota: { shortWindow: boolean; weekly: boolean };
+  /** When true, Settings offers a "Connect with …" OAuth device-code button. */
+  supportsOauth?: boolean;
 };
 
 /** One rate-limit window parsed from provider response headers. */
@@ -90,6 +92,8 @@ export type LlmConfig = {
   baseUrl: string;
   model: string;
   hasApiKey: boolean;
+  /** 'api_key' (pasted) or 'oauth' (xAI device-code login). */
+  authType?: 'api_key' | 'oauth';
   /** Transport pattern; rows predating the column read as 'openai'. */
   apiPattern: LlmApiPattern;
   /** Provider preset id the config was added from; null for custom endpoints. */

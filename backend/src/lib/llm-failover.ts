@@ -1,7 +1,7 @@
 import type { LlmConfig } from '@prisma/client';
 import { z } from 'zod';
 import { logEvent } from './agent-git.js';
-import { decrypt } from './crypto.js';
+import { resolveLlmAccessToken } from './llm-access-token.js';
 import {
   exhaustionCooldownMs,
   filterHealthyConfigs,
@@ -134,8 +134,12 @@ function truncateReason(message: string): string {
 // and a console line recording the switch. Token counters carry over — the
 // per-run budget spans all configs used by the run. Shared by the failover
 // chain and the mid-run model switch (agent-runtime.ts).
-export function switchRuntimeConfig(rt: LlmRuntime, cfg: LlmConfig, logLine: string): void {
-  const apiKey = decrypt(cfg.apiKeyEnc);
+export async function switchRuntimeConfig(
+  rt: LlmRuntime,
+  cfg: LlmConfig,
+  logLine: string,
+): Promise<void> {
+  const apiKey = await resolveLlmAccessToken(cfg);
   rt.secrets?.push(apiKey);
   rt.cfg = cfg;
   rt.apiKey = apiKey;
@@ -150,8 +154,8 @@ function logFailover(rt: LlmRuntime, fromModel: string, cfg: LlmConfig, cause: L
   );
 }
 
-function activateFailoverConfig(rt: LlmRuntime, cfg: LlmConfig, cause: LlmError): void {
-  switchRuntimeConfig(rt, cfg, logFailover(rt, rt.cfg.model, cfg, cause));
+async function activateFailoverConfig(rt: LlmRuntime, cfg: LlmConfig, cause: LlmError): Promise<void> {
+  await switchRuntimeConfig(rt, cfg, logFailover(rt, rt.cfg.model, cfg, cause));
 }
 
 // Persisting the promoted config id to the task row keeps
@@ -187,7 +191,7 @@ export async function applyPendingModelSwitch(rt: LlmRuntime): Promise<void> {
     if (!next) return;
     await assertSafeLlmBaseUrl(next.baseUrl);
     const line = `⇄ model switched to ${next.model} [${next.name}] — continuing task`;
-    switchRuntimeConfig(rt, next, line);
+    await switchRuntimeConfig(rt, next, line);
   } catch {
     // Never let switch bookkeeping break an in-flight run.
   }
@@ -255,7 +259,7 @@ export async function promoteFailoverConfig(rt: LlmRuntime, cause: LlmError): Pr
       continue;
     }
     const parked = await parkRateLimitedConfig(failedId, cause);
-    activateFailoverConfig(rt, candidate, cause);
+    await activateFailoverConfig(rt, candidate, cause);
     notifyFailover({ reason: isRateLimited(cause) ? 'rate_limit' : 'other' });
     if (rt.taskId) await persistPromotedConfig(rt.taskId, candidate);
     await emitFailoverNotification(rt, failedModel, candidate, cause, parked);

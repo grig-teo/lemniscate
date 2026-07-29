@@ -51,6 +51,13 @@ describe('LLM_PROVIDER_PRESETS', () => {
     }
   });
 
+  it('defaults Grok coding model to grok-4.5 and supports OAuth connect', () => {
+    const grok = findProviderPreset('grok');
+    expect(grok?.defaultModel).toBe('grok-4.5');
+    expect(grok?.models).toContain('grok-4.5');
+    expect(grok?.supportsOauth).toBe(true);
+  });
+
   it('every preset is well-formed (label, default model in list, sane windows)', () => {
     expect(LLM_PROVIDER_PRESETS.length).toBeGreaterThanOrEqual(5);
     for (const preset of LLM_PROVIDER_PRESETS) {

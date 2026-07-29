@@ -33,8 +33,11 @@ export async function failureSecrets(connection: FailureSecretSource): Promise<s
   }
   const configs = await prisma.llmConfig.findMany({
     where: { userId: connection.userId },
-    select: { apiKeyEnc: true },
+    select: { apiKeyEnc: true, refreshTokenEnc: true },
   });
-  for (const cfg of configs) pushDecrypted(secrets, cfg.apiKeyEnc);
+  for (const cfg of configs) {
+    pushDecrypted(secrets, cfg.apiKeyEnc);
+    if (cfg.refreshTokenEnc) pushDecrypted(secrets, cfg.refreshTokenEnc);
+  }
   return secrets;
 }
