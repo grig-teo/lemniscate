@@ -8,6 +8,7 @@ import {
   type GitAuth,
 } from '../agent-git.js';
 import type { LlmRuntime, TaskWithRepo } from '../agent-runtime.js';
+import { continueOrFinishReview } from '../review-finish.js';
 import { runLemcoreLoop } from './loop.js';
 import {
   buildHermesReviewPrompt,
@@ -69,7 +70,10 @@ export async function runLemcoreReview(
   }
 
   await logReview(task.id, review, rt.usedTokens);
-  await continueOrFinishReview(task, review, () =>
+  // Shared finish path with hermes/internal (review-finish.ts): must actually
+  // enqueueReviewTask on changes_requested — the previous lemcore-only copy
+  // only logged "queued re-review" and left the task stuck in reviewing_code.
+  await continueOrFinishReview(task, rt, review, attempt, () =>
     runLemcoreFixIteration(task, rt, review, headBranch, workdir, secrets, auth),
   );
   return rt;
@@ -123,17 +127,4 @@ async function logReview(taskId: string, review: PrReview, usedTokens: number): 
     await logEvent(taskId, `review issue${issue.path ? ` [${issue.path}]` : ''}: ${issue.comment}`);
   }
   await logEvent(taskId, `LLM usage so far: ~${usedTokens} tokens`);
-}
-
-async function continueOrFinishReview(
-  task: TaskWithRepo,
-  review: PrReview,
-  runFixIteration: () => Promise<void>,
-): Promise<void> {
-  if (review.verdict === 'changes_requested') {
-    await runFixIteration();
-    await logEvent(task.id, 'queued re-review of the updated pull request');
-    return;
-  }
-  await logEvent(task.id, `review finished: ${review.verdict}`);
 }
