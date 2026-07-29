@@ -77,6 +77,19 @@ export function toSelectedTask(task: Task): SelectedTask {
   };
 }
 
+/** Statuses that mean a PR exists on the git host for this task. */
+const PR_STATUSES = new Set(['awaiting_review', 'reviewing_code', 'done', 'closed']);
+
+/** True when a task has an open or merged PR (a branch was pushed). */
+export function hasPullRequest(task: Task): boolean {
+  return Boolean(task.branchName) && PR_STATUSES.has(task.status);
+}
+
+/** Filter a task list to only PR tasks, most recent first. */
+export function selectPrTasks(tasks: Task[]): Task[] {
+  return tasks.filter(hasPullRequest).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+}
+
 /**
  * Refetch interval for a repo's tasks query: poll while generation may be in
  * flight (pending proposals below target), stop once the repo is stocked.

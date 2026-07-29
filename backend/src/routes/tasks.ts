@@ -12,6 +12,7 @@ import {
   switchTaskModel,
   unarchiveTask,
 } from './task-action-handlers.js';
+import { triggerMerge, triggerReview } from './task-review-handlers.js';
 import { getTaskRunTargets } from './task-run-targets.js';
 import { getTaskEvents } from './task-events-stream.js';
 
@@ -40,6 +41,8 @@ const tasksRoutes: FastifyPluginAsync = async (app) => {
   app.post('/tasks/:id/rerun', rerunTask);
   app.post('/tasks/:id/cancel', cancelTask);
   app.post('/tasks/:id/close-pr', closePrTask);
+  app.post('/tasks/:id/review', triggerReview);
+  app.post('/tasks/:id/merge', triggerMerge);
   app.post('/tasks/:id/archive', archiveTask);
   app.post('/tasks/:id/unarchive', unarchiveTask);
   app.get('/tasks/:id/events', getTaskEvents);
@@ -65,8 +68,10 @@ export {
   findOwnedLlmConfig,
   initialTaskStatus,
   isArchivable,
+  mergeBlocker,
   modelSwitchBlocker,
   resolveAttachmentUpdate,
+  reviewBlocker,
   rerunBlocker,
   startBlocker,
   wantsSse,

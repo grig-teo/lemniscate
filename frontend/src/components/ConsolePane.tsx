@@ -16,6 +16,7 @@ import { ProposalDetail } from '@/components/console/ProposalDetail';
 import { TaskStepsRail } from '@/components/TaskStepsRail';
 import { ComposerCard, TaskComposerFab } from '@/components/console/TaskComposer';
 import { ServiceDetail } from '@/components/services/ServiceDetail';
+import { PrListPane } from '@/components/PrListPane';
 import { useTaskConsole } from '@/components/console/useTaskConsole';
 import { RunTaskDialog } from '@/components/devices/RunTaskDialog';
 
@@ -63,7 +64,7 @@ function EmptyConsole() {
  * reachable via the header's run-on-device button.
  */
 export function ConsolePane() {
-  const { selectedTask, liveStatus, archivedRepoId, archivedTask, selectedServiceId } =
+  const { selectedTask, liveStatus, archivedRepoId, archivedTask, selectedServiceId, prReviewRepoId } =
     useWorkspaceSelection();
   const taskId = selectedTask?.id ?? null;
   const consoleState = useTaskConsole(taskId);
@@ -131,6 +132,7 @@ export function ConsolePane() {
   }, [autoOpenPending, taskId, runTargets.data, runTargets.isError]);
 
   if (selectedServiceId) return <ServiceDetail serviceId={selectedServiceId} />;
+  if (prReviewRepoId) return <PrListPane repositoryId={prReviewRepoId} />;
   if (archivedTask) return <ArchivedTaskDetail task={archivedTask} />;
   if (archivedRepoId) return <ArchivedPane repositoryId={archivedRepoId} />;
   if (!selectedTask) return <EmptyConsole />;

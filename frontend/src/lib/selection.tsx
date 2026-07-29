@@ -32,6 +32,10 @@ interface WorkspaceSelectionValue {
   archivedRepoId: string | null;
   openArchived: (repoId: string) => void;
   closeArchived: () => void;
+  /** Repo whose PR review pane is open in the center pane. */
+  prReviewRepoId: string | null;
+  openPrReview: (repoId: string) => void;
+  closePrReview: () => void;
   /** Archived task whose read-only detail (details + console history) is open. */
   archivedTask: SelectedTask | null;
   openArchivedTask: (task: SelectedTask) => void;
@@ -56,6 +60,7 @@ export function WorkspaceSelectionProvider({ children }: { children: React.React
     readPersisted<string | null>(SELECTED_REPO_STORAGE_KEY, null),
   );
   const [archivedRepoId, setArchivedRepoId] = React.useState<string | null>(null);
+  const [prReviewRepoId, setPrReviewRepoId] = React.useState<string | null>(null);
   const [archivedTask, setArchivedTask] = React.useState<SelectedTask | null>(null);
   const [selectedServiceId, setSelectedServiceId] = React.useState<string | null>(() =>
     readPersisted<string | null>(SELECTED_SERVICE_STORAGE_KEY, null),
@@ -84,6 +89,18 @@ export function WorkspaceSelectionProvider({ children }: { children: React.React
     setArchivedRepoId(null);
     setArchivedTask(null);
   }, []);
+
+  const openPrReview = React.useCallback((repoId: string) => {
+    setPrReviewRepoId(repoId);
+    setSelectedTask(null);
+    writePersisted(SELECTED_TASK_STORAGE_KEY, null);
+    setArchivedRepoId(null);
+    setArchivedTask(null);
+    setLiveStatus(null);
+    setSelectedServiceId(null);
+    writePersisted(SELECTED_SERVICE_STORAGE_KEY, null);
+  }, []);
+  const closePrReview = React.useCallback(() => setPrReviewRepoId(null), []);
 
   // The archived detail replaces the live console/service views but keeps the
   // archived list (archivedRepoId) open underneath for the way back.
@@ -119,6 +136,9 @@ export function WorkspaceSelectionProvider({ children }: { children: React.React
       archivedRepoId,
       openArchived,
       closeArchived,
+      prReviewRepoId,
+      openPrReview,
+      closePrReview,
       archivedTask,
       openArchivedTask,
       closeArchivedTask,
@@ -135,15 +155,18 @@ export function WorkspaceSelectionProvider({ children }: { children: React.React
       archivedRepoId,
       openArchived,
       closeArchived,
+      prReviewRepoId,
+      openPrReview,
+      closePrReview,
       archivedTask,
       openArchivedTask,
       closeArchivedTask,
       selectedServiceId,
       selectService,
       liveStatus,
+      setLiveStatus,
     ],
   );
-
   return (
     <WorkspaceSelectionContext.Provider value={value}>
       {children}

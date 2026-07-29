@@ -109,7 +109,9 @@ export function useImproveTask() {
  * mutation (AGENTS.md section 6) — rerun/cancel/archive/unarchive differ
  * only in the action segment.
  */
-function useTaskAction(action: 'rerun' | 'cancel' | 'archive' | 'unarchive' | 'close-pr') {
+function useTaskAction(
+  action: 'rerun' | 'cancel' | 'archive' | 'unarchive' | 'close-pr' | 'review' | 'merge',
+) {
   const invalidate = useInvalidator(['tasks'], ['task']);
   return useMutation({
     mutationFn: (id: string) => api.post<unknown>(`/api/tasks/${id}/${action}`),
@@ -163,6 +165,16 @@ export function useCancelTask() {
 /** Close a PR and delete its branch from the UI (awaiting_review tasks only). */
 export function useClosePrTask() {
   return useTaskAction('close-pr');
+}
+
+/** POST /api/tasks/:id/review — manually trigger an LLM code review. */
+export function useReviewTask() {
+  return useTaskAction('review');
+}
+
+/** POST /api/tasks/:id/merge — manually trigger an LLM-mediated merge. */
+export function useMergeTask() {
+  return useTaskAction('merge');
 }
 
 /** Hide a task from the task lists. */

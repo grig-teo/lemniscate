@@ -121,6 +121,33 @@ export function closePrBlocker(task: { status: string; branchName: string | null
   return null;
 }
 
+// Manual review eligibility for POST /tasks/:id/review: only awaiting_review
+// tasks (an open PR exists) with a branch can be reviewed. reviewing_code is
+// accepted so a re-trigger while a review is already running is a no-op idempotent
+// re-enqueue (BullMQ jobId dedupes the same attempt).
+export function reviewBlocker(task: { status: string; branchName: string | null }): string | null {
+  if (task.status !== 'awaiting_review' && task.status !== 'reviewing_code') {
+    return `task is ${task.status}, not awaiting_review`;
+  }
+  if (!task.branchName) {
+    return 'task has no branch to review';
+  }
+  return null;
+}
+
+// Manual merge eligibility for POST /tasks/:id/merge: only awaiting_review
+// (or reviewing_code) tasks with a branch can be merged. 'done' tasks (already
+// merged) and terminal states are rejected — the PR no longer exists to merge.
+export function mergeBlocker(task: { status: string; branchName: string | null }): string | null {
+  if (task.status !== 'awaiting_review' && task.status !== 'reviewing_code') {
+    return `task is ${task.status}, not awaiting_review`;
+  }
+  if (!task.branchName) {
+    return 'task has no branch to merge';
+  }
+  return null;
+}
+
 // Rerunning resets the run state: re-queued from scratch with a fresh
 // branch, no leftover error code/message or PR link.
 export function buildRerunUpdate() {
