@@ -199,13 +199,13 @@ async function teardownPrevious(previousHandle: string, secrets: string[]): Prom
 async function runLemniscateDeploy(deployment: DeploymentWithService, secrets: string[]): Promise<void> {
   const workdir = path.join(config.AGENT_WORKDIR, `deploy-${deployment.id}`);
   try {
-    await cloneDeploymentRepo(deployment, workdir, secrets);
+    const sha = await cloneDeploymentRepo(deployment, workdir, secrets);
     const mode = await detectBuildMode(workdir);
     if (!mode) {
       throw new Error('no Dockerfile and no docker-compose file at the repository root — add one to enable deployments');
     }
     await (mode === 'image'
-      ? runLemniscateImageDeploy(deployment, workdir, secrets)
+      ? runLemniscateImageDeploy(deployment, workdir, sha, secrets)
       : runLemniscateComposeDeploy(deployment, workdir, secrets));
   } finally {
     await fs.rm(workdir, { recursive: true, force: true }).catch(() => {});
