@@ -228,10 +228,11 @@ async function executeReviewTask(
     task.llmTokensUsed,
     task.repository.reviewLlmConfigId,
   );
-  if ((await resolveAgentExecutor(task.repository.connection.userId)) === 'hermes') {
+  const executor = await resolveAgentExecutor(task.repository.connection.userId);
+  if (executor === 'hermes') {
     return executeHermesReview(task, rt, headBranch, attempt, workdir, cloneUrl, secrets, gitAuth);
   }
-  if (config.AGENT_EXECUTOR === 'lemcore') {
+  if (executor === 'lemcore') {
     return runLemcoreReview(task, rt, headBranch, attempt, workdir, cloneUrl, secrets, gitAuth);
   }
   const diff = await fetchReviewDiff(task, headBranch);

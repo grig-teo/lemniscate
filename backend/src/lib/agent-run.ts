@@ -227,6 +227,10 @@ async function recordChangedPaths(task: TaskWithRepo, workdir: string): Promise<
 
 // Runs the configured task executor. Returns the change summary for the
 // commit/PR, or null when the workdir has nothing to commit.
+// Executor comes from Settings → Agent (per-user override) via
+// resolveAgentExecutor — never the bare AGENT_EXECUTOR env alone, or a
+// user who picked lemcore would still get hermes when the deployment
+// default is hermes.
 async function implementTask(
   task: TaskWithRepo,
   rt: LlmRuntime,
@@ -234,11 +238,14 @@ async function implementTask(
   secrets: string[],
   resume: boolean,
 ): Promise<string | null> {
-  if (config.AGENT_EXECUTOR === 'hermes') {
+  const userId = task.repository.connection.userId;
+  const executor = await resolveAgentExecutor(userId);
+  await logEvent(task.id, `executor: ${executor}`);
+  if (executor === 'hermes') {
     await runHermesForTask(task, rt, workdir, secrets, resume);
     return (await hasDirtyWorkdir(workdir)) ? task.title : null;
   }
-  if (config.AGENT_EXECUTOR === 'lemcore') {
+  if (executor === 'lemcore') {
     const result = await runLemcoreTask({
       taskId: task.id,
       task,
