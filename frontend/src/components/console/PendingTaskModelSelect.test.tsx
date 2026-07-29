@@ -117,4 +117,18 @@ describe('PendingTaskModelSelect', () => {
       expect(trigger.textContent).toContain('claude-sonnet-4-5');
     });
   });
+
+  it('falls back to effectiveLlmConfigId when llmConfigId is null (inherited default)', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => jsonResponse({ configs })),
+    );
+    renderSelect({ ...baseTask, llmConfigId: null, effectiveLlmConfigId: 'cfg-2' });
+
+    await waitFor(() => {
+      const trigger = screen.getByRole('combobox', { name: 'Model' });
+      expect(trigger.textContent).toContain('Anthropic');
+      expect(trigger.textContent).toContain('claude-sonnet-4-5');
+    });
+  });
 });

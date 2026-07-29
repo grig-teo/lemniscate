@@ -9,6 +9,12 @@
  * Reuses the composer's LlmConfigSelect (Radix) for visual consistency; the
  * `allowDefault={false}` variant omits the inherit option because the per-task
  * override is always a concrete config (§6: one parameterized select, not a copy).
+ *
+ * When the task has no per-task override (llmConfigId is null) — e.g. a proposal
+ * created from a repo with no repo-level config — the task inherits the user's
+ * default at START. The dropdown falls back to `effectiveLlmConfigId` for the
+ * displayed value so the trigger always surfaces the concrete model that will
+ * run, instead of rendering blank.
  */
 import { useLlmConfigs, usePatchTaskLlmConfig, type Task } from '@/lib/hooks';
 import { pushToast } from '@/lib/toasts';
@@ -18,12 +24,12 @@ export function PendingTaskModelSelect({ task }: { task: Task }) {
   const configs = useLlmConfigs();
   const patch = usePatchTaskLlmConfig();
   const enabled = (configs.data ?? []).filter((config) => config.enabled);
-  const value = task.llmConfigId ?? null;
+  const displayedId = task.llmConfigId ?? task.effectiveLlmConfigId ?? null;
 
   function choose(id: string | null) {
     // allowDefault={false} never yields null, but guard regardless: there is no
     // PATCH path to clear the override, so a null selection is a no-op.
-    if (id === null || id === task.llmConfigId) return;
+    if (id === null || id === displayedId) return;
     patch.mutate(
       { id: task.id, llmConfigId: id },
       {
@@ -38,7 +44,7 @@ export function PendingTaskModelSelect({ task }: { task: Task }) {
   return (
     <LlmConfigSelect
       configs={enabled}
-      value={value}
+      value={displayedId}
       allowDefault={false}
       onChange={choose}
     />
