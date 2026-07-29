@@ -30,6 +30,8 @@ const mocks = vi.hoisted(() => ({
   buildRepoContext: vi.fn(),
   setTaskStatus: vi.fn(),
   runHermesTask: vi.fn(),
+  runLemcoreTask: vi.fn(),
+  resolveAgentExecutor: vi.fn(),
   notify: vi.fn(),
   notifyTaskCompleted: vi.fn(),
   logger: { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn(), child: vi.fn() },
@@ -72,6 +74,20 @@ vi.mock('../src/lib/pull-requests.js', () => ({ openPullRequest: mocks.openPullR
 vi.mock('../src/lib/repo-context.js', () => ({ buildRepoContext: mocks.buildRepoContext }));
 vi.mock('../src/lib/task-events.js', () => ({ setTaskStatus: mocks.setTaskStatus }));
 vi.mock('../src/lib/hermes-runner.js', () => ({ runHermesTask: mocks.runHermesTask }));
+vi.mock('../src/lib/agent-run-hermes.js', async () => {
+  const actual = await vi.importActual<typeof import('../src/lib/agent-run-hermes.js')>(
+    '../src/lib/agent-run-hermes.js',
+  );
+  return actual;
+});
+vi.mock('../src/lib/agent-executor.js', () => ({
+  resolveAgentExecutor: mocks.resolveAgentExecutor,
+  parseAgentExecutor: (v: unknown) =>
+    v === 'hermes' || v === 'internal' || v === 'lemcore' ? v : null,
+  defaultAgentExecutor: () => 'hermes',
+  AGENT_EXECUTORS: ['hermes', 'internal', 'lemcore'],
+}));
+vi.mock('../src/lib/lemcore/run.js', () => ({ runLemcoreTask: mocks.runLemcoreTask }));
 vi.mock('../src/lib/notifications.js', () => ({
   notify: mocks.notify,
   notifyTaskCompleted: mocks.notifyTaskCompleted,
@@ -96,7 +112,7 @@ function stubTask() {
       defaultBranch: 'main',
       autoCreatePr: true,
       autoReviewPr: false,
-      connection: {},
+      connection: { userId: 'user-1' },
     },
   };
 }
@@ -117,6 +133,8 @@ function stubRuntime() {
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.config.AGENT_EXECUTOR = 'hermes';
+  mocks.resolveAgentExecutor.mockResolvedValue('hermes');
+  mocks.runLemcoreTask.mockResolvedValue({ changed: true });
   mocks.loadTaskWithRepo.mockResolvedValue(stubTask());
   mocks.prepareAgentRuntime.mockResolvedValue({ cloneUrl: 'https://clone', rt: stubRuntime() });
   mocks.cloneRepository.mockResolvedValue({ emptyRepo: false });
@@ -136,7 +154,7 @@ beforeEach(() => {
   mocks.taskFindUnique.mockResolvedValue({ status: 'awaiting_review' });
 });
 
-describe('runTask with AGENT_EXECUTOR=hermes', () => {
+describe('runTask with resolveAgentExecutor=hermes', () => {
   it('runs the hermes CLI instead of the internal LLM change loop', async () => {
     await runTask('task-1');
 
@@ -233,9 +251,9 @@ describe('runTask with AGENT_EXECUTOR=hermes', () => {
   });
 });
 
-describe('runTask with AGENT_EXECUTOR=internal', () => {
+describe('runTask with resolveAgentExecutor=internal', () => {
   it('keeps the existing LLM propose/apply loop and never spawns hermes', async () => {
-    mocks.config.AGENT_EXECUTOR = 'internal';
+    mocks.resolveAgentExecutor.mockResolvedValue('internal');
     mocks.buildRepoContext.mockResolvedValue({ text: 'ctx', files: [] });
     mocks.requestChanges.mockResolvedValue({
       summary: 'did stuff',
@@ -248,6 +266,22 @@ describe('runTask with AGENT_EXECUTOR=internal', () => {
     expect(mocks.runHermesTask).not.toHaveBeenCalled();
     expect(mocks.requestChanges).toHaveBeenCalled();
     expect(mocks.applyChanges).toHaveBeenCalled();
+    expect(mocks.commitAndPush).toHaveBeenCalled();
+    expect(mocks.openPullRequest).toHaveBeenCalled();
+  });
+});
+
+
+describe('runTask with resolveAgentExecutor=lemcore', () => {
+  it('runs lemcore even when the deployment default is hermes', async () => {
+    mocks.config.AGENT_EXECUTOR = 'hermes';
+    mocks.resolveAgentExecutor.mockResolvedValue('lemcore');
+    await runTask('task-1');
+
+    expect(mocks.resolveAgentExecutor).toHaveBeenCalledWith('user-1');
+    expect(mocks.runLemcoreTask).toHaveBeenCalledTimes(1);
+    expect(mocks.runHermesTask).not.toHaveBeenCalled();
+    expect(mocks.requestChanges).not.toHaveBeenCalled();
     expect(mocks.commitAndPush).toHaveBeenCalled();
     expect(mocks.openPullRequest).toHaveBeenCalled();
   });
