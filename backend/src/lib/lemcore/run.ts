@@ -4,7 +4,7 @@ import { logEvent, hasDirtyWorkdir } from '../agent-git.js';
 import { buildSkillsSection } from '../agent-prompts.js';
 import type { LlmRuntime, TaskWithRepo } from '../agent-runtime.js';
 import { loadTaskSkills } from '../task-skills.js';
-import { runLemcoreLoop, loadTranscript, type LemcoreMessage } from './loop.js';
+import { runLemcoreLoop, loadTranscript, scrubLegacyInCloneTranscript, type LemcoreMessage } from './loop.js';
 
 // Shared instructions used by both lemcore and hermes executors
 // for the base system section.
@@ -67,6 +67,10 @@ export async function runLemcoreTask(opts: {
   const { taskId, task, workdir, rt, secrets, resume, promptOverride } = opts;
 
   await logEvent(taskId, resume ? 'resuming lemcore agent' : 'running lemcore agent');
+
+  // Older builds wrote the resume transcript inside the clone; remove any
+  // leftover so it cannot land in the task commit / PR.
+  scrubLegacyInCloneTranscript(workdir);
 
   const skillsSection = await materializeTaskSkills(task, workdir);
   const prompt = promptOverride ?? lemcorePrompt(task, rt, resume);

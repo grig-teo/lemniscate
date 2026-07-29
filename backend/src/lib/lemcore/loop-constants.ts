@@ -1,7 +1,17 @@
 export const MAX_TURNS = 60;
 export const MAX_TOOL_FAILURES = 2;
+/** Basename only — never store under the git clone (see transcriptPath). */
 export const TRANSCRIPT_FILE = 'lemcore-transcript.json';
 export const REVIEW_FILENAME = '.lemniscate-review.json';
+
+/**
+ * Resume transcript lives *beside* the clone, not inside it, so it never
+ * shows up in `git status` / commits / PRs. workdir is typically
+ * `$AGENT_WORKDIR/<taskId>` → transcript is `$AGENT_WORKDIR/<taskId>.lemcore-transcript.json`.
+ */
+export function transcriptPath(workdir: string): string {
+  return `${workdir.replace(/[/\\]+$/, '')}.${TRANSCRIPT_FILE}`;
+}
 
 export function lemcoreSystemPrompt(): string {
   const hermesInstructions =

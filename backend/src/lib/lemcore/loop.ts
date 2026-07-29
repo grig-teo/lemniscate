@@ -12,6 +12,7 @@ import {
   TRANSCRIPT_FILE,
   REVIEW_FILENAME,
   lemcoreSystemPrompt,
+  transcriptPath,
 } from './loop-constants.js';
 import type { LemcoreMessage, LemcoreRunOptions, LemcoreStep } from './loop-types.js';
 import { getAvailableTools } from './tool-catalog.js';
@@ -21,7 +22,14 @@ import {
   shouldCompactTranscript,
 } from './loop-compact.js';
 
-export { MAX_TURNS, MAX_TOOL_FAILURES, TRANSCRIPT_FILE, REVIEW_FILENAME, lemcoreSystemPrompt } from './loop-constants.js';
+export {
+  MAX_TURNS,
+  MAX_TOOL_FAILURES,
+  TRANSCRIPT_FILE,
+  REVIEW_FILENAME,
+  lemcoreSystemPrompt,
+  transcriptPath,
+} from './loop-constants.js';
 export type { LemcoreMessage, LemcoreRunOptions, LemcoreStep } from './loop-types.js';
 
 let stepCounter = 0;
@@ -43,8 +51,18 @@ async function publishStepEvent(taskId: string, step: LemcoreStep): Promise<void
   });
 }
 
+/** Drop a legacy in-clone transcript left by older builds so it cannot be committed. */
+export function scrubLegacyInCloneTranscript(workdir: string): void {
+  const legacy = path.join(workdir, TRANSCRIPT_FILE);
+  try {
+    fs.unlinkSync(legacy);
+  } catch {
+    // absent is fine
+  }
+}
+
 export function loadTranscript(workdir: string): LemcoreMessage[] | null {
-  const file = path.join(workdir, TRANSCRIPT_FILE);
+  const file = transcriptPath(workdir);
   try {
     const raw = fs.readFileSync(file, 'utf8');
     const parsed = JSON.parse(raw);
@@ -56,7 +74,7 @@ export function loadTranscript(workdir: string): LemcoreMessage[] | null {
 }
 
 function saveTranscript(workdir: string, messages: LemcoreMessage[]): void {
-  const file = path.join(workdir, TRANSCRIPT_FILE);
+  const file = transcriptPath(workdir);
   const tmp = `${file}.tmp`;
   fs.writeFileSync(tmp, JSON.stringify(messages, null, 2));
   fs.renameSync(tmp, file);
