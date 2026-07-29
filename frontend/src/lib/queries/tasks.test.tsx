@@ -15,6 +15,7 @@ import {
   useGenerateProposals,
   useHasActiveProcesses,
   useImproveTask,
+  usePatchTaskLlmConfig,
   useRerunTask,
   useStartTask,
   useTask,
@@ -263,5 +264,26 @@ describe.each([
     expect(invalidate).toHaveBeenCalledWith({ queryKey: ['tasks'] });
     expect(invalidate).toHaveBeenCalledWith({ queryKey: ['task'] });
     expect(lastMutationMeta(queryClient)).toBeUndefined();
+  });
+});
+
+describe('usePatchTaskLlmConfig', () => {
+  it('PATCHes /api/tasks/:id with { llmConfigId } and invalidates the task, suppressing the toast', async () => {
+    const queryClient = createTestQueryClient();
+    const invalidate = vi.spyOn(queryClient, 'invalidateQueries');
+    const updated = { id: 't1', repositoryId: 'r1', title: 'T', status: 'pending', llmConfigId: 'cfg-2' };
+    const { calls } = mockFetchSequence({ json: { task: updated } });
+
+    const { result } = renderHookWithClient(() => usePatchTaskLlmConfig(), queryClient);
+    result.current.mutate({ id: 't1', llmConfigId: 'cfg-2' });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    expect(calls).toEqual([
+      { url: '/api/tasks/t1', method: 'PATCH', body: { llmConfigId: 'cfg-2' } },
+    ]);
+    expect(result.current.data).toEqual({ task: updated });
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ['tasks'] });
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ['task'] });
+    expect(lastMutationMeta(queryClient)).toEqual({ suppressErrorToast: true });
   });
 });

@@ -132,6 +132,24 @@ export function useSwitchTaskModel() {
   });
 }
 
+/**
+ * PATCH /api/tasks/:id with { llmConfigId } — the pending-task model override
+ * behind the proposal/prompt detail's bottom-left dropdown. Unlike the mid-run
+ * switch (useSwitchTaskModel), this only applies to not-started tasks: the
+ * chosen config is stored and resolved at START. Invalidating ['task'] re-fetches
+ * the effective-config display fields (llmConfigName/llmModel) in the detail.
+ * Errors surface inline in the detail footer, so the global toast is suppressed.
+ */
+export function usePatchTaskLlmConfig() {
+  const invalidate = useInvalidator(['tasks'], ['task']);
+  return useMutation({
+    mutationFn: ({ id, llmConfigId }: { id: string; llmConfigId: string }) =>
+      api.patch<{ task: Task }>(`/api/tasks/${id}`, { llmConfigId }),
+    onSuccess: invalidate,
+    meta: SUPPRESS_ERROR_TOAST_META,
+  });
+}
+
 /** Re-queue a failed or closed task with fresh run state. */
 export function useRerunTask() {
   return useTaskAction('rerun');

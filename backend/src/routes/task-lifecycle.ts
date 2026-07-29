@@ -1,5 +1,6 @@
 import type { Prisma } from '@prisma/client';
 import { attachmentsData } from '../lib/task-attachments.js';
+import { prisma } from '../lib/prisma.js';
 import {
   findUnknownMcpServerSlugs,
   findUnknownSkillSlugs,
@@ -32,6 +33,23 @@ export function archivedTasksWhere(archived?: boolean) {
 // Ownership scope: task → repository → connection → user.
 export function ownedTaskWhere(userId: string, taskId: string) {
   return { id: taskId, repository: { connection: { userId } } };
+}
+
+/**
+ * Single source of truth for "the user owns this LLM config and it is enabled"
+ * (AGENTS.md §6) — used by PATCH /tasks/:id (the pending-task model override,
+ * the proposal/prompt detail's bottom dropdown) and POST /tasks/:id/model (the
+ * mid-run model switch). Returns the minimal row needed for display and the
+ * stored update, or null when the config does not exist for this user.
+ */
+export async function findOwnedLlmConfig(
+  userId: string,
+  configId: string,
+): Promise<{ id: string; name: string; model: string } | null> {
+  return prisma.llmConfig.findFirst({
+    where: { id: configId, userId, enabled: true },
+    select: { id: true, name: true, model: true },
+  });
 }
 
 // Initial status of a freshly created prompt task: queued (enqueued right

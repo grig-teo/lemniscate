@@ -47,22 +47,30 @@ export function LlmConfigSelect({
   configs,
   value,
   onChange,
+  allowDefault = true,
 }: {
   configs: LlmConfig[];
   value: string | null;
   onChange: (id: string | null) => void;
+  /**
+   * Include the "Default model" (inherit repo → user default) option. True for
+   * the composer; false for the pending-task detail, whose per-task override is
+   * always a concrete config (PATCH /tasks/:id requires llmConfigId min(1), so
+   * there is no "clear override" path — only switching to another enabled config).
+   */
+  allowDefault?: boolean;
 }) {
   return (
     <Select
-      value={value ?? 'default'}
-      onValueChange={(v) => onChange(v === 'default' ? null : v)}
+      value={value ?? (allowDefault ? 'default' : '')}
+      onValueChange={(v) => onChange(allowDefault && v === 'default' ? null : v)}
       disabled={configs.length === 0}
     >
       <SelectTrigger className="h-8 w-40 shrink-0" aria-label="Model">
         <SelectValue />
       </SelectTrigger>
       <SelectContent>
-        <SelectItem value="default">Default model</SelectItem>
+        {allowDefault && <SelectItem value="default">Default model</SelectItem>}
         {configs.map((config) => (
           <SelectItem key={config.id} value={config.id}>
             <span className="truncate">

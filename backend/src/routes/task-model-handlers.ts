@@ -3,7 +3,7 @@ import { prisma } from '../lib/prisma.js';
 import { publishTaskEvent } from '../lib/task-events.js';
 import { authenticatedUserId } from '../plugins/auth.js';
 import { parseOrReply } from './helpers.js';
-import { modelSwitchBlocker, ownedTaskWhere } from './task-lifecycle.js';
+import { findOwnedLlmConfig, modelSwitchBlocker, ownedTaskWhere } from './task-lifecycle.js';
 import { idParamsSchema, modelBodySchema } from './task-schemas.js';
 
 // Model-switch handler for the console footer's model dropdown, split out of
@@ -35,10 +35,9 @@ export async function switchTaskModel(request: FastifyRequest, reply: FastifyRep
   if (blocker) {
     return reply.code(400).send({ error: blocker });
   }
-  const config = await prisma.llmConfig.findFirst({
-    where: { id: body.llmConfigId, userId, enabled: true },
-    select: { id: true, name: true, model: true },
-  });
+  // Ownership+enabled check is the shared findOwnedLlmConfig (§6 SSoT) — same
+  // query shape as PATCH /tasks/:id's per-task model override.
+  const config = await findOwnedLlmConfig(userId, body.llmConfigId);
   if (!config) {
     return reply.code(400).send({ error: 'LLM config not found or disabled' });
   }

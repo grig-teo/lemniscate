@@ -42,6 +42,7 @@ import {
   ViewToggle,
   type TaskWithAttachments,
 } from '@/components/console/TaskEditorFields';
+import { PendingTaskModelSelect } from '@/components/console/PendingTaskModelSelect';
 
 /** PATCH /api/tasks/:id — save edits on a pending task without starting it. */
 function usePatchTask() {
@@ -216,6 +217,7 @@ function TaskEditorInner({
         <LibraryAttachments state={attachments} columns repositoryId={task.repositoryId} />
       </div>
       <div className="flex shrink-0 items-center gap-2">
+        {task.status === 'pending' && <PendingTaskModelSelect task={task} />}
         {(task.status === 'awaiting_review' || task.status === 'reviewing_code') && task.branchName && (
           <Button
             size="sm"
