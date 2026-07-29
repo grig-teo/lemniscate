@@ -10,6 +10,12 @@ import {
   type ToolResult,
   type ToolName,
 } from './tools.js';
+import {
+  toolGraphImpact,
+  toolGraphNeighbors,
+  toolGraphQuery,
+  toolGraphSearch,
+} from './graph-tools.js';
 import { MAX_TOOL_FAILURES } from './loop-constants.js';
 import type { LemcoreMessage, LemcoreStep } from './loop-types.js';
 
@@ -52,6 +58,18 @@ export async function executeTool(
       return toolGlob(workdir, String(args.pattern ?? ''), secrets);
     case 'web_search':
       return toolWebSearch(String(args.query ?? ''), secrets);
+    case 'graph_query':
+      return toolGraphQuery(workdir, String(args.pattern ?? ''), String(args.target ?? ''));
+    case 'graph_impact':
+      return toolGraphImpact(workdir, asStringArray(args.files));
+    case 'graph_neighbors':
+      return toolGraphNeighbors(
+        workdir,
+        String(args.center ?? ''),
+        args.depth !== undefined ? Number(args.depth) : undefined,
+      );
+    case 'graph_search':
+      return toolGraphSearch(workdir, String(args.query ?? ''));
     default:
       return {
         tool: name as ToolName,
@@ -63,8 +81,21 @@ export async function executeTool(
   }
 }
 
+function asStringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.map((v) => String(v)).filter(Boolean);
+}
+
 function toolTitle(name: string, args: Record<string, unknown>): string {
-  const hint = args.path ?? args.command ?? args.pattern ?? args.query ?? '';
+  const hint =
+    args.path ??
+    args.command ??
+    args.pattern ??
+    args.query ??
+    args.target ??
+    args.center ??
+    (Array.isArray(args.files) ? args.files[0] : '') ??
+    '';
   const hintText = hint === undefined || hint === null ? '' : String(hint);
   return hintText ? `${name}(${hintText})` : name;
 }

@@ -4,6 +4,8 @@ import { logEvent, hasDirtyWorkdir } from '../agent-git.js';
 import { buildSkillsSection } from '../agent-prompts.js';
 import type { LlmRuntime, TaskWithRepo } from '../agent-runtime.js';
 import { loadTaskSkills } from '../task-skills.js';
+import { buildLemcoreImplContext } from './graph-context.js';
+import { scanRepositoryGraph } from './graph-scan.js';
 import { runLemcoreLoop, loadTranscript, scrubLegacyInCloneTranscript, type LemcoreMessage } from './loop.js';
 
 // Shared instructions used by both lemcore and hermes executors
@@ -25,6 +27,23 @@ function lemcorePrompt(task: TaskWithRepo, rt: LlmRuntime, resume = false): stri
     '',
     HERMES_INSTRUCTIONS,
   ].join('\n');
+}
+
+/** Attach graph-derived context once; avoid duplicating identical blocks. */
+function appendGraphContext(
+  basePrompt: string,
+  scanSummary: string,
+  implContext: string,
+): string {
+  const blocks = [basePrompt.trimEnd(), '', scanSummary.trim()];
+  if (implContext.trim() && implContext.trim() !== scanSummary.trim()) {
+    blocks.push('', implContext.trim());
+  }
+  blocks.push(
+    '',
+    'Use the codebase graph summary above for navigation. Prefer graph_* tools and selective file reads over dumping large source corpora.',
+  );
+  return blocks.join('\n');
 }
 
 /** Write selected skills under .agents/skills/<slug>/SKILL.md (hermes parity). */
@@ -53,6 +72,41 @@ export interface LemcoreTaskResult {
   changed: boolean;
 }
 
+/** Scan repo → graph session → compact implementation context for the prompt. */
+async function prepareGraphBackedPrompt(
+  taskId: string,
+  task: TaskWithRepo,
+  workdir: string,
+  rt: LlmRuntime,
+  resume: boolean,
+  promptOverride?: string,
+): Promise<string> {
+  const graphScan = await scanRepositoryGraph(taskId, workdir);
+  const implContext = buildLemcoreImplContext(
+    workdir,
+    `${task.title}\n${task.prompt ?? ''}`,
+  );
+  if (implContext.usedGraph) {
+    await logEvent(
+      taskId,
+      `implementation context from graph (${implContext.source}): ` +
+        `~${implContext.summaryTokens} tokens ` +
+        `(~${Math.round(implContext.savedRatio * 100)}% under raw dump estimate)`,
+    );
+  }
+  const basePrompt = promptOverride ?? lemcorePrompt(task, rt, resume);
+  return appendGraphContext(basePrompt, graphScan.summaryText, implContext.text);
+}
+
+function loadResumeTranscript(
+  workdir: string,
+  resume: boolean,
+  promptOverride?: string,
+): LemcoreMessage[] | undefined {
+  if (!resume || promptOverride) return undefined;
+  return loadTranscript(workdir) ?? undefined;
+}
+
 export async function runLemcoreTask(opts: {
   taskId: string;
   task: TaskWithRepo;
@@ -67,20 +121,22 @@ export async function runLemcoreTask(opts: {
   const { taskId, task, workdir, rt, secrets, resume, promptOverride } = opts;
 
   await logEvent(taskId, resume ? 'resuming lemcore agent' : 'running lemcore agent');
-
   // Older builds wrote the resume transcript inside the clone; remove any
   // leftover so it cannot land in the task commit / PR.
   scrubLegacyInCloneTranscript(workdir);
 
+  const prompt = await prepareGraphBackedPrompt(
+    taskId,
+    task,
+    workdir,
+    rt,
+    resume,
+    promptOverride,
+  );
   const skillsSection = await materializeTaskSkills(task, workdir);
-  const prompt = promptOverride ?? lemcorePrompt(task, rt, resume);
-
-  let resumeTranscript: LemcoreMessage[] | undefined;
-  if (resume && !promptOverride) {
-    resumeTranscript = loadTranscript(workdir) ?? undefined;
-    if (resumeTranscript) {
-      await logEvent(taskId, `resumed from transcript (${resumeTranscript.length} messages)`);
-    }
+  const resumeTranscript = loadResumeTranscript(workdir, resume, promptOverride);
+  if (resumeTranscript) {
+    await logEvent(taskId, `resumed from transcript (${resumeTranscript.length} messages)`);
   }
 
   const finalContent = await runLemcoreLoop({

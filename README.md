@@ -40,7 +40,13 @@ serve it via any static pages hosting.
 docker-compose.yml    # postgres, redis, backend, worker, frontend
 backend/              # Fastify API + BullMQ worker (Dockerfile, .env.example)
 frontend/             # Vite/React app served by nginx (Dockerfile, .env.example)
+docs/                 # design specs (incl. lemcore codebase graph)
 ```
+
+Lemcore (the structured TypeScript agent) builds a
+[code-review-graph](https://github.com/tirth8205/code-review-graph) codebase
+graph on every repository scan and prefers graph-derived context during
+implementation to cut LLM tokens. Details: [docs/lemcore-code-graph.md](docs/lemcore-code-graph.md).
 
 ## Getting started
 

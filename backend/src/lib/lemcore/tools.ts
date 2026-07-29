@@ -18,7 +18,11 @@ export type ToolName =
   | 'bash'
   | 'grep'
   | 'glob'
-  | 'web_search';
+  | 'web_search'
+  | 'graph_query'
+  | 'graph_impact'
+  | 'graph_neighbors'
+  | 'graph_search';
 
 export interface ToolResult {
   tool: ToolName;

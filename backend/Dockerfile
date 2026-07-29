@@ -26,8 +26,12 @@ ENV NODE_ENV=production
 # via the mounted host docker socket (compose mounts /var/run/docker.sock).
 # openssh+sshpass: the VPS deploy path (lib/deploy/vps.ts) shells out to the
 # `ssh` and `sshpass` CLIs to deploy onto a user's own server.
+# python3+pip: lemcore installs code-review-graph (PyPI) to build a codebase
+# graph on every repository scan and cut implementation-context tokens.
 RUN apk add --no-cache git openssl bash curl xz ripgrep tar docker-cli openssh sshpass \
-  && addgroup -S app && adduser -S app -G app
+    python3 py3-pip \
+  && addgroup -S app && adduser -S app -G app \
+  && pip3 install --break-system-packages --no-cache-dir 'code-review-graph==2.3.7'
 # Hermes Agent CLI: the worker runs `hermes chat -q ...` inside cloned repos.
 # Installed as root, so the script uses its FHS layout: code at
 # /usr/local/lib/hermes-agent, launcher at /usr/local/bin/hermes (on PATH for
