@@ -72,7 +72,7 @@ export function getAvailableTools(): ChatCompletionTool[] {
         pattern: {
           type: 'string',
           description:
-            'callers_of | callees_of | imports_of | importers_of | references_to | children_of | file_summary',
+            'callers_of | callees_of | imports_of | importers_of | children_of | tests_for | inheritors_of | file_summary',
         },
         target: {
           type: 'string',

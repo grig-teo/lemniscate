@@ -1,5 +1,10 @@
-// Thin process wrapper around the code-review-graph CLI.
+// Thin process wrapper around the code-review-graph CLI (v2.3.x).
 // Fail-soft: missing binary / non-zero exit never throws to callers.
+//
+// Upstream argparse notes (v2.3.7):
+// - --data-dir is only on build/update/status/watch/visualize/wiki/…
+// - query/impact/search/architecture rely on CRG_DATA_DIR or registry
+// - impact --files uses nargs='+' → one flag, many values
 
 import { execFile } from 'node:child_process';
 import type { CliRunResult, CliRunner } from './types.js';
@@ -7,6 +12,20 @@ import type { CliRunResult, CliRunner } from './types.js';
 export const DEFAULT_CLI = 'code-review-graph';
 export const DEFAULT_BUILD_TIMEOUT_MS = 120_000;
 export const DEFAULT_QUERY_TIMEOUT_MS = 30_000;
+
+/** Patterns accepted by `code-review-graph query` (v2.3.7 choices=). */
+export const CRG_QUERY_PATTERNS = [
+  'callers_of',
+  'callees_of',
+  'imports_of',
+  'importers_of',
+  'children_of',
+  'tests_for',
+  'inheritors_of',
+  'file_summary',
+] as const;
+
+export type CrgQueryPattern = (typeof CRG_QUERY_PATTERNS)[number];
 
 export function defaultCliRunner(
   cliPath: string = DEFAULT_CLI,
@@ -48,6 +67,10 @@ export function defaultCliRunner(
     });
 }
 
+function crgEnv(dataDir: string): NodeJS.ProcessEnv {
+  return { CRG_DATA_DIR: dataDir };
+}
+
 export async function runGraphBuild(
   run: CliRunner,
   repoRoot: string,
@@ -56,11 +79,7 @@ export async function runGraphBuild(
 ): Promise<CliRunResult> {
   return run(
     ['build', '--repo', repoRoot, '--data-dir', dataDir, '--quiet', '--skip-flows'],
-    {
-      cwd: repoRoot,
-      timeoutMs,
-      env: { CRG_DATA_DIR: dataDir },
-    },
+    { cwd: repoRoot, timeoutMs, env: crgEnv(dataDir) },
   );
 }
 
@@ -73,8 +92,21 @@ export async function runGraphStatus(
   return run(['status', '--repo', repoRoot, '--data-dir', dataDir, '--json'], {
     cwd: repoRoot,
     timeoutMs,
-    env: { CRG_DATA_DIR: dataDir },
+    env: crgEnv(dataDir),
   });
+}
+
+/** Export full graph JSON via visualize (writes `<dataDir>/graph.json`). */
+export async function runGraphExportJson(
+  run: CliRunner,
+  repoRoot: string,
+  dataDir: string,
+  timeoutMs: number,
+): Promise<CliRunResult> {
+  return run(
+    ['visualize', '--repo', repoRoot, '--data-dir', dataDir, '--format', 'json'],
+    { cwd: repoRoot, timeoutMs, env: crgEnv(dataDir) },
+  );
 }
 
 export async function runGraphArchitecture(
@@ -83,14 +115,12 @@ export async function runGraphArchitecture(
   dataDir: string,
   timeoutMs: number,
 ): Promise<CliRunResult> {
-  return run(
-    ['architecture', '--repo', repoRoot, '--data-dir', dataDir, '--detail-level', 'minimal'],
-    {
-      cwd: repoRoot,
-      timeoutMs,
-      env: { CRG_DATA_DIR: dataDir },
-    },
-  );
+  // No --data-dir on architecture (v2.3.7); CRG_DATA_DIR + build registry.
+  return run(['architecture', '--repo', repoRoot, '--detail-level', 'minimal'], {
+    cwd: repoRoot,
+    timeoutMs,
+    env: crgEnv(dataDir),
+  });
 }
 
 export async function runGraphQuery(
@@ -101,14 +131,11 @@ export async function runGraphQuery(
   target: string,
   timeoutMs: number,
 ): Promise<CliRunResult> {
-  return run(
-    ['query', pattern, target, '--repo', repoRoot, '--data-dir', dataDir],
-    {
-      cwd: repoRoot,
-      timeoutMs,
-      env: { CRG_DATA_DIR: dataDir },
-    },
-  );
+  return run(['query', pattern, target, '--repo', repoRoot], {
+    cwd: repoRoot,
+    timeoutMs,
+    env: crgEnv(dataDir),
+  });
 }
 
 export async function runGraphImpact(
@@ -119,22 +146,15 @@ export async function runGraphImpact(
   depth: number,
   timeoutMs: number,
 ): Promise<CliRunResult> {
-  const args = [
-    'impact',
-    '--repo',
-    repoRoot,
-    '--data-dir',
-    dataDir,
-    '--depth',
-    String(depth),
-  ];
-  for (const f of files) {
-    args.push('--files', f);
+  const args = ['impact', '--repo', repoRoot, '--depth', String(depth)];
+  if (files.length > 0) {
+    // Single --files followed by all paths (argparse nargs='+').
+    args.push('--files', ...files);
   }
   return run(args, {
     cwd: repoRoot,
     timeoutMs,
-    env: { CRG_DATA_DIR: dataDir },
+    env: crgEnv(dataDir),
   });
 }
 
@@ -145,12 +165,9 @@ export async function runGraphSearch(
   query: string,
   timeoutMs: number,
 ): Promise<CliRunResult> {
-  return run(
-    ['search', query, '--repo', repoRoot, '--data-dir', dataDir, '--limit', '20'],
-    {
-      cwd: repoRoot,
-      timeoutMs,
-      env: { CRG_DATA_DIR: dataDir },
-    },
-  );
+  return run(['search', query, '--repo', repoRoot, '--limit', '20'], {
+    cwd: repoRoot,
+    timeoutMs,
+    env: crgEnv(dataDir),
+  });
 }

@@ -1,6 +1,7 @@
 // Build a lemcore codebase graph for one repository scan.
 // Prefers code-review-graph CLI; falls back to a local structural scan.
 
+import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import {
   DEFAULT_BUILD_TIMEOUT_MS,
@@ -9,13 +10,13 @@ import {
   defaultCliRunner,
   runGraphArchitecture,
   runGraphBuild,
+  runGraphExportJson,
   runGraphStatus,
 } from './cli.js';
 import { buildFallbackGraph } from './fallback-scan.js';
 import {
   architectureTextFromUnknown,
-  filesFromUnknown,
-  nodesFromUnknown,
+  graphPartsFromExport,
   statsFromStatus,
   tryParseJson,
 } from './parse.js';
@@ -25,6 +26,9 @@ import type {
   CliRunner,
   LemcoreCodebaseGraph,
 } from './types.js';
+
+const MAX_IMPORT_NODES = 4_000;
+const MAX_IMPORT_EDGES = 8_000;
 
 export function defaultGraphDataDir(repoRoot: string): string {
   // Sibling of the clone so graph artifacts never enter git status / PRs.
@@ -58,6 +62,12 @@ export async function buildLemcoreCodebaseGraph(
 
     const status = await runGraphStatus(run, repoRoot, dataDir, DEFAULT_QUERY_TIMEOUT_MS);
     const statusJson = status.ok ? tryParseJson(status.stdout) : null;
+
+    // Full node/edge/file lists live in visualize --format json export,
+    // not in status --json (which only has numeric counts).
+    await runGraphExportJson(run, repoRoot, dataDir, DEFAULT_QUERY_TIMEOUT_MS);
+    const exported = await readExportJson(dataDir);
+
     const arch = await runGraphArchitecture(
       run,
       repoRoot,
@@ -69,30 +79,48 @@ export async function buildLemcoreCodebaseGraph(
       ? architectureTextFromUnknown(archJson, arch.stdout)
       : undefined;
 
-    const files = unique([
-      ...filesFromUnknown(statusJson),
-      ...filesFromUnknown(archJson),
-    ]);
-    const nodes = [
-      ...nodesFromUnknown(statusJson),
-      ...nodesFromUnknown(archJson),
-      ...files.map((f) => ({
-        id: `file:${f}`,
-        name: f,
-        kind: 'file' as const,
-        filePath: f,
-      })),
-    ];
+    let { nodes, edges, files } = graphPartsFromExport(exported);
+    nodes = nodes.slice(0, MAX_IMPORT_NODES);
+    edges = edges.slice(0, MAX_IMPORT_EDGES);
+
+    // If export was empty/missing, seed structure from local scan so
+    // implementation context still has paths — CLI queries still use dataDir.
+    if (files.length === 0 && nodes.length === 0) {
+      const seed = await buildFallbackGraph(repoRoot);
+      files = seed.files;
+      nodes = seed.nodes;
+      edges = seed.edges;
+    } else if (files.length === 0) {
+      files = unique(
+        nodes
+          .map((n) => n.filePath)
+          .filter((f): f is string => typeof f === 'string' && f.length > 0),
+      );
+    }
+
+    // Ensure every file path has a file node for neighborhood walks.
+    const fileNodes = files.map((f) => ({
+      id: `file:${f}`,
+      name: f,
+      kind: 'file' as const,
+      filePath: f,
+    }));
     const stats = statsFromStatus(statusJson, files);
+    if (stats.fileCount === 0 && files.length > 0) stats.fileCount = files.length;
+    if (stats.nodeCount === 0 && nodes.length > 0) {
+      stats.nodeCount = nodes.length + fileNodes.length;
+    }
+    if (stats.edgeCount === 0 && edges.length > 0) stats.edgeCount = edges.length;
+
     const graph: LemcoreCodebaseGraph = {
       source: 'code-review-graph',
       ready: true,
       builtAt: new Date().toISOString(),
       repoRoot,
       dataDir,
-      nodes: dedupeNodes(nodes),
-      edges: [],
-      files: files.length > 0 ? files : nodes.map((n) => n.filePath).filter(Boolean) as string[],
+      nodes: dedupeNodes([...nodes, ...fileNodes]),
+      edges,
+      files,
       architectureText,
       stats,
     };
@@ -109,6 +137,23 @@ export async function buildLemcoreCodebaseGraph(
     const msg = err instanceof Error ? err.message : String(err);
     return withFallback(repoRoot, dataDir, msg);
   }
+}
+
+async function readExportJson(dataDir: string): Promise<unknown | null> {
+  const candidates = [
+    path.join(dataDir, 'graph.json'),
+    path.join(dataDir, 'export.json'),
+  ];
+  for (const p of candidates) {
+    try {
+      const text = await fs.readFile(p, 'utf8');
+      const parsed = tryParseJson(text);
+      if (parsed) return parsed;
+    } catch {
+      /* try next */
+    }
+  }
+  return null;
 }
 
 async function withFallback(

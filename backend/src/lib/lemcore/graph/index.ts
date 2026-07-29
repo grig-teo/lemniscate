@@ -3,15 +3,30 @@
 
 export { buildLemcoreCodebaseGraph, defaultGraphDataDir } from './build.js';
 export {
+  CRG_QUERY_PATTERNS,
   DEFAULT_BUILD_TIMEOUT_MS,
   DEFAULT_CLI,
   DEFAULT_QUERY_TIMEOUT_MS,
   defaultCliRunner,
+  runGraphArchitecture,
+  runGraphBuild,
+  runGraphExportJson,
+  runGraphImpact,
+  runGraphQuery,
+  runGraphSearch,
+  runGraphStatus,
 } from './cli.js';
 export { buildFallbackGraph } from './fallback-scan.js';
 export {
+  filesFromUnknown,
+  graphPartsFromExport,
+  statsFromStatus,
+  tryParseJson,
+} from './parse.js';
+export {
   impactGraph,
   neighborsOf,
+  normalizeQueryPattern,
   queryGraph,
   searchGraph,
 } from './query.js';
@@ -29,6 +44,7 @@ export {
   summarizeQuery,
   tokenSavings,
 } from './summary.js';
+export type { CrgQueryPattern } from './cli.js';
 export type {
   BuildGraphOptions,
   CliRunResult,

@@ -82,19 +82,61 @@ describe('buildLemcoreCodebaseGraph', () => {
     resetGraphSessions();
   });
 
-  it('uses code-review-graph CLI output when the runner succeeds', async () => {
+  it('uses code-review-graph CLI export when the runner succeeds', async () => {
+    const dataDir = path.join(root, '..', `graph-data-${path.basename(root)}`);
+    await mkdir(dataDir, { recursive: true });
+
     const runCli: CliRunner = async (args) => {
       if (args[0] === 'build') {
         return { ok: true, stdout: 'built', stderr: '', code: 0 };
       }
       if (args[0] === 'status') {
+        // Real v2.3.7 status --json: numeric counts only.
         return {
           ok: true,
           stdout: JSON.stringify({
-            files: ['src/main.ts', 'src/util.ts'],
-            nodes: 4,
-            edges: 2,
+            nodes: 3,
+            edges: 1,
+            files: 2,
+            languages: ['typescript'],
+            last_updated: '2026-01-01T00:00:00Z',
           }),
+          stderr: '',
+          code: 0,
+        };
+      }
+      if (args[0] === 'visualize' && args.includes('json')) {
+        await writeFile(
+          path.join(dataDir, 'graph.json'),
+          JSON.stringify({
+            nodes: [
+              {
+                id: 1,
+                kind: 'Function',
+                name: 'main',
+                qualified_name: 'src/main.ts::main',
+                file_path: 'src/main.ts',
+              },
+              {
+                id: 2,
+                kind: 'Function',
+                name: 'util',
+                qualified_name: 'src/util.ts::util',
+                file_path: 'src/util.ts',
+              },
+            ],
+            edges: [
+              {
+                kind: 'CALLS',
+                source: 'src/main.ts::main',
+                target: 'src/util.ts::util',
+              },
+            ],
+          }),
+        );
+        return {
+          ok: true,
+          stdout: `JSON exported: ${path.join(dataDir, 'graph.json')}`,
           stderr: '',
           code: 0,
         };
@@ -103,8 +145,8 @@ describe('buildLemcoreCodebaseGraph', () => {
         return {
           ok: true,
           stdout: JSON.stringify({
-            overview: 'tiny app with main entry',
-            files: ['src/main.ts'],
+            summary: 'tiny app with main entry',
+            communities: [{ id: 0, name: 'core', size: 2 }],
           }),
           stderr: '',
           code: 0,
@@ -116,11 +158,16 @@ describe('buildLemcoreCodebaseGraph', () => {
     const graph = await buildLemcoreCodebaseGraph({
       repoRoot: root,
       runCli,
-      dataDir: path.join(root, '..', 'graph-data'),
+      dataDir,
     });
     expect(graph.source).toBe('code-review-graph');
     expect(graph.ready).toBe(true);
-    expect(graph.files).toEqual(expect.arrayContaining(['src/main.ts']));
+    expect(graph.files).toEqual(expect.arrayContaining(['src/main.ts', 'src/util.ts']));
+    expect(graph.edges.length).toBeGreaterThan(0);
+    expect(graph.nodes.some((n) => n.name === 'main')).toBe(true);
+    expect(graph.stats.fileCount).toBe(2);
+    expect(graph.stats.nodeCount).toBe(3);
+    expect(graph.stats.edgeCount).toBe(1);
     expect(graph.architectureText).toMatch(/tiny app/);
     expect(graph.stats.summaryTokens).toBeGreaterThan(0);
   });

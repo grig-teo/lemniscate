@@ -27,6 +27,13 @@ import type {
   LemcoreCodebaseGraph,
 } from './types.js';
 
+/** Map aliases to upstream `query` CLI choices (v2.3.7). */
+export function normalizeQueryPattern(pattern: string): string {
+  const p = pattern.trim();
+  if (p === 'references_to') return 'callers_of';
+  return p;
+}
+
 export async function queryGraph(
   session: GraphSession,
   pattern: string,
@@ -34,18 +41,24 @@ export async function queryGraph(
   runCli?: CliRunner,
 ): Promise<GraphQueryResult> {
   const graph = session.graph;
+  const cliPattern = normalizeQueryPattern(pattern);
   if (graph.source === 'code-review-graph' && graph.dataDir) {
     const run = runCli ?? defaultCliRunner(DEFAULT_CLI);
     const res = await runGraphQuery(
       run,
       graph.repoRoot,
       graph.dataDir,
-      pattern,
+      cliPattern,
       target,
       DEFAULT_QUERY_TIMEOUT_MS,
     );
     if (res.ok) {
-      return queryResultFromUnknown(pattern, target, tryParseJson(res.stdout), res.stdout);
+      return queryResultFromUnknown(
+        pattern,
+        target,
+        tryParseJson(res.stdout),
+        res.stdout,
+      );
     }
   }
   return localQuery(graph, pattern, target);

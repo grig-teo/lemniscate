@@ -1,5 +1,5 @@
-// Parse code-review-graph CLI JSON into our graph model. Defensive: the
-// upstream schema is not version-pinned, so we accept several shapes.
+// Parse code-review-graph CLI JSON into our graph model.
+// Status --json (v2.3.7) is counts-only; path lists come from export/tools.
 
 import type {
   GraphEdge,
@@ -10,20 +10,33 @@ import type {
   GraphStats,
 } from './types.js';
 
+/** Real `status --json` payload shape from code-review-graph v2.3.7. */
+export interface CrgStatusJson {
+  nodes: number;
+  edges: number;
+  files: number;
+  languages?: string[];
+  last_updated?: string | null;
+  vcs?: string | null;
+  built_on_branch?: string | null;
+  built_at_commit?: string | null;
+  current_branch?: string | null;
+  current_sha?: string | null;
+}
+
 export function tryParseJson(text: string): unknown | null {
   const trimmed = text.trim();
   if (!trimmed) return null;
   try {
     return JSON.parse(trimmed);
   } catch {
-    // Some CLIs print banners before JSON — try the last {...} block.
     const start = trimmed.indexOf('{');
     const end = trimmed.lastIndexOf('}');
     if (start >= 0 && end > start) {
       try {
         return JSON.parse(trimmed.slice(start, end + 1));
       } catch {
-        return null;
+        /* fall through */
       }
     }
     const aStart = trimmed.indexOf('[');
@@ -39,11 +52,22 @@ export function tryParseJson(text: string): unknown | null {
   }
 }
 
+/**
+ * Parse status --json. `files`/`nodes`/`edges` are numeric counts upstream.
+ * Path lists must come from export or tool payloads, not status.
+ */
 export function statsFromStatus(raw: unknown, files: string[]): GraphStats {
   const obj = asRecord(raw) ?? {};
-  const fileCount = num(obj.files ?? obj.file_count ?? obj.fileCount) ?? files.length;
-  const nodeCount = num(obj.nodes ?? obj.node_count ?? obj.nodeCount) ?? fileCount;
-  const edgeCount = num(obj.edges ?? obj.edge_count ?? obj.edgeCount) ?? 0;
+  const fileCount =
+    num(obj.files) ??
+    num(obj.file_count) ??
+    num(obj.fileCount) ??
+    num(obj.files_count) ??
+    files.length;
+  const nodeCount =
+    num(obj.nodes) ?? num(obj.node_count) ?? num(obj.nodeCount) ?? files.length;
+  const edgeCount =
+    num(obj.edges) ?? num(obj.edge_count) ?? num(obj.edgeCount) ?? 0;
   return {
     fileCount,
     nodeCount,
@@ -53,11 +77,38 @@ export function statsFromStatus(raw: unknown, files: string[]): GraphStats {
   };
 }
 
+/** Load nodes/edges/files from `visualize --format json` export payload. */
+export function graphPartsFromExport(raw: unknown): {
+  nodes: GraphNode[];
+  edges: GraphEdge[];
+  files: string[];
+} {
+  const obj = asRecord(raw);
+  if (!obj) return { nodes: [], edges: [], files: [] };
+  const nodes = nodesFromUnknown(obj.nodes ?? obj);
+  const edges = edgesFromUnknown(obj.edges ?? obj);
+  const files = unique([
+    ...filesFromUnknown(obj),
+    ...nodes
+      .map((n) => n.filePath)
+      .filter((v): v is string => typeof v === 'string' && v.length > 0),
+  ]);
+  return { nodes, edges, files };
+}
+
 export function nodesFromUnknown(raw: unknown): GraphNode[] {
   if (Array.isArray(raw)) return raw.flatMap((item) => nodeFromUnknown(item) ?? []);
   const obj = asRecord(raw);
   if (!obj) return [];
-  for (const key of ['nodes', 'results', 'items', 'matches', 'entities']) {
+  for (const key of [
+    'nodes',
+    'results',
+    'items',
+    'matches',
+    'entities',
+    'changed_nodes',
+    'impacted_nodes',
+  ]) {
     if (Array.isArray(obj[key])) return nodesFromUnknown(obj[key]);
   }
   const single = nodeFromUnknown(obj);
@@ -74,21 +125,37 @@ export function edgesFromUnknown(raw: unknown): GraphEdge[] {
   return [];
 }
 
+/**
+ * Extract path lists from tool/export payloads.
+ * Ignores numeric `files` counts from status --json.
+ */
 export function filesFromUnknown(raw: unknown): string[] {
   const obj = asRecord(raw);
   if (!obj) return [];
-  for (const key of ['files', 'file_paths', 'paths', 'changed_files']) {
-    if (Array.isArray(obj[key])) {
-      return obj[key]
-        .map((v) => (typeof v === 'string' ? v : asRecord(v)?.path))
-        .filter((v): v is string => typeof v === 'string' && v.length > 0);
+  const out: string[] = [];
+  for (const key of [
+    'files',
+    'file_paths',
+    'paths',
+    'changed_files',
+    'impacted_files',
+  ]) {
+    const val = obj[key];
+    if (typeof val === 'number') continue; // status --json count
+    if (!Array.isArray(val)) continue;
+    for (const v of val) {
+      if (typeof v === 'string' && v.length > 0) out.push(v);
+      else {
+        const p = asRecord(v)?.path ?? asRecord(v)?.file_path;
+        if (typeof p === 'string' && p.length > 0) out.push(p);
+      }
     }
   }
   const nodes = nodesFromUnknown(raw);
-  const fromNodes = nodes
-    .map((n) => n.filePath)
-    .filter((v): v is string => typeof v === 'string' && v.length > 0);
-  return unique(fromNodes);
+  for (const n of nodes) {
+    if (n.filePath) out.push(n.filePath);
+  }
+  return unique(out);
 }
 
 export function queryResultFromUnknown(
@@ -111,7 +178,9 @@ export function architectureTextFromUnknown(raw: unknown, stdout: string): strin
   const obj = asRecord(raw);
   if (obj) {
     for (const key of ['overview', 'summary', 'text', 'architecture']) {
-      if (typeof obj[key] === 'string' && obj[key].trim()) return String(obj[key]).trim();
+      if (typeof obj[key] === 'string' && String(obj[key]).trim()) {
+        return String(obj[key]).trim();
+      }
     }
     const pretty = compactJson(obj);
     if (pretty) return pretty;
@@ -121,15 +190,26 @@ export function architectureTextFromUnknown(raw: unknown, stdout: string): strin
 
 function nodeFromUnknown(raw: unknown): GraphNode | null {
   if (typeof raw === 'string' && raw.trim()) {
-    return { id: raw, name: raw, kind: guessKind(raw), filePath: looksLikePath(raw) ? raw : undefined };
+    return {
+      id: raw,
+      name: raw,
+      kind: guessKind(raw),
+      filePath: looksLikePath(raw) ? raw : undefined,
+    };
   }
   const obj = asRecord(raw);
   if (!obj) return null;
-  const name = str(obj.name ?? obj.qualified_name ?? obj.qualifiedName ?? obj.id ?? obj.path);
+  const name = str(
+    obj.name ?? obj.qualified_name ?? obj.qualifiedName ?? obj.id ?? obj.path,
+  );
   if (!name) return null;
   const filePath = str(obj.file ?? obj.file_path ?? obj.filePath ?? obj.path);
-  const kind = normalizeNodeKind(str(obj.kind ?? obj.type ?? obj.node_type) ?? filePath ?? name);
-  const id = str(obj.id) ?? (filePath ? `file:${filePath}` : `${kind}:${name}`);
+  const kind = normalizeNodeKind(
+    str(obj.kind ?? obj.type ?? obj.node_type) ?? filePath ?? name,
+  );
+  const id =
+    str(obj.qualified_name ?? obj.qualifiedName ?? obj.id) ??
+    (filePath ? `file:${filePath}` : `${kind}:${name}`);
   return {
     id,
     name,
@@ -168,7 +248,9 @@ function normalizeEdgeKind(raw: string): GraphEdgeKind {
   if (v.includes('import')) return 'imports';
   if (v.includes('call')) return 'calls';
   if (v.includes('contain')) return 'contains';
-  if (v.includes('inherit') || v.includes('extend') || v.includes('implement')) return 'inherits';
+  if (v.includes('inherit') || v.includes('extend') || v.includes('implement')) {
+    return 'inherits';
+  }
   if (v.includes('ref')) return 'references';
   if (v.includes('depend')) return 'depends_on';
   return 'unknown';
@@ -183,7 +265,9 @@ function looksLikePath(s: string): boolean {
 }
 
 function asRecord(v: unknown): Record<string, unknown> | null {
-  if (v && typeof v === 'object' && !Array.isArray(v)) return v as Record<string, unknown>;
+  if (v && typeof v === 'object' && !Array.isArray(v)) {
+    return v as Record<string, unknown>;
+  }
   return null;
 }
 
