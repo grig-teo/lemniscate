@@ -9,6 +9,7 @@ import { useWorkspaceSelection } from '@/lib/selection';
 import { ConsoleHeader } from '@/components/console/ConsoleHeader';
 import { ConsoleFooterStatusBar } from '@/components/console/ConsoleFooterStatusBar';
 import { ConsoleLog } from '@/components/console/ConsoleLog';
+import { LemcoreRunView } from '@/components/console/LemcoreRunView';
 import { ErrorBanner } from '@/components/console/ErrorBanner';
 import { ArchivedPane } from '@/components/console/ArchivedPane';
 import { ArchivedTaskDetail } from '@/components/console/ArchivedTaskDetail';
@@ -149,12 +150,28 @@ export function ConsolePane() {
         <ProposalDetail key={selectedTask.id} taskId={selectedTask.id} />
       ) : (
         <>
-          <ConsoleLog
-            historyQuery={consoleState.historyQuery}
-            historyLogs={consoleState.historyLogs}
-            liveLogs={consoleState.liveLogs}
-            streamError={consoleState.streamError}
-          />
+          {consoleState.hasAgentSteps ? (
+            <LemcoreRunView
+              steps={consoleState.agentSteps}
+              running={isRunningStatus(status)}
+              streamError={consoleState.streamError}
+              isLoading={consoleState.historyQuery.isLoading}
+              isError={consoleState.historyQuery.isError}
+              errorMessage={consoleState.historyQuery.error?.message}
+              startedAtMs={
+                taskQuery.data?.createdAt
+                  ? Date.parse(taskQuery.data.createdAt)
+                  : null
+              }
+            />
+          ) : (
+            <ConsoleLog
+              historyQuery={consoleState.historyQuery}
+              historyLogs={consoleState.historyLogs}
+              liveLogs={consoleState.liveLogs}
+              streamError={consoleState.streamError}
+            />
+          )}
           {isRunningStatus(status) && taskQuery.data && (
             <ConsoleFooterStatusBar task={taskQuery.data} />
           )}

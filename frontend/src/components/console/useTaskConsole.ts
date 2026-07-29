@@ -7,6 +7,12 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { API_BASE_URL, type TaskEventItem } from '@/lib/hooks';
 import { api } from '@/lib/api';
+import {
+  mergeAgentSteps,
+  parseAgentStep,
+  reduceAgentSteps,
+  type AgentStep,
+} from '@/lib/agent-step';
 import { payloadToDiffText, payloadToLogText, statusFromPayload, agentStepToLogText } from '@/lib/event-payload';
 import { useWorkspaceSelection } from '@/lib/selection';
 import { applyTaskStatusToCaches } from '@/lib/task-status-cache';
@@ -33,7 +39,6 @@ function useTaskEventsQuery(taskId: string | null) {
   });
 }
 
-// History ids seed the dedupe set so SSE-replayed history is skipped.
 function useHistoryIngest(events: TaskEventItem[] | undefined, seenEventIds: SeenEventIds) {
   React.useEffect(() => {
     seenEventIds.current = new Set((events ?? []).map((event) => event.id));
@@ -48,7 +53,6 @@ function parseStreamEvent(data: string): StreamEvent | null {
   }
 }
 
-/** Console text for one event, or null for kinds the console doesn't show. */
 function eventToLogText(kind: string, payload: unknown): string | null {
   if (kind === 'log') return payloadToLogText(payload);
   if (kind === 'diff') return payloadToDiffText(payload);
@@ -56,10 +60,20 @@ function eventToLogText(kind: string, payload: unknown): string | null {
   return null;
 }
 
-/** Route one stream event to the log list or the status badge. */
+function upsertLiveStep(prev: AgentStep[], event: StreamEvent): AgentStep[] {
+  const step = parseAgentStep(event.payload, event.id ?? `live-${event.kind}`);
+  if (!step) return prev;
+  const idx = prev.findIndex((s) => s.stepId === step.stepId);
+  if (idx === -1) return [...prev, step];
+  const next = [...prev];
+  next[idx] = step;
+  return next;
+}
+
 function createEventDispatcher(
   logCounter: React.MutableRefObject<number>,
   setLiveLogs: React.Dispatch<React.SetStateAction<LogLine[]>>,
+  setLiveSteps: React.Dispatch<React.SetStateAction<AgentStep[]>>,
   onStatus: (status: string) => void,
 ) {
   return (event: StreamEvent) => {
@@ -67,6 +81,9 @@ function createEventDispatcher(
       const status = statusFromPayload(event.payload);
       if (status) onStatus(status);
       return;
+    }
+    if (event.kind === 'agent_step') {
+      setLiveSteps((prev) => upsertLiveStep(prev, event));
     }
     const text = eventToLogText(event.kind, event.payload);
     if (text === null) return;
@@ -79,7 +96,6 @@ function createEventDispatcher(
   };
 }
 
-/** Open the SSE stream; replayed history events (seen ids) are skipped. */
 function openEventStream(
   taskId: string,
   seenEventIds: SeenEventIds,
@@ -101,7 +117,6 @@ function openEventStream(
   return source;
 }
 
-/** Live SSE stream for one task — closed on task switch / unmount. */
 function useTaskEventStream(
   taskId: string | null,
   seenEventIds: SeenEventIds,
@@ -109,26 +124,24 @@ function useTaskEventStream(
 ) {
   const queryClient = useQueryClient();
   const [liveLogs, setLiveLogs] = React.useState<LogLine[]>([]);
+  const [liveSteps, setLiveSteps] = React.useState<AgentStep[]>([]);
   const [streamError, setStreamError] = React.useState(false);
   const logCounter = React.useRef(0);
 
   React.useEffect(() => {
     if (!taskId) return;
-    // Status events feed both the console header badge and the task-list
-    // caches, so the repo tree / landing rows can't stay stuck on 'queued'.
     const onStatus = (status: string) => {
       setLiveStatus(status);
       applyTaskStatusToCaches(queryClient, taskId, status);
     };
-    const dispatch = createEventDispatcher(logCounter, setLiveLogs, onStatus);
+    const dispatch = createEventDispatcher(logCounter, setLiveLogs, setLiveSteps, onStatus);
     const source = openEventStream(taskId, seenEventIds, dispatch, setStreamError);
     return () => source.close();
   }, [taskId, seenEventIds, setLiveStatus, queryClient]);
 
-  return { liveLogs, streamError, setLiveLogs, setStreamError };
+  return { liveLogs, liveSteps, streamError, setLiveLogs, setLiveSteps, setStreamError };
 }
 
-/** Last status seen in history — live SSE status overrides it. */
 function lastHistoryStatus(events: TaskEventItem[] | undefined): string | null {
   const list = events ?? [];
   for (let i = list.length - 1; i >= 0; i -= 1) {
@@ -139,12 +152,6 @@ function lastHistoryStatus(events: TaskEventItem[] | undefined): string | null {
   return null;
 }
 
-/**
- * History-only view of a task's events (REST, no SSE): the raw query, the
- * derived console log lines, and the last status seen in history. Shared by
- * the live console (which layers the SSE stream on top) and the read-only
- * archived-task detail (history alone — archived tasks never stream).
- */
 export function useTaskEventHistory(taskId: string | null) {
   const historyQuery = useTaskEventsQuery(taskId);
   const historyLogs = React.useMemo<LogLine[]>(
@@ -155,27 +162,32 @@ export function useTaskEventHistory(taskId: string | null) {
       }),
     [historyQuery.data],
   );
+  const historySteps = React.useMemo(
+    () => reduceAgentSteps(historyQuery.data ?? []),
+    [historyQuery.data],
+  );
   const historyStatus = React.useMemo(() => lastHistoryStatus(historyQuery.data), [historyQuery.data]);
-  return { historyQuery, historyLogs, historyStatus };
+  return { historyQuery, historyLogs, historySteps, historyStatus };
 }
 
-/**
- * Everything the console needs for the selected task: history query and
- * derived log lines/status, plus the live stream state.
- */
 export function useTaskConsole(taskId: string | null) {
   const { setLiveStatus } = useWorkspaceSelection();
-  const { historyQuery, historyLogs, historyStatus } = useTaskEventHistory(taskId);
+  const { historyQuery, historyLogs, historySteps, historyStatus } = useTaskEventHistory(taskId);
   const seenEventIds = React.useRef<Set<string>>(new Set());
 
   useHistoryIngest(historyQuery.data, seenEventIds);
   const stream = useTaskEventStream(taskId, seenEventIds, setLiveStatus);
 
-  // Reset per-task stream state.
   React.useEffect(() => {
     stream.setLiveLogs([]);
+    stream.setLiveSteps([]);
     stream.setStreamError(false);
   }, [taskId]);
+
+  const agentSteps = React.useMemo(
+    () => mergeAgentSteps(historySteps, stream.liveSteps),
+    [historySteps, stream.liveSteps],
+  );
 
   return {
     historyQuery,
@@ -183,5 +195,7 @@ export function useTaskConsole(taskId: string | null) {
     historyStatus,
     liveLogs: stream.liveLogs,
     streamError: stream.streamError,
+    agentSteps,
+    hasAgentSteps: agentSteps.length > 0,
   };
 }
