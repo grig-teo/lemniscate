@@ -10,9 +10,9 @@ describe('BrandMark', () => {
     expect(html).not.toContain('>Lemniscate<');
   });
 
-  it('renders hello near the logo', () => {
+  it('does not render hello near the logo', () => {
     const html = renderToStaticMarkup(<BrandMark />);
-    expect(html).toContain('>hello<');
+    expect(html).not.toContain('>hello<');
   });
 
   it('sizes the animated logo to twice the label font size (2em box)', () => {
