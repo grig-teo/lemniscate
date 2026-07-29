@@ -86,6 +86,77 @@ describe('toAnthropicRequest', () => {
       { type: 'image', source: { type: 'url', url: 'https://example.com/x.png' } },
     ]);
   });
+
+  it('maps assistant tool_calls to tool_use and tool results to tool_result', () => {
+    const req = toAnthropicRequest([
+      { role: 'user', content: 'run it' },
+      {
+        role: 'assistant',
+        content: 'calling',
+        tool_calls: [
+          {
+            id: 'tu_1',
+            type: 'function',
+            function: { name: 'bash', arguments: '{"command":"ls"}' },
+          },
+        ],
+      },
+      { role: 'tool', tool_call_id: 'tu_1', content: 'a.ts\nb.ts' },
+    ]);
+    expect(req.messages).toHaveLength(3);
+    expect(req.messages[1]).toEqual({
+      role: 'assistant',
+      content: [
+        { type: 'text', text: 'calling' },
+        { type: 'tool_use', id: 'tu_1', name: 'bash', input: { command: 'ls' } },
+      ],
+    });
+    expect(req.messages[2]).toEqual({
+      role: 'user',
+      content: [{ type: 'tool_result', tool_use_id: 'tu_1', content: 'a.ts\nb.ts' }],
+    });
+  });
+});
+
+describe('anthropicMessages tools', () => {
+  it('sends tools in the Anthropic input_schema shape and parses tool_use', async () => {
+    const tools = [
+      {
+        type: 'function' as const,
+        function: {
+          name: 'bash',
+          description: 'run',
+          parameters: { type: 'object', properties: { command: { type: 'string' } } },
+        },
+      },
+    ];
+    const calls = stubFetch(
+      jsonResponse({
+        content: [
+          { type: 'text', text: 'ok' },
+          { type: 'tool_use', id: 'x1', name: 'bash', input: { command: 'pwd' } },
+        ],
+        model: 'claude-sonnet-4-5',
+        stop_reason: 'tool_use',
+        usage: { input_tokens: 1, output_tokens: 2 },
+      }),
+    );
+    const result = await anthropicMessages({ ...BASE, tools });
+    const body = JSON.parse(String(calls[0]?.init.body));
+    expect(body.tools).toEqual([
+      {
+        name: 'bash',
+        description: 'run',
+        input_schema: { type: 'object', properties: { command: { type: 'string' } } },
+      },
+    ]);
+    expect(result.hasToolCalls).toBe(true);
+    expect(result.toolCalls?.[0]).toEqual({
+      id: 'x1',
+      type: 'function',
+      function: { name: 'bash', arguments: '{"command":"pwd"}' },
+    });
+  });
 });
 
 describe('anthropicMessages', () => {

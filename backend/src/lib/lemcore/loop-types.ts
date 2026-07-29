@@ -20,6 +20,8 @@ export interface LemcoreRunOptions {
   prompt: string;
   secrets: string[];
   resumeTranscript?: LemcoreMessage[];
+  /** Optional skills section injected into the system prompt. */
+  skillsSection?: string;
 }
 
 /** Persistable transcript entries (JSON-safe). */

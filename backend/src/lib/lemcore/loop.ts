@@ -16,6 +16,10 @@ import {
 import type { LemcoreMessage, LemcoreRunOptions, LemcoreStep } from './loop-types.js';
 import { getAvailableTools } from './tool-catalog.js';
 import { runToolCalls } from './loop-tool-runner.js';
+import {
+  compactTranscript,
+  shouldCompactTranscript,
+} from './loop-compact.js';
 
 export { MAX_TURNS, MAX_TOOL_FAILURES, TRANSCRIPT_FILE, REVIEW_FILENAME, lemcoreSystemPrompt } from './loop-constants.js';
 export type { LemcoreMessage, LemcoreRunOptions, LemcoreStep } from './loop-types.js';
@@ -93,14 +97,15 @@ function toChatMessages(messages: LemcoreMessage[]): ChatMessage[] {
 }
 
 export async function runLemcoreLoop(opts: LemcoreRunOptions): Promise<string> {
-  const { taskId, task, workdir, rt, prompt, secrets, resumeTranscript } = opts;
+  const { taskId, task, workdir, rt, prompt, secrets, resumeTranscript, skillsSection } = opts;
   const messages: LemcoreMessage[] = resumeTranscript ? [...resumeTranscript] : [];
   const resuming = Boolean(resumeTranscript && resumeTranscript.length > 0);
 
   if (!messages.some((m) => m.role === 'system')) {
+    const skills = skillsSection?.trim() ? `\n\n${skillsSection.trim()}` : '';
     messages.push({
       role: 'system',
-      content: `${lemcoreSystemPrompt()}\n\n${task.title}${task.prompt ? `\n${task.prompt}` : ''}`,
+      content: `${lemcoreSystemPrompt()}${skills}\n\n${task.title}${task.prompt ? `\n${task.prompt}` : ''}`,
     });
   }
   if (!messages.some((m) => m.role === 'user')) {
@@ -128,6 +133,21 @@ export async function runLemcoreLoop(opts: LemcoreRunOptions): Promise<string> {
   for (let turn = 0; turn < MAX_TURNS; turn++) {
     if (Date.now() - startTime > wallClockCapMs) {
       throw new Error(`lemcore agent timed out after ${Math.round(wallClockCapMs / 1000)}s`);
+    }
+
+    if (shouldCompactTranscript(messages, rt.cfg.contextWindow)) {
+      const before = messages.length;
+      const compacted = compactTranscript(messages);
+      messages.length = 0;
+      messages.push(...compacted);
+      await publishStepEvent(taskId, {
+        stepId: nextStepId(),
+        status: 'done',
+        kind: 'assistant',
+        title: 'Context compacted',
+        detail: `Transcript compacted at ~80% of context window (${before} → ${messages.length} messages).`,
+      });
+      saveTranscript(workdir, messages);
     }
 
     const totalChars = messages.reduce((sum, m) => sum + m.content.length, 0);

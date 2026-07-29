@@ -4,8 +4,7 @@
 //
 // Deliberately mirrors llm-client.ts (the OpenAI pattern): same result
 // shape (ChatCompletionsResult), same retry policy (429/5xx + network with
-// doubling timeouts), same key-scrubbing rule. thinkingLevel has no
-// Anthropic mapping here and is ignored.
+// doubling timeouts), same key-scrubbing rule.
 //
 // Security: the apiKey is used only for the x-api-key header. It is never
 // logged, never included in thrown errors (upstream bodies are scrubbed).
@@ -18,11 +17,13 @@ import {
   type ChatMessage,
   type ChatUsage,
   type ChatCompletionTool,
-  type ContentPart,
   type LlmRetryInfo,
   type ThinkingLevel,
 } from './llm-client.js';
+import { toAnthropicRequest, toAnthropicTools } from './llm-anthropic-messages.js';
 import { errorMessage, redactSecrets, sleep } from './utils.js';
+
+export { toAnthropicRequest } from './llm-anthropic-messages.js';
 
 const ANTHROPIC_VERSION = '2023-06-01';
 const DEFAULT_TIMEOUT_SECONDS = 120;
@@ -41,83 +42,10 @@ export interface AnthropicMessagesParams {
   maxRetries?: number;
   customHeaders?: Record<string, string>;
   onRetry?: (info: LlmRetryInfo) => void;
-  /** Quota snapshot hook — called with every response's headers. */
   onResponseHeaders?: (headers: Headers) => void;
-  /** Connectivity probes: a max_tokens cut-off still proves the config works. */
   allowTruncated?: boolean;
-  /** Thinking level (maps to Claude's thinking config). Phase 3. */
   thinkingLevel?: ThinkingLevel;
-  /** OpenAI-compatible tool definitions mapped to Anthropic tool_use. Phase 3. */
   tools?: ChatCompletionTool[];
-}
-
-type AnthropicContent =
-  | string
-  | (
-      | { type: 'text'; text: string }
-      | {
-          type: 'image';
-          source:
-            | { type: 'base64'; media_type: string; data: string }
-            | { type: 'url'; url: string };
-        }
-    )[];
-
-export interface AnthropicMessage {
-  role: 'user' | 'assistant';
-  content: AnthropicContent;
-}
-
-function imagePartToBlock(part: Extract<ContentPart, { type: 'image_url' }>) {
-  const url = part.image_url.url;
-  const dataUrl = /^data:(image\/[a-z0-9.+-]+);base64,(.+)$/i.exec(url);
-  if (dataUrl) {
-    const [, mediaType = 'image/png', data = ''] = dataUrl;
-    return {
-      type: 'image' as const,
-      source: { type: 'base64' as const, media_type: mediaType, data },
-    };
-  }
-  return { type: 'image' as const, source: { type: 'url' as const, url } };
-}
-
-function toAnthropicContent(content: string | ContentPart[] | null): AnthropicContent {
-  if (content === null) return '';
-  if (typeof content === 'string') return content;
-  return content.map((part) =>
-    part.type === 'text' ? { type: 'text' as const, text: part.text } : imagePartToBlock(part),
-  );
-}
-
-/** Split system messages out; Anthropic takes them as a top-level param. */
-export function toAnthropicRequest(messages: ChatMessage[]): {
-  system?: string;
-  messages: AnthropicMessage[];
-} {
-  const systemParts: string[] = [];
-  const converted: AnthropicMessage[] = [];
-  for (const message of messages) {
-    if (message.role === 'system') {
-      if (typeof message.content === 'string') systemParts.push(message.content);
-      continue;
-    }
-    if (message.role === 'tool') {
-      // Tool results require tool_use pairing (Phase 3). Drop for non-tool calls.
-      converted.push({
-        role: 'user',
-        content: `Tool result (${message.tool_call_id}): ${message.content}`,
-      });
-      continue;
-    }
-    converted.push({
-      role: message.role,
-      content: toAnthropicContent(message.content),
-    });
-  }
-  return {
-    ...(systemParts.length > 0 ? { system: systemParts.join('\n\n') } : {}),
-    messages: converted,
-  };
 }
 
 interface MessagesResponseBody {
@@ -157,18 +85,14 @@ function toResult(
     );
   }
   const textParts: string[] = [];
-  const toolCalls: Array<{
-    id: string;
-    type: 'function';
-    function: { name: string; arguments: string };
-  }> = [];
+  const toolCalls: NonNullable<ChatCompletionsResult['toolCalls']> = [];
 
   for (const block of parsed.content ?? []) {
     if (block.type === 'text' && typeof block.text === 'string') {
       textParts.push(block.text);
     } else if (block.type === 'tool_use') {
       toolCalls.push({
-        id: block.id ?? '',
+        id: block.id ?? `tool_${toolCalls.length + 1}`,
         type: 'function',
         function: {
           name: block.name ?? '',
@@ -186,8 +110,7 @@ function toResult(
   return {
     content: text,
     model: parsed.model ?? params.model,
-    ...(toolCalls.length > 0 ? { toolCalls } : {}),
-    ...(toolCalls.length > 0 ? { hasToolCalls: true } : {}),
+    ...(toolCalls.length > 0 ? { toolCalls, hasToolCalls: true } : {}),
     ...(usage ? { usage } : {}),
     latencyMs: Date.now() - startedAt,
     ...(truncated ? { truncated: true } : {}),
@@ -200,6 +123,9 @@ function buildBody(params: AnthropicMessagesParams): Record<string, unknown> {
     ...toAnthropicRequest(params.messages),
     max_tokens: params.maxTokens,
     ...(params.temperature !== undefined ? { temperature: params.temperature } : {}),
+    ...(params.tools && params.tools.length > 0
+      ? { tools: toAnthropicTools(params.tools) }
+      : {}),
   };
 }
 
@@ -212,8 +138,6 @@ function buildHeaders(params: AnthropicMessagesParams): Record<string, string> {
   };
 }
 
-// Messages endpoint: the canonical base is https://api.anthropic.com, but
-// tolerate configs that already carry a /v1 suffix (avoid /v1/v1/messages).
 export function anthropicMessagesUrl(baseUrl: string): string {
   const base = baseUrl.replace(/\/+$/, '');
   return base.endsWith('/v1') ? `${base}/messages` : `${base}/v1/messages`;
@@ -241,7 +165,10 @@ async function attemptFetch(
   }
 }
 
-function networkFailure(params: AnthropicMessagesParams, outcome: { timedOut?: boolean; error?: unknown }): LlmError {
+function networkFailure(
+  params: AnthropicMessagesParams,
+  outcome: { timedOut?: boolean; error?: unknown },
+): LlmError {
   if (outcome.timedOut) return new LlmError('timeout', 'Anthropic request timed out');
   const detail = redactSecrets(errorMessage(outcome.error), [params.apiKey]);
   return new LlmError('network', `Network error calling Anthropic endpoint: ${detail}`);
@@ -255,15 +182,18 @@ async function errorDetail(params: AnthropicMessagesParams, response: Response):
 export async function anthropicMessages(
   params: AnthropicMessagesParams,
 ): Promise<ChatCompletionsResult> {
-  if (params.tools?.length) {
-    throw new LlmError('protocol', "Anthropic tool_use unsupported for lemcore yet; use apiPattern 'openai'");
-  }
   const startedAt = Date.now();
   const maxRetries = params.maxRetries ?? DEFAULT_MAX_RETRIES;
   for (let attempt = 0; ; attempt++) {
     const outcome = await attemptFetch(params, attempt);
     if (!outcome.response) {
       if (attempt < maxRetries) {
+        params.onRetry?.({
+          attempt: attempt + 1,
+          maxAttempts: maxRetries + 1,
+          delayMs: backoffMs(attempt, null),
+          reason: outcome.timedOut ? 'timeout' : 'network error',
+        });
         await sleep(backoffMs(attempt, null));
         continue;
       }
@@ -283,7 +213,14 @@ export async function anthropicMessages(
     const status = response.status;
     const detail = await errorDetail(params, response);
     if ((status === 429 || status >= 500) && attempt < maxRetries) {
-      await sleep(backoffMs(attempt, response.headers.get('retry-after')));
+      const delayMs = backoffMs(attempt, response.headers.get('retry-after'));
+      params.onRetry?.({
+        attempt: attempt + 1,
+        maxAttempts: maxRetries + 1,
+        delayMs,
+        reason: `HTTP ${status}`,
+      });
+      await sleep(delayMs);
       continue;
     }
     throw new LlmError(

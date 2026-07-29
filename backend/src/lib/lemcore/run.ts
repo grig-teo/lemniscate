@@ -1,5 +1,9 @@
+import { promises as fs } from 'node:fs';
+import path from 'node:path';
 import { logEvent, hasDirtyWorkdir } from '../agent-git.js';
+import { buildSkillsSection } from '../agent-prompts.js';
 import type { LlmRuntime, TaskWithRepo } from '../agent-runtime.js';
+import { loadTaskSkills } from '../task-skills.js';
 import { runLemcoreLoop, loadTranscript, type LemcoreMessage } from './loop.js';
 
 // Shared instructions used by both lemcore and hermes executors
@@ -23,6 +27,27 @@ function lemcorePrompt(task: TaskWithRepo, rt: LlmRuntime, resume = false): stri
   ].join('\n');
 }
 
+/** Write selected skills under .agents/skills/<slug>/SKILL.md (hermes parity). */
+export async function materializeTaskSkills(
+  task: TaskWithRepo,
+  workdir: string,
+): Promise<string> {
+  const skills = await loadTaskSkills(task);
+  if (skills.length === 0) return '';
+  for (const skill of skills) {
+    const dir = path.join(workdir, '.agents', 'skills', skill.slug);
+    await fs.mkdir(dir, { recursive: true });
+    const body = `---\nname: ${skill.name}\ndescription: ${skill.description}\n---\n\n${skill.content}`;
+    await fs.writeFile(path.join(dir, 'SKILL.md'), body, 'utf8');
+  }
+  await logEvent(task.id, `active skills: ${skills.map((s) => s.slug).join(', ')}`);
+  await logEvent(
+    task.id,
+    'note: lemcore does not invoke MCP servers; .mcp.json is written for parity only',
+  );
+  return buildSkillsSection(skills);
+}
+
 export interface LemcoreTaskResult {
   summary: string | null;
   changed: boolean;
@@ -43,6 +68,7 @@ export async function runLemcoreTask(opts: {
 
   await logEvent(taskId, resume ? 'resuming lemcore agent' : 'running lemcore agent');
 
+  const skillsSection = await materializeTaskSkills(task, workdir);
   const prompt = promptOverride ?? lemcorePrompt(task, rt, resume);
 
   let resumeTranscript: LemcoreMessage[] | undefined;
@@ -61,6 +87,7 @@ export async function runLemcoreTask(opts: {
     prompt,
     secrets,
     resumeTranscript,
+    skillsSection,
   });
 
   const changed = await hasDirtyWorkdir(workdir);
