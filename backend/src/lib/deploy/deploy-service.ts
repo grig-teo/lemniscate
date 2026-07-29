@@ -138,6 +138,7 @@ async function runLemniscateImageDeploy(
 async function runLemniscateComposeDeploy(
   deployment: DeploymentWithService,
   workdir: string,
+  sha: string,
   secrets: string[],
 ): Promise<void> {
   const { service } = deployment;
@@ -146,7 +147,7 @@ async function runLemniscateComposeDeploy(
 
   const envFile = await writeComposeEnvFile(workdir, parseServiceEnv(service.envEnc, secrets));
   await setDeployStatus(deployment.id, 'building');
-  const project = composeProjectName(service.id, deployment.commitSha);
+  const project = composeProjectName(service.id, sha);
   await appendLog(deployment.id, `docker compose up (${composeFile}, project ${project})`);
   await composeUp({
     project,
@@ -206,7 +207,7 @@ async function runLemniscateDeploy(deployment: DeploymentWithService, secrets: s
     }
     await (mode === 'image'
       ? runLemniscateImageDeploy(deployment, workdir, sha, secrets)
-      : runLemniscateComposeDeploy(deployment, workdir, secrets));
+      : runLemniscateComposeDeploy(deployment, workdir, sha, secrets));
   } finally {
     await fs.rm(workdir, { recursive: true, force: true }).catch(() => {});
   }

@@ -16,10 +16,11 @@ export const MAX_BUFFER = 8 * 1024 * 1024;
 // Runs `docker <args>`, returns the (secret-scrubbed) stdout. The worker
 // mounts the host docker socket; user containers join ONLY the isolated apps
 // network — never the platform network with Postgres/Redis/MinIO.
-export async function docker(args: string[], secrets: string[] = []): Promise<string> {
+export async function docker(args: string[], secrets: string[] = [], cwd?: string): Promise<string> {
   const { stdout } = await execFileAsync('docker', args, {
     timeout: DOCKER_TIMEOUT_MS,
     maxBuffer: MAX_BUFFER,
+    ...(cwd ? { cwd } : {}),
   });
   return redactSecrets(stdout, secrets);
 }

@@ -114,7 +114,7 @@ export interface ComposeUpOptions {
 export async function composeUp(opts: ComposeUpOptions): Promise<void> {
   const args = buildComposeUpArgs(opts.project, opts.file, opts.envFile);
   try {
-    await docker(args, opts.secrets);
+    await docker(args, opts.secrets, opts.workdir);
     opts.onLog('compose stack started');
   } catch (err) {
     const e = err as { stdout?: string; stderr?: string; message: string };
