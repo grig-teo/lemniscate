@@ -41,6 +41,7 @@ enum TaskEventKind {
   log
   diff
   status
+  agent_step
 }
 
 model User {

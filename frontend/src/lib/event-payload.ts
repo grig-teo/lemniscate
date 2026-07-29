@@ -55,3 +55,21 @@ export function statusFromPayload(payload: unknown): string | null {
   if (typeof payload === 'string') return payload;
   return firstStringField(payload, ['status']);
 }
+
+/**
+ * One-line console text for an `agent_step` event payload.
+ * Shows the tool name (if present), the step title, and whether it
+ * succeeded or failed. Returns null when the payload shape is off.
+ */
+export function agentStepToLogText(payload: unknown): string | null {
+  const record = asRecord(payload);
+  if (!record) return null;
+  const title = firstStringField(record, ['title']);
+  const kind = firstStringField(record, ['kind']);
+  const tool = firstStringField(record, ['tool']);
+  const status = firstStringField(record, ['status']);
+  if (!title) return null;
+  const prefix = tool ? `[${kind ?? 'tool'}] ${tool}: ` : `${kind ?? 'agent'}: `;
+  const suffix = status && status !== 'done' ? ` (${status})` : '';
+  return prefix + title + suffix;
+}

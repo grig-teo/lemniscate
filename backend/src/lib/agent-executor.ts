@@ -5,7 +5,8 @@ import { prisma } from './prisma.js';
 // Core agent executor selection — the single home for "which agent runs
 // tasks" (AGENTS.md §6). 'hermes' shells out to the Hermes Agent CLI inside
 // the cloned repo; 'internal' is the built-in single-shot LLM
-// propose/apply loop (the in-house agent under development).
+// propose/apply loop (the in-house agent under development);
+// 'lemcore' uses the structured TypeScript agent loop with per-step events.
 //
 // Resolution order: the per-user override stored on User.agentExecutor
 // (Settings → Agent) wins; the AGENT_EXECUTOR env var is the deployment
@@ -13,7 +14,7 @@ import { prisma } from './prisma.js';
 // the env default (and warns), so task execution is never hostage to a
 // settings read.
 
-export const AGENT_EXECUTORS = ['hermes', 'internal'] as const;
+export const AGENT_EXECUTORS = ['hermes', 'internal', 'lemcore'] as const;
 export type AgentExecutor = (typeof AGENT_EXECUTORS)[number];
 
 /** Narrows an untrusted stored value to a known executor, else null. */

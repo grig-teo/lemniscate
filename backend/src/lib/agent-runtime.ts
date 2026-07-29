@@ -10,6 +10,7 @@ import {
 import {
   type ChatMessage,
   type ChatUsage,
+  type ContentPart,
   type ThinkingLevel,
 } from './llm-client.js';
 import { chatCompletion } from './llm-dispatch.js';
@@ -153,7 +154,8 @@ export function assertWithinBudget(usedTokens: number, maxTokensPerRun: number |
   }
 }
 
-function contentChars(content: ChatMessage['content']): number {
+function contentChars(content: string | ContentPart[] | null | undefined): number {
+  if (content == null) return 0;
   if (typeof content === 'string') return content.length;
   return content.reduce(
     (sum, part) => sum + (part.type === 'text' ? part.text.length : part.image_url.url.length),
@@ -162,7 +164,10 @@ function contentChars(content: ChatMessage['content']): number {
 }
 
 export function sumMessageChars(messages: ChatMessage[]): number {
-  return messages.reduce((sum, m) => sum + contentChars(m.content), 0);
+  return messages.reduce((sum, m) => {
+    if (m.role === 'tool') return sum + m.content.length;
+    return sum + contentChars(m.content);
+  }, 0);
 }
 
 // ---------------------------------------------------------------------------

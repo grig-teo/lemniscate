@@ -7,87 +7,35 @@
 
 import { errorMessage, redactSecrets, sleep } from './utils.js';
 import { notifyObserver, type LlmOutcome } from './llm-observer.js';
+import { normalizeToolCalls, type ChatCompletionTool } from './llm-tool-calls.js';
+import {
+  toReasoningEffort,
+  type ChatCompletionsParams,
+  type ChatCompletionsResult,
+  type ChatMessage,
+  type ChatUsage,
+  type LlmRetryInfo,
+  type ThinkingLevel,
+} from './llm-types.js';
 
-// Re-exported so existing consumers (metrics.ts, tests) keep importing the
-// observer surface from llm-client; implementation lives in llm-observer.ts.
 export { setLlmObserver } from './llm-observer.js';
 export type { LlmOutcome, LlmRequestObservation } from './llm-observer.js';
-
-export type ThinkingLevel = 'low' | 'medium' | 'high' | 'max';
-
-/** Values sent as `reasoning_effort`; 'max' maps to 'xhigh'. */
-export type ReasoningEffort = 'low' | 'medium' | 'high' | 'xhigh';
-
-export function toReasoningEffort(level: ThinkingLevel): ReasoningEffort {
-  return level === 'max' ? 'xhigh' : level;
-}
-
-// OpenAI multimodal message content: plain text, or text + image parts.
-export type ContentPart =
-  | { type: 'text'; text: string }
-  | { type: 'image_url'; image_url: { url: string } };
-
-export interface ChatMessage {
-  role: 'system' | 'user' | 'assistant';
-  content: string | ContentPart[];
-}
-
-export interface ChatCompletionsParams {
-  baseUrl: string;
-  apiKey: string;
-  model: string;
-  messages: ChatMessage[];
-  temperature?: number;
-  maxTokens?: number;
-  /** Maps to `reasoning_effort` when set; transparently dropped on HTTP 400. */
-  thinkingLevel?: ThinkingLevel;
-  /** First-attempt timeout. Defaults to 120s. Each retry doubles it (cap 600s). */
-  timeoutSeconds?: number;
-  /** Retries on 429 / 5xx / network errors. Defaults to 3. */
-  maxRetries?: number;
-  customHeaders?: Record<string, string>;
-  /** Called before each backoff wait, with 1-based attempt info. */
-  onRetry?: (info: LlmRetryInfo) => void;
-  /**
-   * Called with the response headers of every HTTP attempt (success or
-   * error) — used to snapshot provider rate-limit headers (llm-quota.ts).
-   */
-  onResponseHeaders?: (headers: Headers) => void;
-  /**
-   * Connectivity probes (test-connection): return the result with
-   * `truncated: true` instead of throwing when finish_reason is 'length'.
-   * Any reply — even cut short by the tiny probe budget — proves the
-   * URL/key/model work. Real agent calls leave this unset.
-   */
-  allowTruncated?: boolean;
-}
-
-export interface LlmRetryInfo {
-  /** 1-based number of the attempt that just failed. */
-  attempt: number;
-  /** Total attempts (maxRetries + 1). */
-  maxAttempts: number;
-  /** Backoff wait about to happen. */
-  delayMs: number;
-  /** Why the attempt failed: 'timeout', 'network error', or 'HTTP <status>'. */
-  reason: string;
-}
-
-export interface ChatUsage {
-  promptTokens: number;
-  completionTokens: number;
-  totalTokens: number;
-}
-
-export interface ChatCompletionsResult {
-  content: string;
-  /** Model name echoed by the server (may differ from the requested one). */
-  model: string;
-  usage?: ChatUsage;
-  latencyMs: number;
-  /** Set only when allowTruncated is on and the reply hit the token cap. */
-  truncated?: boolean;
-}
+export {
+  parseToolCallArguments,
+  type ChatCompletionTool,
+  type ChatToolCall,
+} from './llm-tool-calls.js';
+export {
+  toReasoningEffort,
+  type ChatCompletionsParams,
+  type ChatCompletionsResult,
+  type ChatMessage,
+  type ChatUsage,
+  type ContentPart,
+  type LlmRetryInfo,
+  type ReasoningEffort,
+  type ThinkingLevel,
+} from './llm-types.js';
 
 export class LlmError extends Error {
   readonly kind: 'http' | 'timeout' | 'network' | 'protocol';
@@ -133,13 +81,28 @@ export function backoffMs(attempt: number, retryAfterHeader: string | null): num
 }
 
 interface ChatCompletionsResponseBody {
-  choices?: { message?: { content?: string }; finish_reason?: string }[];
+  choices?: {
+    message?: {
+      content?: string;
+      tool_calls?: Array<{
+        id: string;
+        type: 'function';
+        function: { name: string; arguments: string };
+      }>;
+    };
+    finish_reason?: string;
+  }[];
   model?: string;
   usage?: {
     prompt_tokens?: number;
     completion_tokens?: number;
     total_tokens?: number;
   };
+  tool_calls?: Array<{
+    id: string;
+    type: 'function';
+    function: { name: string; arguments: string };
+  }>;
 }
 
 // Mutable per-call state threaded through the retry loop.
@@ -162,6 +125,7 @@ interface RequestState {
   includeReasoningEffort: boolean;
   /** Flipped off after an HTTP 400 so the retry drops temperature. */
   includeTemperature: boolean;
+  tools?: ChatCompletionTool[];
 }
 
 function makeRequestState(params: ChatCompletionsParams): RequestState {
@@ -176,6 +140,7 @@ function makeRequestState(params: ChatCompletionsParams): RequestState {
     startedAt: Date.now(),
     includeReasoningEffort: params.thinkingLevel !== undefined,
     includeTemperature: params.temperature !== undefined,
+    tools: params.tools,
   };
   if (params.temperature !== undefined) state.temperature = params.temperature;
   if (params.maxTokens !== undefined) state.maxTokens = params.maxTokens;
@@ -194,6 +159,9 @@ function buildRequestBody(state: RequestState): Record<string, unknown> {
   if (state.maxTokens !== undefined) body.max_tokens = state.maxTokens;
   if (state.includeReasoningEffort && state.thinkingLevel !== undefined) {
     body.reasoning_effort = toReasoningEffort(state.thinkingLevel);
+  }
+  if (state.tools !== undefined && state.tools.length > 0) {
+    body.tools = state.tools;
   }
   return body;
 }
@@ -285,8 +253,12 @@ function toResult(parsed: ChatCompletionsResponseBody, state: RequestState): Cha
       `LLM response truncated at maxTokens=${state.maxTokens ?? 'unset'} — raise maxTokens in the LLM config`,
     );
   }
-  const content = parsed.choices?.[0]?.message?.content;
-  if (typeof content !== 'string') {
+  const message = parsed.choices?.[0]?.message;
+  const rawToolCalls = message?.tool_calls ?? parsed.tool_calls;
+  const toolCalls = normalizeToolCalls(rawToolCalls);
+  const hasToolCalls = toolCalls.length > 0;
+  const content = message?.content;
+  if (typeof content !== 'string' && !hasToolCalls) {
     throw new LlmError(
       'protocol',
       'LLM endpoint response is missing choices[0].message.content',
@@ -294,11 +266,12 @@ function toResult(parsed: ChatCompletionsResponseBody, state: RequestState): Cha
   }
   const usage = extractUsage(parsed.usage);
   return {
-    content,
+    content: typeof content === 'string' ? content : '',
     model: parsed.model ?? state.model,
     ...(usage ? { usage } : {}),
     latencyMs: Date.now() - state.startedAt,
     ...(truncated ? { truncated: true } : {}),
+    ...(hasToolCalls ? { toolCalls, hasToolCalls: true } : {}),
   };
 }
 

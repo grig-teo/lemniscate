@@ -47,6 +47,8 @@ function toAnthropicParams(params: DispatchChatParams): AnthropicMessagesParams 
       ? { onResponseHeaders: params.onResponseHeaders }
       : {}),
     ...(params.allowTruncated !== undefined ? { allowTruncated: params.allowTruncated } : {}),
+    ...(params.tools !== undefined ? { tools: params.tools } : {}),
+    ...(params.onRetry !== undefined ? { onRetry: params.onRetry } : {}),
   };
 }
 

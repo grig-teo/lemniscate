@@ -30,6 +30,7 @@ import {
 } from './agent-runtime.js';
 import { resolveAgentExecutor } from './agent-executor.js';
 import { runHermesForTask } from './agent-run-hermes.js';
+import { runLemcoreTask } from './lemcore/run.js';
 import { classifyError } from './errors.js';
 import { notify, notifyTaskCompleted } from './notifications.js';
 import { prisma } from './prisma.js';
@@ -224,8 +225,7 @@ async function recordChangedPaths(task: TaskWithRepo, workdir: string): Promise<
   }
 }
 
-// Runs the executor chosen for the task's owner (Settings → Agent override,
-// else the AGENT_EXECUTOR env default). Returns the change summary for the
+// Runs the configured task executor. Returns the change summary for the
 // commit/PR, or null when the workdir has nothing to commit.
 async function implementTask(
   task: TaskWithRepo,
@@ -234,10 +234,20 @@ async function implementTask(
   secrets: string[],
   resume: boolean,
 ): Promise<string | null> {
-  const executor = await resolveAgentExecutor(task.repository.connection.userId);
-  if (executor === 'hermes') {
+  if (config.AGENT_EXECUTOR === 'hermes') {
     await runHermesForTask(task, rt, workdir, secrets, resume);
     return (await hasDirtyWorkdir(workdir)) ? task.title : null;
+  }
+  if (config.AGENT_EXECUTOR === 'lemcore') {
+    const result = await runLemcoreTask({
+      taskId: task.id,
+      task,
+      workdir,
+      rt,
+      secrets,
+      resume,
+    });
+    return result.changed ? task.title : null;
   }
   const { summary, changes } = await proposeTaskChanges(task, rt, workdir);
   const applied = await applyChanges(task.id, workdir, changes, secrets);
