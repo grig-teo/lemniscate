@@ -46,7 +46,7 @@ import { loadAgentsMdTemplate, loadTaskSkills } from './task-skills.js';
 
 const MAX_REVIEW_DIFF_CHARS = 24_000;
 
-async function requestReview(rt: LlmRuntime, task: Task, diff: string): Promise<PrReview> {
+export async function requestReview(rt: LlmRuntime, task: Task, diff: string): Promise<PrReview> {
   const content = await llmCall(
     rt,
     buildReviewMessages({
@@ -59,7 +59,7 @@ async function requestReview(rt: LlmRuntime, task: Task, diff: string): Promise<
   return parsePrReview(content);
 }
 
-async function fetchReviewDiff(task: TaskWithRepo, headBranch: string): Promise<string> {
+export async function fetchReviewDiff(task: TaskWithRepo, headBranch: string): Promise<string> {
   const { repository } = task;
   const rawDiff = await getPullRequestDiff(repository.connection, {
     repoFullName: repository.fullName,
