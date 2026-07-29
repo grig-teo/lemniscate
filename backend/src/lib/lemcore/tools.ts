@@ -175,22 +175,31 @@ export async function toolGlob(
   });
 }
 
-// Simple web_search simulation — returns a placeholder result.
-// In Phase 2 this calls the DuckDuckGo HTML endpoint.
+// DuckDuckGo HTML search — see web-search.ts.
 export async function toolWebSearch(
   query: string,
   secrets: string[] = [],
 ): Promise<ToolResult> {
   const startMs = Date.now();
-  // For Phase 1, return a structured placeholder.
-  // Phase 2 replaces this with a real DuckDuckGo fetch.
-  const placeholder = `[web_search: ${query}] — Phase 1 placeholder: no live search yet.`;
-  return {
-    tool: 'web_search',
-    title: query,
-    outputPreview: truncate(placeholder),
-    durationMs: Date.now() - startMs,
-  };
+  try {
+    const { duckDuckGoSearch, formatWebSearchResults } = await import('./web-search.js');
+    const hits = await duckDuckGoSearch(query);
+    return {
+      tool: 'web_search',
+      title: query,
+      outputPreview: truncate(redactSecrets(formatWebSearchResults(query, hits), secrets)),
+      durationMs: Date.now() - startMs,
+    };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return {
+      tool: 'web_search',
+      title: query,
+      outputPreview: truncate(redactSecrets(`web_search failed: ${msg}`, secrets)),
+      durationMs: Date.now() - startMs,
+      error: msg,
+    };
+  }
 }
 
 export function truncate(text: string, maxChars: number = TOOL_MAX_OUTPUT_CHARS): string {

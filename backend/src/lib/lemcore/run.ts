@@ -35,16 +35,18 @@ export async function runLemcoreTask(opts: {
   rt: LlmRuntime;
   secrets: string[];
   resume: boolean;
+  /** When set, used as the user prompt instead of the default task prompt. */
+  promptOverride?: string;
   existingTranscript?: unknown;
 }): Promise<LemcoreTaskResult> {
-  const { taskId, task, workdir, rt, secrets, resume } = opts;
+  const { taskId, task, workdir, rt, secrets, resume, promptOverride } = opts;
 
   await logEvent(taskId, resume ? 'resuming lemcore agent' : 'running lemcore agent');
 
-  const prompt = lemcorePrompt(task, rt, resume);
+  const prompt = promptOverride ?? lemcorePrompt(task, rt, resume);
 
   let resumeTranscript: LemcoreMessage[] | undefined;
-  if (resume) {
+  if (resume && !promptOverride) {
     resumeTranscript = loadTranscript(workdir) ?? undefined;
     if (resumeTranscript) {
       await logEvent(taskId, `resumed from transcript (${resumeTranscript.length} messages)`);

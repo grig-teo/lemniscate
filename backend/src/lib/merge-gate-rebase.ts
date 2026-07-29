@@ -170,14 +170,50 @@ export async function rebaseHeadBranchViaHermes(ctx: GateContext): Promise<void>
       secrets,
       timeoutMs: config.AGENT_HERMES_TIMEOUT_MINUTES * 60_000,
     });
-    for (const rel of conflicted) {
-      const content = await fs.readFile(path.join(workdir, sanitizeRelativePath(rel)), 'utf8');
-      if (hasConflictMarkers(content)) {
-        throw new Error(`hermes left conflict markers in ${rel}`);
-      }
-      await git(['add', '--', rel], { cwd: workdir });
-      await publishTaskEvent(task.id, 'diff', { path: rel, action: 'conflict-resolved' });
-      await logEvent(task.id, `resolved conflict in ${rel}`);
-    }
+    await stageResolvedConflicts(ctx, conflicted, 'hermes');
   });
+}
+
+// Lemcore variant: same rebase loop, conflict prompt via the structured loop.
+export async function rebaseHeadBranchViaLemcore(ctx: GateContext): Promise<void> {
+  const { task, rt, headBranch, workdir, secrets } = ctx;
+  const { runLemcoreTask } = await import('./lemcore/run.js');
+  await runRebaseLoop(ctx, async (conflicted) => {
+    await logEvent(
+      task.id,
+      `resolving ${conflicted.length} conflicted file(s) with the lemcore agent`,
+    );
+    await runLemcoreTask({
+      taskId: task.id,
+      task,
+      workdir,
+      rt,
+      secrets,
+      resume: false,
+      promptOverride: buildHermesConflictPrompt({
+        baseBranch: task.repository.defaultBranch,
+        headBranch,
+        conflictedPaths: conflicted,
+        systemPromptExtra: rt.cfg.systemPromptExtra,
+      }),
+    });
+    await stageResolvedConflicts(ctx, conflicted, 'lemcore');
+  });
+}
+
+async function stageResolvedConflicts(
+  ctx: GateContext,
+  conflicted: string[],
+  agentLabel: string,
+): Promise<void> {
+  const { task, workdir } = ctx;
+  for (const rel of conflicted) {
+    const content = await fs.readFile(path.join(workdir, sanitizeRelativePath(rel)), 'utf8');
+    if (hasConflictMarkers(content)) {
+      throw new Error(`${agentLabel} left conflict markers in ${rel}`);
+    }
+    await git(['add', '--', rel], { cwd: workdir });
+    await publishTaskEvent(task.id, 'diff', { path: rel, action: 'conflict-resolved' });
+    await logEvent(task.id, `resolved conflict in ${rel}`);
+  }
 }

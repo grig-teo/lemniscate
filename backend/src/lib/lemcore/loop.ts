@@ -95,6 +95,7 @@ function toChatMessages(messages: LemcoreMessage[]): ChatMessage[] {
 export async function runLemcoreLoop(opts: LemcoreRunOptions): Promise<string> {
   const { taskId, task, workdir, rt, prompt, secrets, resumeTranscript } = opts;
   const messages: LemcoreMessage[] = resumeTranscript ? [...resumeTranscript] : [];
+  const resuming = Boolean(resumeTranscript && resumeTranscript.length > 0);
 
   if (!messages.some((m) => m.role === 'system')) {
     messages.push({
@@ -106,6 +107,19 @@ export async function runLemcoreLoop(opts: LemcoreRunOptions): Promise<string> {
     messages.push({ role: 'user', content: prompt });
   }
   saveTranscript(workdir, messages);
+
+  if (resuming) {
+    const priorToolSteps = resumeTranscript!.filter((m) => m.role === 'tool').length;
+    const priorAssistant = resumeTranscript!.filter((m) => m.role === 'assistant').length;
+    const fromStep = priorToolSteps + priorAssistant + 1;
+    await publishStepEvent(taskId, {
+      stepId: nextStepId(),
+      status: 'done',
+      kind: 'assistant',
+      title: `Resumed from step ${fromStep}`,
+      detail: `Continuing from saved transcript (${resumeTranscript!.length} messages).`,
+    });
+  }
 
   let consecutiveToolFailures = 0;
   const startTime = Date.now();
