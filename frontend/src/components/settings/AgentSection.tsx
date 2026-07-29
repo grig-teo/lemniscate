@@ -7,9 +7,9 @@ import { cn } from '@/lib/utils';
 
 /**
  * Settings → Agent: which core agent executes tasks. 'hermes' is the
- * current default (Hermes Agent CLI inside the cloned repo); 'internal' is
- * the in-house agent under development (built-in LLM propose/apply loop).
- * Backed by GET/PUT /api/settings.
+ * deployment default (Hermes Agent CLI inside the cloned repo); 'lemcore'
+ * is the structured in-house TypeScript agent loop; 'internal' is the
+ * single-shot LLM propose/apply path. Backed by GET/PUT /api/settings.
  */
 export function AgentSection() {
   const settings = useAgentSettings();
@@ -49,12 +49,18 @@ const EXECUTOR_OPTIONS: { value: AgentExecutor; label: string; description: stri
   {
     value: 'hermes',
     label: 'Hermes agent',
-    description: 'The current default. Runs the Hermes Agent CLI inside the cloned repository.',
+    description: 'Runs the Hermes Agent CLI inside the cloned repository.',
+  },
+  {
+    value: 'lemcore',
+    label: 'Lemcore',
+    description:
+      'In-house structured agent loop (tool calls, per-step timeline). Uses your configured LLM.',
   },
   {
     value: 'internal',
-    label: 'Internal agent',
-    description: 'The in-house agent (in development). Uses the built-in LLM propose/apply loop.',
+    label: 'Internal (propose/apply)',
+    description: 'Single-shot LLM propose/apply loop — legacy in-house path.',
   },
 ];
 
