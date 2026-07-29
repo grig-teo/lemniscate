@@ -1,23 +1,16 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { redactSecrets } from '../utils.js';
+import { DOCKER_TIMEOUT_MS, docker } from './docker-cli.js';
 
 // Thin docker CLI wrapper for service containers (the worker mounts the host
 // docker socket). All output is secret-scrubbed before it reaches a log.
 // User containers join ONLY the isolated apps network — never the platform
-// network with Postgres/Redis/MinIO.
+// network with Postgres/Redis/MinIO. The shared `docker` exec helper lives in
+// docker-cli.ts (single home per AGENTS.md §6 — also used by compose-apps.ts).
 
 const execFileAsync = promisify(execFile);
-const DOCKER_TIMEOUT_MS = 10 * 60 * 1000; // builds can be slow
 const MAX_BUFFER = 8 * 1024 * 1024;
-
-async function docker(args: string[], secrets: string[] = []): Promise<string> {
-  const { stdout } = await execFileAsync('docker', args, {
-    timeout: DOCKER_TIMEOUT_MS,
-    maxBuffer: MAX_BUFFER,
-  });
-  return redactSecrets(stdout, secrets);
-}
 
 export async function buildImage(
   contextDir: string,
