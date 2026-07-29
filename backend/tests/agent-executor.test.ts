@@ -34,15 +34,16 @@ beforeEach(() => {
 });
 
 describe('AGENT_EXECUTORS', () => {
-  it('offers exactly the hermes and internal options', () => {
-    expect(AGENT_EXECUTORS).toEqual(['hermes', 'internal']);
+  it('offers hermes, internal, and lemcore options', () => {
+    expect(AGENT_EXECUTORS).toEqual(['hermes', 'internal', 'lemcore']);
   });
 });
 
 describe('parseAgentExecutor', () => {
-  it('accepts the two known executors', () => {
+  it('accepts the known executors', () => {
     expect(parseAgentExecutor('hermes')).toBe('hermes');
     expect(parseAgentExecutor('internal')).toBe('internal');
+    expect(parseAgentExecutor('lemcore')).toBe('lemcore');
   });
 
   it('rejects null, undefined, and unknown values', () => {

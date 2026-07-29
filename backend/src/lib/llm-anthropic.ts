@@ -51,10 +51,6 @@ export interface AnthropicMessagesParams {
   tools?: ChatCompletionTool[];
 }
 
-// ---------------------------------------------------------------------------
-// Message translation (OpenAI shape → Messages API shape)
-// ---------------------------------------------------------------------------
-
 type AnthropicContent =
   | string
   | (
@@ -85,7 +81,8 @@ function imagePartToBlock(part: Extract<ContentPart, { type: 'image_url' }>) {
   return { type: 'image' as const, source: { type: 'url' as const, url } };
 }
 
-function toAnthropicContent(content: ChatMessage['content']): AnthropicContent {
+function toAnthropicContent(content: string | ContentPart[] | null): AnthropicContent {
+  if (content === null) return '';
   if (typeof content === 'string') return content;
   return content.map((part) =>
     part.type === 'text' ? { type: 'text' as const, text: part.text } : imagePartToBlock(part),
@@ -104,17 +101,24 @@ export function toAnthropicRequest(messages: ChatMessage[]): {
       if (typeof message.content === 'string') systemParts.push(message.content);
       continue;
     }
-    converted.push({ role: message.role, content: toAnthropicContent(message.content) });
+    if (message.role === 'tool') {
+      // Tool results require tool_use pairing (Phase 3). Drop for non-tool calls.
+      converted.push({
+        role: 'user',
+        content: `Tool result (${message.tool_call_id}): ${message.content}`,
+      });
+      continue;
+    }
+    converted.push({
+      role: message.role,
+      content: toAnthropicContent(message.content),
+    });
   }
   return {
     ...(systemParts.length > 0 ? { system: systemParts.join('\n\n') } : {}),
     messages: converted,
   };
 }
-
-// ---------------------------------------------------------------------------
-// Response parsing
-// ---------------------------------------------------------------------------
 
 interface MessagesResponseBody {
   content?: {
@@ -190,10 +194,6 @@ function toResult(
   };
 }
 
-// ---------------------------------------------------------------------------
-// Request loop (same policy as llm-client.ts)
-// ---------------------------------------------------------------------------
-
 function buildBody(params: AnthropicMessagesParams): Record<string, unknown> {
   return {
     model: params.model,
@@ -255,6 +255,9 @@ async function errorDetail(params: AnthropicMessagesParams, response: Response):
 export async function anthropicMessages(
   params: AnthropicMessagesParams,
 ): Promise<ChatCompletionsResult> {
+  if (params.tools?.length) {
+    throw new LlmError('protocol', "Anthropic tool_use unsupported for lemcore yet; use apiPattern 'openai'");
+  }
   const startedAt = Date.now();
   const maxRetries = params.maxRetries ?? DEFAULT_MAX_RETRIES;
   for (let attempt = 0; ; attempt++) {

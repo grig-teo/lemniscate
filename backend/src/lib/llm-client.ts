@@ -7,141 +7,35 @@
 
 import { errorMessage, redactSecrets, sleep } from './utils.js';
 import { notifyObserver, type LlmOutcome } from './llm-observer.js';
+import { normalizeToolCalls, type ChatCompletionTool } from './llm-tool-calls.js';
+import {
+  toReasoningEffort,
+  type ChatCompletionsParams,
+  type ChatCompletionsResult,
+  type ChatMessage,
+  type ChatUsage,
+  type LlmRetryInfo,
+  type ThinkingLevel,
+} from './llm-types.js';
 
-// Re-exported so existing consumers (metrics.ts, tests) keep importing the
-// observer surface from llm-client; implementation lives in llm-observer.ts.
 export { setLlmObserver } from './llm-observer.js';
 export type { LlmOutcome, LlmRequestObservation } from './llm-observer.js';
-
-export type ThinkingLevel = 'low' | 'medium' | 'high' | 'max';
-
-/** Values sent as `reasoning_effort`; 'max' maps to 'xhigh'. */
-export type ReasoningEffort = 'low' | 'medium' | 'high' | 'xhigh';
-
-export function toReasoningEffort(level: ThinkingLevel): ReasoningEffort {
-  return level === 'max' ? 'xhigh' : level;
-}
-
-// OpenAI multimodal message content: plain text, or text + image parts.
-export type ContentPart =
-  | { type: 'text'; text: string }
-  | { type: 'image_url'; image_url: { url: string } };
-
-export interface ChatMessage {
-  role: 'system' | 'user' | 'assistant';
-  content: string | ContentPart[];
-}
-
-export interface ChatCompletionsParams {
-  baseUrl: string;
-  apiKey: string;
-  model: string;
-  messages: ChatMessage[];
-  temperature?: number;
-  maxTokens?: number;
-  /** Maps to `reasoning_effort` when set; transparently dropped on HTTP 400. */
-  thinkingLevel?: ThinkingLevel;
-  /** First-attempt timeout. Defaults to 120s. Each retry doubles it (cap 600s). */
-  timeoutSeconds?: number;
-  /** Retries on 429 / 5xx / network errors. Defaults to 3. */
-  maxRetries?: number;
-  customHeaders?: Record<string, string>;
-  /** Called before each backoff wait, with 1-based attempt info. */
-  onRetry?: (info: LlmRetryInfo) => void;
-  /**
-   * Called with the response headers of every HTTP attempt (success or
-   * error) — used to snapshot provider rate-limit headers (llm-quota.ts).
-   */
-  onResponseHeaders?: (headers: Headers) => void;
-  /**
-   * Connectivity probes (test-connection): return the result with
-   * `truncated: true` instead of throwing when finish_reason is 'length'.
-   * Any reply — even cut short by the tiny probe budget — proves the
-   * URL/key/model work. Real agent calls leave this unset.
-   */
-  allowTruncated?: boolean;
-}
-
-export interface LlmRetryInfo {
-  /** 1-based number of the attempt that just failed. */
-  attempt: number;
-  /** Total attempts (maxRetries + 1). */
-  maxAttempts: number;
-  /** Backoff wait about to happen. */
-  delayMs: number;
-  /** Why the attempt failed: 'timeout', 'network error', or 'HTTP <status>'. */
-  reason: string;
-}
-
-// OpenAI function-calling tool definition.
-export interface ChatCompletionTool {
-  type: 'function';
-  function: {
-    name: string;
-    description: string;
-    parameters: Record<string, unknown>;
-  };
-}
-
-export interface ChatCompletionsParams {
-  baseUrl: string;
-  apiKey: string;
-  model: string;
-  messages: ChatMessage[];
-  temperature?: number;
-  maxTokens?: number;
-  /** Maps to `reasoning_effort` when set; transparently dropped on HTTP 400. */
-  thinkingLevel?: ThinkingLevel;
-  /** First-attempt timeout. Defaults to 120s. Each retry doubles it (cap 600s). */
-  timeoutSeconds?: number;
-  /** Retries on 429 / 5xx / network errors. Defaults to 3. */
-  maxRetries?: number;
-  customHeaders?: Record<string, string>;
-  /** Called before each backoff wait, with 1-based attempt info. */
-  onRetry?: (info: LlmRetryInfo) => void;
-  /**
-   * Called with the response headers of every HTTP attempt (success or
-   * error) — used to snapshot provider rate-limit headers (llm-quota.ts).
-   */
-  onResponseHeaders?: (headers: Headers) => void;
-  /**
-   * Connectivity probes (test-connection): return the result with
-   * `truncated: true` instead of throwing when finish_reason is 'length'.
-   * Any reply — even cut short by the tiny probe budget — proves the
-   * URL/key/model work. Real agent calls leave this unset.
-   */
-  allowTruncated?: boolean;
-  /**
-   * OpenAI-compatible tool definitions. When set, the request body
-   * includes `tools` and the response is parsed for `tool_calls` in
-   * addition to `content`. Supported on the 'openai' apiPattern.
-   */
-  tools?: ChatCompletionTool[];
-}
-
-export interface ChatUsage {
-  promptTokens: number;
-  completionTokens: number;
-  totalTokens: number;
-}
-
-export interface ChatCompletionsResult {
-  content: string;
-  /** Model name echoed by the server (may differ from the requested one). */
-  model: string;
-  usage?: ChatUsage;
-  latencyMs: number;
-  /** Set only when allowTruncated is on and the reply hit the token cap. */
-  truncated?: boolean;
-  /** Tool-call results returned by the model (OpenAI format). */
-  toolCalls?: Array<{
-    id: string;
-    type: 'function';
-    function: { name: string; arguments: string };
-  }>;
-  /** Whether the model asked the caller to run a tool (not just a text reply). */
-  hasToolCalls?: boolean;
-}
+export {
+  parseToolCallArguments,
+  type ChatCompletionTool,
+  type ChatToolCall,
+} from './llm-tool-calls.js';
+export {
+  toReasoningEffort,
+  type ChatCompletionsParams,
+  type ChatCompletionsResult,
+  type ChatMessage,
+  type ChatUsage,
+  type ContentPart,
+  type LlmRetryInfo,
+  type ReasoningEffort,
+  type ThinkingLevel,
+} from './llm-types.js';
 
 export class LlmError extends Error {
   readonly kind: 'http' | 'timeout' | 'network' | 'protocol';
@@ -359,8 +253,12 @@ function toResult(parsed: ChatCompletionsResponseBody, state: RequestState): Cha
       `LLM response truncated at maxTokens=${state.maxTokens ?? 'unset'} — raise maxTokens in the LLM config`,
     );
   }
-  const content = parsed.choices?.[0]?.message?.content;
-  if (typeof content !== 'string') {
+  const message = parsed.choices?.[0]?.message;
+  const rawToolCalls = message?.tool_calls ?? parsed.tool_calls;
+  const toolCalls = normalizeToolCalls(rawToolCalls);
+  const hasToolCalls = toolCalls.length > 0;
+  const content = message?.content;
+  if (typeof content !== 'string' && !hasToolCalls) {
     throw new LlmError(
       'protocol',
       'LLM endpoint response is missing choices[0].message.content',
@@ -368,11 +266,12 @@ function toResult(parsed: ChatCompletionsResponseBody, state: RequestState): Cha
   }
   const usage = extractUsage(parsed.usage);
   return {
-    content,
+    content: typeof content === 'string' ? content : '',
     model: parsed.model ?? state.model,
     ...(usage ? { usage } : {}),
     latencyMs: Date.now() - state.startedAt,
     ...(truncated ? { truncated: true } : {}),
+    ...(hasToolCalls ? { toolCalls, hasToolCalls: true } : {}),
   };
 }
 

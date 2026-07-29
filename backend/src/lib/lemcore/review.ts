@@ -1,5 +1,4 @@
 import path from 'node:path';
-import { config } from '../../config.js';
 import { promises as fs } from 'node:fs';
 import {
   commitAndPush,
@@ -17,15 +16,6 @@ import {
   parsePrReview,
   type PrReview,
 } from '../pr-review.js';
-
-function lemcoreLlm(rt: LlmRuntime) {
-  return {
-    baseUrl: rt.cfg.baseUrl,
-    apiKey: rt.apiKey,
-    model: rt.cfg.model,
-    contextWindow: rt.cfg.contextWindow,
-  };
-}
 
 export async function runLemcoreReview(
   task: TaskWithRepo,
@@ -64,7 +54,6 @@ export async function runLemcoreReview(
     secrets,
   });
 
-  // Read the review verdict file
   let review: PrReview | null = null;
   const reviewFile = path.join(workdir, HERMES_REVIEW_FILENAME);
   try {
@@ -74,22 +63,13 @@ export async function runLemcoreReview(
   } catch {
     await logEvent(
       task.id,
-      `no valid ${HERMES_REVIEW_FILENAME} from lemcore, falling back to a direct LLM review`,
+      `no valid ${HERMES_REVIEW_FILENAME} from lemcore; caller should fall back if needed`,
     );
-    // Fallback: direct LLM review (reuse the internal path)
-    const { fetchReviewDiff } = await import('./agent-review.js');
-    review = await fetchReviewDiff(task, headBranch).then(() => {
-      // This is a simplified fallback - the actual review will be
-      // done by the calling code's fallback logic
-      return null;
-    }).catch(() => null);
-    if (review) return rt;
-    // No review from lemcore or fallback — return so caller can handle
     return rt;
   }
 
   await logReview(task.id, review, rt.usedTokens);
-  await continueOrFinishReview(task, rt, review, attempt, () =>
+  await continueOrFinishReview(task, review, () =>
     runLemcoreFixIteration(task, rt, review, headBranch, workdir, secrets, auth),
   );
   return rt;
@@ -145,26 +125,15 @@ async function logReview(taskId: string, review: PrReview, usedTokens: number): 
   await logEvent(taskId, `LLM usage so far: ~${usedTokens} tokens`);
 }
 
-// Reuse the same continueOrFinishReview logic as agent-review.ts
-// The function is defined there; we duplicate it here to avoid
-// a circular dependency through the runtime.
 async function continueOrFinishReview(
   task: TaskWithRepo,
-  rt: LlmRuntime,
   review: PrReview,
-  attempt: number,
   runFixIteration: () => Promise<void>,
 ): Promise<void> {
-  if (review.verdict === 'request_changes') {
+  if (review.verdict === 'changes_requested') {
     await runFixIteration();
     await logEvent(task.id, 'queued re-review of the updated pull request');
     return;
   }
-  // approve or changes_requested with no issues → finish
-  await finishReview(task, review);
-}
-
-async function finishReview(task: TaskWithRepo, review: PrReview): Promise<void> {
-  // Handled by the caller (merge-gate)
   await logEvent(task.id, `review finished: ${review.verdict}`);
 }

@@ -366,4 +366,59 @@ describe('setLlmObserver', () => {
     }
     expect(seen.map((o) => o.outcome)).toEqual(['timeout']);
   });
+
+  it('sends tools and parses tool_calls when content is empty', async () => {
+    const tools = [
+      {
+        type: 'function' as const,
+        function: {
+          name: 'read_file',
+          description: 'read',
+          parameters: { type: 'object', properties: { path: { type: 'string' } } },
+        },
+      },
+    ];
+    const calls = stubFetch(
+      jsonResponse({
+        choices: [
+          {
+            message: {
+              content: null,
+              tool_calls: [
+                {
+                  id: 'call_1',
+                  type: 'function',
+                  function: { name: 'read_file', arguments: '{"path":"a.ts"}' },
+                },
+              ],
+            },
+            finish_reason: 'tool_calls',
+          },
+        ],
+        model: 'tool-model',
+      }),
+    );
+    const result = await chatCompletions({ ...BASE, tools });
+    const body = JSON.parse(String(calls[0]?.init.body));
+    expect(body.tools).toEqual(tools);
+    expect(result.content).toBe('');
+    expect(result.hasToolCalls).toBe(true);
+    expect(result.toolCalls).toEqual([
+      {
+        id: 'call_1',
+        type: 'function',
+        function: { name: 'read_file', arguments: '{"path":"a.ts"}' },
+      },
+    ]);
+  });
+});
+
+describe('parseToolCallArguments', () => {
+  it('parses JSON strings and objects', async () => {
+    const { parseToolCallArguments } = await import('../src/lib/llm-client.js');
+    expect(parseToolCallArguments('{"path":"x"}')).toEqual({ path: 'x' });
+    expect(parseToolCallArguments({ path: 'y' })).toEqual({ path: 'y' });
+    expect(parseToolCallArguments('')).toEqual({});
+    expect(() => parseToolCallArguments('not-json')).toThrow(/not a JSON object/);
+  });
 });
