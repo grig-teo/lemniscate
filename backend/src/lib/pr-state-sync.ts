@@ -225,6 +225,11 @@ async function pollTaskReviewFeedback(task: TaskWithConnection): Promise<number>
 
 const MAX_REVIEW_RECOVERIES = 3;
 const REVIEW_RECOVERY_LOG = 'recovery: re-enqueued PR review after a failed review job';
+// Housekeeping logs (e.g. "cleaned up workdir") fire AFTER the error line and
+// mask it from a last-line-only check. Scan a small window of recent logs so
+// the error that caused the review job to die is still visible to the
+// recovery poller.
+const STUCK_REVIEW_LOG_SCAN = 5;
 
 // A review that concluded (approve / changes requested / checks gate) ends
 // with a distinct log line; a review whose job exhausted its BullMQ attempts
@@ -234,13 +239,16 @@ async function isReviewStuck(taskId: string): Promise<boolean> {
     where: { taskId, kind: 'log', payload: { path: ['line'], equals: REVIEW_RECOVERY_LOG } },
   });
   if (recoveries >= MAX_REVIEW_RECOVERIES) return false;
-  const lastLog = await prisma.taskEvent.findFirst({
+  const recentLogs = await prisma.taskEvent.findMany({
     where: { taskId, kind: 'log' },
     orderBy: { createdAt: 'desc' },
+    take: STUCK_REVIEW_LOG_SCAN,
     select: { payload: true },
   });
-  const line = (lastLog?.payload as { line?: unknown } | null)?.line;
-  return typeof line === 'string' && line.startsWith('error:');
+  return recentLogs.some((entry) => {
+    const line = (entry.payload as { line?: unknown } | null)?.line;
+    return typeof line === 'string' && line.startsWith('error:');
+  });
 }
 
 // Re-enqueues review for awaiting_review tasks whose review job died for good

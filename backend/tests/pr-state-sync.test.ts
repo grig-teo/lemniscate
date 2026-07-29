@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
   taskFindMany: vi.fn(),
   taskEventCount: vi.fn().mockResolvedValue(0),
   taskEventFindFirst: vi.fn().mockResolvedValue(null),
+  taskEventFindMany: vi.fn().mockResolvedValue([]),
   enqueueReviewTask: vi.fn().mockResolvedValue(undefined),
   enqueueAddressReview: vi.fn().mockResolvedValue(undefined),
   setTaskStatus: vi.fn().mockResolvedValue(undefined),
@@ -26,7 +27,11 @@ vi.mock('../src/config.js', () => ({
 vi.mock('../src/lib/prisma.js', () => ({
   prisma: {
     task: { findMany: mocks.taskFindMany },
-    taskEvent: { count: mocks.taskEventCount, findFirst: mocks.taskEventFindFirst },
+    taskEvent: {
+      count: mocks.taskEventCount,
+      findFirst: mocks.taskEventFindFirst,
+      findMany: mocks.taskEventFindMany,
+    },
   },
 }));
 vi.mock('../src/lib/task-events.js', () => ({ setTaskStatus: mocks.setTaskStatus }));
@@ -94,6 +99,11 @@ beforeEach(() => {
   // the per-branch fallback path. Batching tests override this per case.
   mocks.listPullRequests.mockResolvedValue([]);
   mocks.listPrReviewComments.mockResolvedValue([]);
+  // clearAllMocks wipes hoisted defaults — re-seed the ones used by recoverStuckReviews.
+  mocks.taskEventCount.mockResolvedValue(0);
+  mocks.taskEventFindMany.mockResolvedValue([]);
+  mocks.taskEventFindFirst.mockResolvedValue(null);
+  mocks.enqueueReviewTask.mockResolvedValue(undefined);
 });
 
 describe('taskStatusForPrState', () => {
@@ -270,7 +280,7 @@ describe('syncMergedPullRequests batching', () => {
 describe('recoverStuckReviews', () => {
   it('re-enqueues the review when the last log line is a job error', async () => {
     mocks.taskFindMany.mockResolvedValue([{ id: 't-stuck' }]);
-    mocks.taskEventFindFirst.mockResolvedValue({ payload: { line: 'error: Request timed out' } });
+    mocks.taskEventFindMany.mockResolvedValue([{ payload: { line: 'error: Request timed out' } }]);
 
     await recoverStuckReviews();
 
@@ -283,9 +293,9 @@ describe('recoverStuckReviews', () => {
 
   it('leaves tasks alone when the review concluded without an error', async () => {
     mocks.taskFindMany.mockResolvedValue([{ id: 't-waiting' }]);
-    mocks.taskEventFindFirst.mockResolvedValue({
-      payload: { line: 'approved by LLM, awaiting manual merge' },
-    });
+    mocks.taskEventFindMany.mockResolvedValue([
+      { payload: { line: 'approved by LLM, awaiting manual merge' } },
+    ]);
 
     await recoverStuckReviews();
 
@@ -295,11 +305,23 @@ describe('recoverStuckReviews', () => {
   it('stops re-enqueueing after the per-task recovery cap', async () => {
     mocks.taskFindMany.mockResolvedValue([{ id: 't-flapping' }]);
     mocks.taskEventCount.mockResolvedValue(3);
-    mocks.taskEventFindFirst.mockResolvedValue({ payload: { line: 'error: boom' } });
+    mocks.taskEventFindMany.mockResolvedValue([{ payload: { line: 'error: boom' } }]);
 
     await recoverStuckReviews();
 
     expect(mocks.enqueueReviewTask).not.toHaveBeenCalled();
+  });
+
+  it('re-enqueues when "cleaned up workdir" log masks the error line', async () => {
+    mocks.taskFindMany.mockResolvedValue([{ id: 't-masked' }]);
+    mocks.taskEventFindMany.mockResolvedValue([
+      { createdAt: new Date('2026-07-29T18:18:27.722Z'), payload: { line: 'cleaned up workdir' } },
+      { createdAt: new Date('2026-07-29T18:18:27.094Z'), payload: { line: 'error: Too many consecutive tool failures' } },
+    ]);
+
+    await recoverStuckReviews();
+
+    expect(mocks.enqueueReviewTask).toHaveBeenCalledWith('t-masked');
   });
 });
 

@@ -106,6 +106,18 @@ export async function toolEditFile(
   };
 }
 
+// Only true infrastructure failures (timeout, spawn error) are tool errors;
+// a non-zero exit (grep no-match, ls missing file, failing tests) is a normal
+// result the agent should see in the output and act on — not a consecutive
+// tool failure that counts toward MAX_TOOL_FAILURES.
+function isRealBashError(err: Error | null): boolean {
+  if (!err) return false;
+  const e = err as unknown as { killed?: boolean; signal?: string; code?: string | number };
+  if (e.killed && e.signal) return true;
+  if (typeof e.code === 'string') return true;
+  return false;
+}
+
 export async function toolBash(
   workdir: string,
   command: string,
@@ -113,7 +125,7 @@ export async function toolBash(
 ): Promise<ToolResult> {
   const startMs = Date.now();
   return new Promise((resolve) => {
-    const proc = execFile('bash', ['-c', command], { cwd: workdir, timeout: BASH_TIMEOUT_MS }, (err, stdout, stderr) => {
+    execFile('bash', ['-c', command], { cwd: workdir, timeout: BASH_TIMEOUT_MS }, (err, stdout, stderr) => {
       const combined = [stdout ?? '', stderr ?? ''].join('');
       const capped = truncate(redactSecrets(combined, secrets));
       resolve({
@@ -121,7 +133,7 @@ export async function toolBash(
         title: command.length > 80 ? `${command.slice(0, 80)}…` : command,
         outputPreview: capped,
         durationMs: Date.now() - startMs,
-        error: err ? err.message : undefined,
+        error: isRealBashError(err) ? err!.message : undefined,
       });
     });
   });
@@ -136,7 +148,7 @@ export async function toolGrep(
 ): Promise<ToolResult> {
   const startMs = Date.now();
   const searchPath = pathArg ? jailPath(workdir, pathArg) : workdir;
-  const args = ['-rn', '--color=never', pattern, searchPath];
+  const args = ['-n', '--color=never', pattern, searchPath];
   if (globArg) args.push('--glob', globArg);
   return new Promise((resolve) => {
     execFile('rg', args, { cwd: workdir, timeout: 30_000 }, (err, stdout) => {
@@ -146,7 +158,8 @@ export async function toolGrep(
         title: `grep ${pattern}${pathArg ? ` in ${pathArg}` : ''}`,
         outputPreview: preview || '(no matches)',
         durationMs: Date.now() - startMs,
-        error: err && stdout ? undefined : err?.message,
+        // exit 1 (no matches) is not an error; only timeout/spawn failures are
+        error: err && typeof err.code === 'string' && !stdout ? err.message : undefined,
       });
     });
   });
