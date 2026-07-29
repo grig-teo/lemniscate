@@ -127,7 +127,7 @@ async function runLemniscateImageDeploy(
     throw new Error(`health check failed — keeping the previous version\nlast container logs:\n${logs}`);
   }
 
-  await finishLemniscateDeploy(deployment, container, secrets);
+  await finishLemniscateDeploy(deployment, container, secrets, 'image');
 }
 
 // Blue/green by compose project name. The user's compose file owns image
@@ -145,7 +145,8 @@ async function runLemniscateComposeDeploy(
   const composeFile = await detectComposeFile(workdir);
   if (!composeFile) throw new Error('no compose file found at the repository root');
 
-  const envFile = await writeComposeEnvFile(workdir, parseServiceEnv(service.envEnc, secrets));
+  const env = parseServiceEnv(service.envEnc, secrets);
+  const envFile = await writeComposeEnvFile(workdir, env);
   await setDeployStatus(deployment.id, 'building');
   const project = composeProjectName(service.id, sha);
   await appendLog(deployment.id, `docker compose up (${composeFile}, project ${project})`);
@@ -154,21 +155,25 @@ async function runLemniscateComposeDeploy(
     file: composeFile,
     workdir,
     envFile,
+    env,
     secrets,
     onLog: (line) => void appendLog(deployment.id, line).catch(() => {}),
   });
 
-  await finishLemniscateDeploy(deployment, project, secrets);
+  await finishLemniscateDeploy(deployment, project, secrets, 'compose');
 }
 
 // Flips Service.activeContainer to the new handle (container name or compose
 // project), then removes the previous handle via the same-modal teardown so a
 // repo switching from a Dockerfile to a compose file (or back) still cleans
-// the prior version correctly.
+// the prior version correctly. The success message differs by mode: image
+// deployments live behind Traefik on the apps network (URL is reachable),
+// compose stacks own their own port publishing.
 async function finishLemniscateDeploy(
   deployment: DeploymentWithService,
   newHandle: string,
   secrets: string[],
+  mode: BuildMode,
 ): Promise<void> {
   const { service } = deployment;
   const previous = service.activeContainer;
@@ -178,6 +183,10 @@ async function finishLemniscateDeploy(
   });
   if (previous && previous !== newHandle) await teardownPrevious(previous, secrets);
   await setDeployStatus(deployment.id, 'online', true);
+  if (mode === 'compose') {
+    await appendLog(deployment.id, 'compose stack started; check your published ports');
+    return;
+  }
   const url = `${config.APPS_BASE_URL}${servicePath(service.repository.connection.username, service.name)}`;
   await appendLog(deployment.id, `live at ${url}`);
 }

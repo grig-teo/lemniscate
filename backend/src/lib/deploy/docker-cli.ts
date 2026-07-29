@@ -16,11 +16,21 @@ export const MAX_BUFFER = 8 * 1024 * 1024;
 // Runs `docker <args>`, returns the (secret-scrubbed) stdout. The worker
 // mounts the host docker socket; user containers join ONLY the isolated apps
 // network — never the platform network with Postgres/Redis/MinIO.
-export async function docker(args: string[], secrets: string[] = [], cwd?: string): Promise<string> {
+export async function docker(
+  args: string[],
+  secrets: string[] = [],
+  cwd?: string,
+  env?: Record<string, string>,
+): Promise<string> {
   const { stdout } = await execFileAsync('docker', args, {
     timeout: DOCKER_TIMEOUT_MS,
     maxBuffer: MAX_BUFFER,
     ...(cwd ? { cwd } : {}),
+    // Merge on top of process.env so PATH etc. survive. Compose inherits
+    // the calling process env for ${VAR} interpolation — the same semantics
+    // --env-file provides, but also works for compose files that omit
+    // --env-file and rely on the shell environment instead.
+    ...(env ? { env: { ...process.env, ...env } } : {}),
   });
   return redactSecrets(stdout, secrets);
 }

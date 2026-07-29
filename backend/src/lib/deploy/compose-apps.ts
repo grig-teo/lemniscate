@@ -103,6 +103,11 @@ export interface ComposeUpOptions {
   file: string;
   workdir: string;
   envFile: string;
+  // Decrypted service env, passed both via --env-file AND as the calling
+  // process environment so compose's ${VAR} interpolation picks them up
+  // regardless of whether the compose file references --env-file. The
+  // compose file must still use ${VAR} or env_file: to inject into containers.
+  env: Record<string, string>;
   secrets: string[];
   onLog: (line: string) => void;
 }
@@ -114,8 +119,12 @@ export interface ComposeUpOptions {
 export async function composeUp(opts: ComposeUpOptions): Promise<void> {
   const args = buildComposeUpArgs(opts.project, opts.file, opts.envFile);
   try {
-    await docker(args, opts.secrets, opts.workdir);
-    opts.onLog('compose stack started');
+    await docker(args, opts.secrets, opts.workdir, opts.env);
+    const hasEnv = Object.keys(opts.env).length > 0;
+    const hint = hasEnv
+      ? ' (service env available via ${VAR} or env_file: .lemniscate.env)'
+      : '';
+    opts.onLog(`compose stack started${hint}`);
   } catch (err) {
     const e = err as { stdout?: string; stderr?: string; message: string };
     const tail = `${e.stdout ?? ''}\n${e.stderr ?? ''}`.split('\n').filter((l) => l.trim()).slice(-20).join('\n');
