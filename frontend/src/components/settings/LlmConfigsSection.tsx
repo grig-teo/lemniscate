@@ -12,10 +12,18 @@ import {
 } from '@/lib/hooks';
 
 import { LlmConfigForm } from '@/components/settings/LlmConfigForm';
+import { XaiOauthConnect } from '@/components/settings/XaiOauthConnect';
 
 function EnabledBadge({ enabled }: { enabled: boolean }) {
   if (enabled) return <Badge variant="outline">enabled</Badge>;
   return <Badge variant="destructive">disabled</Badge>;
+}
+
+function AuthBadge({ config }: { config: LlmConfig }) {
+  if (config.authType === 'oauth') {
+    return <Badge variant="secondary">xAI OAuth</Badge>;
+  }
+  return null;
 }
 
 function LlmConfigRow({
@@ -36,6 +44,7 @@ function LlmConfigRow({
           <span className="truncate text-sm font-medium">{config.name}</span>
           {config.isDefault && <Badge variant="secondary">default</Badge>}
           <EnabledBadge enabled={config.enabled} />
+          <AuthBadge config={config} />
         </div>
         <span className="truncate text-xs text-muted-foreground">
           {config.model} · {config.baseUrl}
@@ -142,12 +151,14 @@ function AddProviderButtons({ onAdd }: { onAdd: (editing: Editing) => void }) {
 
 /**
  * LLM configs tab: list of saved configs with add/edit/delete.
- * Shows the form inline when adding or editing.
+ * Shows the form inline when adding or editing. Includes Connect with xAI
+ * (OAuth device code) above the API-key provider buttons.
  */
 export function LlmConfigsSection() {
   const configs = useLlmConfigs();
   const deleteConfig = useDeleteLlmConfig();
   const [editing, setEditing] = React.useState<Editing | null>(null);
+  const [oauthKey, setOauthKey] = React.useState(0);
 
   function remove(config: LlmConfig) {
     if (window.confirm(`Delete LLM config "${config.name}"?`)) {
@@ -175,6 +186,8 @@ export function LlmConfigsSection() {
         onEdit={setEditing}
         onDelete={remove}
       />
+
+      <XaiOauthConnect key={oauthKey} onDone={() => setOauthKey((n) => n + 1)} />
 
       <AddProviderButtons onAdd={setEditing} />
     </div>

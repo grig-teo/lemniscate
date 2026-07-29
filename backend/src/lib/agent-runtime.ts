@@ -1,6 +1,6 @@
 import type { GitConnection, LlmConfig, Repository, Task } from '@prisma/client';
 import { logEvent, type GitAuth } from './agent-git.js';
-import { decrypt } from './crypto.js';
+import { resolveLlmAccessToken } from './llm-access-token.js';
 import {
   assertRepoPushAccess,
   GIT_HTTP_AUTH_USERNAME,
@@ -274,7 +274,7 @@ export async function prepareAgentRuntime(
     repository.connection.userId,
   );
   await assertSafeLlmBaseUrl(llmConfig.baseUrl);
-  const apiKey = decrypt(llmConfig.apiKeyEnc);
+  const apiKey = await resolveLlmAccessToken(llmConfig);
   secrets.push(apiKey);
   const rt = makeLlmRuntime(llmConfig, apiKey);
   rt.usedTokens = usedTokens;

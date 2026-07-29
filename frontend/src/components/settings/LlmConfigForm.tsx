@@ -101,10 +101,11 @@ export function LlmConfigForm({
 }) {
   const state = useLlmConfigForm(initial, onDone, preset);
   const editing = initial !== undefined;
+  const hideApiKey = initial?.authType === 'oauth';
 
   return (
     <form onSubmit={state.submit} className="flex flex-col gap-4">
-      <LlmConfigFields form={state.form} set={state.set} editing={editing} />
+      <LlmConfigFields form={state.form} set={state.set} editing={editing} hideApiKey={hideApiKey} />
       <OptionalTextareas form={state.form} set={state.set} />
       <FlagSwitches form={state.form} set={state.set} />
 

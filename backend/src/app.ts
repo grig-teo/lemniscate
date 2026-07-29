@@ -11,6 +11,7 @@ import { sseHub } from './lib/sse-hub.js';
 import apiRoutes from './routes/index.js';
 import healthRoutes from './routes/health.js';
 import llmConfigRoutes from './routes/llm-configs.js';
+import xaiOauthRoutes from './routes/xai-oauth.js';
 import skillsRoutes from './routes/skills.js';
 import mcpServersRoutes from './routes/mcp-servers.js';
 import libraryRoutes from './routes/library.js';
@@ -41,6 +42,7 @@ async function registerRoutes(app: FastifyInstance) {
   // Auth, git connections, repositories (prefixed /api inside the plugin).
   await app.register(apiRoutes);
   await app.register(llmConfigRoutes, { prefix: '/api/llm-configs' });
+  await app.register(xaiOauthRoutes, { prefix: '/api/llm-configs/xai-oauth' });
   await app.register(skillsRoutes, { prefix: '/api/skills' });
   await app.register(mcpServersRoutes, { prefix: '/api/mcp-servers' });
   await app.register(libraryRoutes, { prefix: '/api/library' });

@@ -141,3 +141,23 @@ the user ever runs the loop.
   - `reply` — the actual text returned
   - `error` — sanitized message on failure (DNS/auth/timeout/4xx-5xx), never
     leaking the API key
+
+## xAI OAuth (SuperGrok / X Premium+) (implemented)
+
+Settings → LLM configs includes a **Connect with xAI** button that runs the
+OAuth 2.0 device-code flow against `auth.x.ai` (same grant Hermes uses). No
+`XAI_API_KEY` is required.
+
+1. `POST /api/llm-configs/xai-oauth/start` — returns `sessionId`, `userCode`,
+   `verificationUrl`, poll `interval`, and the coding model list (default
+   `grok-4.5`).
+2. The UI opens the verification URL; `POST …/poll` with `{ sessionId }` until
+   `status: "authorized"` (or timeout / denial).
+3. `POST …/complete` with `{ sessionId, model, isDefault? }` creates an
+   `LlmConfig` with `authType: "oauth"`, access token in `apiKeyEnc`, refresh
+   token in `refreshTokenEnc`, and cached `oauthTokenEndpoint`.
+
+Runtime calls resolve the Bearer token through `resolveLlmAccessToken`
+(`backend/src/lib/llm-access-token.ts`), which refreshes near JWT expiry and
+persists the rotated pair. Re-auth message when the refresh grant dies:
+reconnect via Settings → LLM configs.

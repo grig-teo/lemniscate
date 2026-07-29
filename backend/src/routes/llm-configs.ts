@@ -1,7 +1,8 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type { Prisma } from '@prisma/client';
 import { z } from 'zod';
-import { encrypt, decrypt } from '../lib/crypto.js';
+import { encrypt } from '../lib/crypto.js';
+import { resolveLlmAccessToken } from '../lib/llm-access-token.js';
 import { chatCompletion, type DispatchChatParams } from '../lib/llm-dispatch.js';
 import { runConnectionTest, type ConnectionTestParams } from '../lib/llm-connection-test.js';
 import { LLM_PROVIDER_PRESETS, apiPatternOf } from '../lib/llm-providers.js';
@@ -72,17 +73,26 @@ const idParamSchema = z.object({ id: z.string().min(1) });
 
 // --- Helpers ---
 
-// Never expose apiKeyEnc over the API.
+// Never expose encrypted credentials over the API.
 function serialize(configRecord: LlmConfig) {
-  const { apiKeyEnc: _apiKeyEnc, ...rest } = configRecord;
-  return { ...rest, hasApiKey: true };
+  const {
+    apiKeyEnc: _apiKeyEnc,
+    refreshTokenEnc: _refreshTokenEnc,
+    oauthTokenEndpoint: _oauthTokenEndpoint,
+    ...rest
+  } = configRecord;
+  return {
+    ...rest,
+    hasApiKey: Boolean(_apiKeyEnc),
+    authType: configRecord.authType === 'oauth' ? 'oauth' : 'api_key',
+  };
 }
 
-function toClientParams(record: LlmConfig) {
+async function toClientParams(record: LlmConfig) {
   const pattern = apiPatternOf(record);
   return {
     baseUrl: record.baseUrl,
-    apiKey: decrypt(record.apiKeyEnc),
+    apiKey: await resolveLlmAccessToken(record),
     model: record.model,
     apiPattern: pattern,
     temperature: record.temperature,
@@ -235,7 +245,7 @@ async function testSavedConfig(request: FastifyRequest, reply: FastifyReply) {
     return reply.code(404).send({ error: 'LLM config not found' });
   }
   if (!(await assertPublicBaseUrl(record.baseUrl, reply))) return;
-  return runConnectionTest(toClientParams(record));
+  return runConnectionTest(await toClientParams(record));
 }
 
 // The provider preset registry (OpenAI, Anthropic, z.ai, Kimi, Grok) for

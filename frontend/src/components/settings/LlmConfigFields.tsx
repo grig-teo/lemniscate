@@ -102,24 +102,38 @@ function ApiKeyField({ form, set, editing }: { form: FormState; set: SetField; e
   );
 }
 
+function ModelField({ form, set }: { form: FormState; set: SetField }) {
+  return (
+    <FormField label="Model">
+      <Input
+        value={form.model}
+        onChange={(e) => set('model', e.target.value)}
+        placeholder="gpt-4o-mini"
+        required
+      />
+    </FormField>
+  );
+}
+
 /** The two-column grid of core + numeric fields of the LLM config form. */
 export function LlmConfigFields({
   form,
   set,
   editing,
+  hideApiKey,
 }: {
   form: FormState;
   set: SetField;
   editing: boolean;
+  /** OAuth configs use a browser session — no API key field. */
+  hideApiKey?: boolean;
 }) {
   return (
     <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
       <FormField label="Name">
         <Input value={form.name} onChange={(e) => set('name', e.target.value)} placeholder="My Hermes 70B" required />
       </FormField>
-      <FormField label="Model">
-        <Input value={form.model} onChange={(e) => set('model', e.target.value)} placeholder="gpt-4o-mini" required />
-      </FormField>
+      <ModelField form={form} set={set} />
       <FormField label="Base URL">
         <Input
           value={form.baseUrl}
@@ -128,7 +142,12 @@ export function LlmConfigFields({
           required
         />
       </FormField>
-      <ApiKeyField form={form} set={set} editing={editing} />
+      {!hideApiKey && <ApiKeyField form={form} set={set} editing={editing} />}
+      {hideApiKey && (
+        <FormField label="Auth">
+          <Input value="xAI OAuth (SuperGrok / X Premium+)" disabled />
+        </FormField>
+      )}
       <ApiPatternField form={form} set={set} />
       <ThinkingLevelField form={form} set={set} />
       {NUMERIC_FIELDS.map((field) => (
