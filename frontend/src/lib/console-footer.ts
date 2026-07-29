@@ -11,6 +11,32 @@ import { formatTokens } from '@/lib/token-usage';
 
 export type ContextUsageLevel = 'ok' | 'warning' | 'critical';
 
+/**
+ * RIGHT-SIDE PANE — token split (sent to / received from the LLM provider).
+ *
+ * The console footer's left side shows the session context gauge, the
+ * active-model dropdown, and the provider rate-limit windows. The right side
+ * pane — visible only while a task is running or reviewing code (the footer
+ * itself is mounted from `isRunningStatus`) — surfaces the cumulative prompt /
+ * completion split the worker persists after every LLM call: prompt tokens are
+ * what was SENT to the provider, completion tokens what was RECEIVED back.
+ * `formatTokens` compacts the numbers, so 12_500 -> '12.5k'. Returns null while
+ * no split has been recorded yet (tasks that predate the split columns carry
+ * null on both fields) so the indicator renders nothing instead of zeroes.
+ */
+export interface TokenSplitParts {
+  sent: string;
+  received: string;
+}
+
+export function tokenSplitParts(
+  prompt: number | null | undefined,
+  completion: number | null | undefined,
+): TokenSplitParts | null {
+  if (prompt == null && completion == null) return null;
+  return { sent: formatTokens(prompt ?? 0), received: formatTokens(completion ?? 0) };
+}
+
 /** Context-window fill ratios where the indicator turns amber, then red. */
 export const CONTEXT_WARNING_RATIO = 0.6;
 export const CONTEXT_CRITICAL_RATIO = 0.85;
