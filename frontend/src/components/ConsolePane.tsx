@@ -13,6 +13,7 @@ import { ErrorBanner } from '@/components/console/ErrorBanner';
 import { ArchivedPane } from '@/components/console/ArchivedPane';
 import { ArchivedTaskDetail } from '@/components/console/ArchivedTaskDetail';
 import { ProposalDetail } from '@/components/console/ProposalDetail';
+import { TaskStepsRail } from '@/components/TaskStepsRail';
 import { ComposerCard, TaskComposerFab } from '@/components/console/TaskComposer';
 import { ServiceDetail } from '@/components/services/ServiceDetail';
 import { useTaskConsole } from '@/components/console/useTaskConsole';
@@ -162,6 +163,7 @@ export function ConsolePane() {
         </>
       )}
       <RunTaskDialog open={runDialogOpen} onOpenChange={setRunDialogOpen} task={selectedTask} />
+      <TaskStepsRail status={status} />
     </section>
   );
 }
