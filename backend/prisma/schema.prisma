@@ -46,6 +46,7 @@ enum TaskEventKind {
   diff
   status
   agent_step
+  retrospective
 }
 
 model User {
@@ -58,6 +59,11 @@ model User {
   // (AGENT_EXECUTOR env). 'hermes' runs the Hermes CLI; 'internal' the
   // built-in single-shot LLM loop. Resolved by lib/agent-executor.ts.
   agentExecutor  String?
+  // Phase 12 quotas: null = unlimited. Configurable per-user monthly caps;
+  // enforced by lib/quota.ts before a task is enqueued (tasks) and at the
+  // LLM-call layer (tokens).
+  monthlyTokenQuota Int?
+  monthlyTaskQuota  Int?
   gitConnections GitConnection[]
   llmConfigs     LlmConfig[]
   skills         Skill[]
@@ -68,6 +74,11 @@ model User {
   notificationSettings NotificationSetting[]
   vpsTargets     VpsTarget[]
   gitlemUser     GitlemUser?
+  apiTokens      ApiToken[]
+  orgMemberships OrgMember[]
+  oauthIdentities OauthIdentity[]
+  usageSnapshots  UsageSnapshot[]
+  ownedMarketplaceListings MarketplaceListing[] @relation("MarketplaceOwner")
 }
 
 model GitConnection {
