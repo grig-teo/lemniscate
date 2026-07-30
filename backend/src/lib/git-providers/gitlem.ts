@@ -1,5 +1,5 @@
 import { prisma } from '../prisma.js';
-import { GITLEM_DEFAULT_BRANCH, parseGitlemDoc, upsertFile } from '../gitlem-store.js';
+import { GITLEM_DEFAULT_BRANCH, parseGitlemDoc, seedGitlemDoc, upsertFile } from '../gitlem-store.js';
 import { gitlemCloneBase } from '../gitlem-accounts.js';
 import { ProviderError } from './types.js';
 import type {
@@ -79,7 +79,7 @@ export const gitlemApi: ProviderApi = {
         ownerId: account.id,
         name: input.name,
         defaultBranch: GITLEM_DEFAULT_BRANCH,
-        doc: JSON.stringify({ branches: [], prs: [], ciRuns: [], nextPrNumber: 1, nextRunId: 1 }),
+        doc: JSON.stringify(seedGitlemDoc(input.name)),
       },
     });
     return normalize(repo, account.username);

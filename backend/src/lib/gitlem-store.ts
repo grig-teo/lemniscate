@@ -49,6 +49,17 @@ export function emptyGitlemDoc(): GitlemRepoDoc {
   return { branches: [], prs: [], ciRuns: [], nextPrNumber: 1, nextRunId: 1 };
 }
 
+/**
+ * Fresh repository seeded with a README on the default branch, so the repo
+ * detail view (README / branches / CI) works immediately after creation,
+ * before anything is pushed.
+ */
+export function seedGitlemDoc(name: string): GitlemRepoDoc {
+  const doc = emptyGitlemDoc();
+  upsertFile(doc, GITLEM_DEFAULT_BRANCH, 'README.md', `# ${name}\n`);
+  return doc;
+}
+
 export function parseGitlemDoc(doc: string): GitlemRepoDoc {
   try {
     const parsed = JSON.parse(doc) as Partial<GitlemRepoDoc>;
@@ -127,6 +138,27 @@ export function openPullRequest(
   doc.nextPrNumber += 1;
   doc.prs.push(pr);
   return pr;
+}
+
+/** The open PR matching a head/base pair (numbers are not stored on tasks). */
+export function findOpenPullRequest(
+  doc: GitlemRepoDoc,
+  head: string,
+  base: string,
+): GitlemPullRequest | undefined {
+  return doc.prs.find((pr) => pr.head === head && pr.base === base && pr.state === 'open');
+}
+
+/** Set a PR's final state; returns false when the number is unknown. */
+export function closePullRequest(
+  doc: GitlemRepoDoc,
+  number: number,
+  state: 'closed' | 'merged',
+): boolean {
+  const pr = doc.prs.find((candidate) => candidate.number === number);
+  if (!pr) return false;
+  pr.state = state;
+  return true;
 }
 
 /** Deterministic pseudo CI/CD run: succeeds when the branch has any file. */
