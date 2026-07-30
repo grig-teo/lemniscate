@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   taskEventFindFirst: vi.fn().mockResolvedValue(null),
   taskEventFindMany: vi.fn().mockResolvedValue([]),
   enqueueReviewTask: vi.fn().mockResolvedValue(undefined),
+  enqueueRunTask: vi.fn().mockResolvedValue(undefined),
   enqueueAddressReview: vi.fn().mockResolvedValue(undefined),
   setTaskStatus: vi.fn().mockResolvedValue(undefined),
   logEvent: vi.fn().mockResolvedValue(undefined),
@@ -48,6 +49,7 @@ vi.mock('../src/lib/notifications.js', () => ({ notify: mocks.notify }));
 vi.mock('../src/lib/proposal-scheduler.js', () => ({
   getAgentTasksQueue: vi.fn(),
   enqueueReviewTask: mocks.enqueueReviewTask,
+  enqueueRunTask: mocks.enqueueRunTask,
   enqueueAddressReview: mocks.enqueueAddressReview,
 }));
 vi.mock('ioredis', () => ({ Redis: vi.fn() }));
@@ -389,6 +391,57 @@ describe('recoverStuckReviews', () => {
     await recoverStuckReviews();
 
     expect(mocks.enqueueReviewTask).toHaveBeenCalledWith('t-rereview-died');
+  });
+
+  it('re-enqueues run-task for a task stuck in running after a dead run job', async () => {
+    mocks.taskFindMany.mockResolvedValue([
+      { id: 't-run-dead', status: 'running', repository: { autoReviewPr: true } },
+    ]);
+    mocks.taskEventFindMany.mockResolvedValue([
+      { payload: { line: 'error: job stalled more than allowable limit' } },
+    ]);
+
+    await recoverStuckReviews();
+
+    expect(mocks.enqueueRunTask).toHaveBeenCalledWith('t-run-dead');
+    expect(mocks.enqueueReviewTask).not.toHaveBeenCalled();
+    expect(mocks.logEvent).toHaveBeenCalledWith(
+      't-run-dead',
+      'recovery: re-enqueued task run after a failed run job',
+    );
+  });
+
+  it('recovers a stuck run even when the repo review toggle is off', async () => {
+    mocks.taskFindMany.mockResolvedValue([
+      { id: 't-run-no-review', status: 'running', repository: { autoReviewPr: false } },
+    ]);
+    mocks.taskEventFindMany.mockResolvedValue([{ payload: { line: 'error: boom' } }]);
+
+    await recoverStuckReviews();
+
+    expect(mocks.enqueueRunTask).toHaveBeenCalledWith('t-run-no-review');
+  });
+
+  it('skips review recovery when the repo review toggle is off', async () => {
+    mocks.taskFindMany.mockResolvedValue([
+      { id: 't-review-off', status: 'awaiting_review', repository: { autoReviewPr: false } },
+    ]);
+    mocks.taskEventFindMany.mockResolvedValue([{ payload: { line: 'error: boom' } }]);
+
+    await recoverStuckReviews();
+
+    expect(mocks.enqueueReviewTask).not.toHaveBeenCalled();
+    expect(mocks.enqueueRunTask).not.toHaveBeenCalled();
+  });
+
+  it('shares the recovery budget across run and review recoveries', async () => {
+    mocks.taskFindMany.mockResolvedValue([{ id: 't-flapping', status: 'running' }]);
+    mocks.taskEventCount.mockResolvedValue(3);
+    mocks.taskEventFindMany.mockResolvedValue([{ payload: { line: 'error: boom' } }]);
+
+    await recoverStuckReviews();
+
+    expect(mocks.enqueueRunTask).not.toHaveBeenCalled();
   });
 });
 

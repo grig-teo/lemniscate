@@ -176,7 +176,15 @@ async function processJob(job: Job): Promise<void> {
 const worker = new Worker(
   AGENT_QUEUE_NAME,
   async (job: Job) => metrics.observeJob(jobMetricName(job.name), () => processJob(job)),
-  { connection, concurrency: config.AGENT_WORKER_CONCURRENCY },
+  {
+    connection,
+    concurrency: config.AGENT_WORKER_CONCURRENCY,
+    // A deploy recreates the worker and stalls every in-flight job; BullMQ's
+    // default (1) fails a job as unrecoverable after just two restarts in a
+    // row, stranding its task. Tolerate a handful of restarts — the job
+    // simply resumes (lemcore replays its saved transcript).
+    maxStalledCount: 5,
+  },
 );
 
 function jobTaskId(data: unknown): string | undefined {
