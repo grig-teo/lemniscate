@@ -117,6 +117,25 @@ const envSchema = z.object({
   AGENT_EXECUTOR: z.enum(['hermes', 'internal', 'lemcore']).default('hermes'),
   // Hard kill for one `hermes chat` run; the job then fails the task.
   AGENT_HERMES_TIMEOUT_MINUTES: z.coerce.number().int().positive().default(45),
+  // Lemcore-only: build a codebase graph (code-review-graph) on every repo
+  // scan and prefer graph-derived implementation context to cut LLM tokens.
+  // Default on. Set LEMCORE_CODE_GRAPH=false to disable.
+  LEMCORE_CODE_GRAPH: z
+    .enum(['true', 'false'])
+    .default('true')
+    .transform((value) => value === 'true'),
+  // Max hop depth for graph neighborhood / impact expansion.
+  LEMCORE_CODE_GRAPH_MAX_DEPTH: z.coerce.number().int().positive().default(2),
+  // Optional external cache dir for graph DBs (default: sibling of workdir).
+  LEMCORE_CODE_GRAPH_DATA_DIR: optionalString,
+  // CLI binary name or absolute path (default: code-review-graph on PATH).
+  LEMCORE_CODE_GRAPH_CLI: z.string().min(1).default('code-review-graph'),
+  // Timeout for one graph build invocation.
+  LEMCORE_CODE_GRAPH_TIMEOUT_MS: z.coerce
+    .number()
+    .int()
+    .positive()
+    .default(120_000),
   // Maximum TaskEvent rows kept per task. When exceeded, oldest events are
   // pruned and a single truncation marker is ensured. Bounds table growth,
   // backup size, and event-history response latency.

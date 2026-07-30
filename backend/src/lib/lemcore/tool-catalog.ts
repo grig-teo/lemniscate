@@ -65,6 +65,51 @@ export function getAvailableTools(): ChatCompletionTool[] {
       },
       ['query'],
     ),
+    fnTool(
+      'graph_query',
+      'Query the scan-session codebase graph (callers, callees, imports). Prefer over bulk file reads.',
+      {
+        pattern: {
+          type: 'string',
+          description:
+            'callers_of | callees_of | imports_of | importers_of | children_of | tests_for | inheritors_of | file_summary',
+        },
+        target: {
+          type: 'string',
+          description: 'Symbol name, qualified name, or file path',
+        },
+      },
+      ['pattern', 'target'],
+    ),
+    fnTool(
+      'graph_impact',
+      'Blast radius for changed files via the codebase graph (dependent files/symbols).',
+      {
+        files: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Repo-relative file paths',
+        },
+      },
+      ['files'],
+    ),
+    fnTool(
+      'graph_neighbors',
+      'Expand the dependency neighborhood around a file or symbol in the codebase graph.',
+      {
+        center: { type: 'string', description: 'File path or symbol' },
+        depth: { type: 'number', description: 'Max hop depth (default from scan config)' },
+      },
+      ['center'],
+    ),
+    fnTool(
+      'graph_search',
+      'Search symbols/files in the scan-session codebase graph.',
+      {
+        query: { type: 'string', description: 'Search string' },
+      },
+      ['query'],
+    ),
   ];
 }
 

@@ -19,6 +19,8 @@ export function lemcoreSystemPrompt(): string {
   return [
     hermesInstructions,
     '',
+    'A codebase graph is built on each repository scan. Prefer graph_query, graph_impact, graph_neighbors, and graph_search to navigate structure (callers/callees/imports) before bulk raw-file reads. Only read full files when the graph cannot answer. This keeps prompt tokens low.',
+    '',
     'You have access to the following tools. Use them to read, write, and explore files.',
     '- read_file(path, offset?, limit?): read a file',
     '- write_file(path, content): overwrite a file',
@@ -27,7 +29,11 @@ export function lemcoreSystemPrompt(): string {
     '- grep(pattern, path?, glob?): search with ripgrep',
     '- glob(pattern): list files matching a pattern (max 200)',
     '- web_search(query): search the web',
+    '- graph_query(pattern, target): query the scan-session codebase graph',
+    '- graph_impact(files): blast radius for changed files via the graph',
+    '- graph_neighbors(center, depth?): dependency neighborhood around a symbol/file',
+    '- graph_search(query): search symbols/files in the codebase graph',
     '',
-    'Use tools in a structured way. Prefer reading before writing. After making changes, verify them.',
+    'Use tools in a structured way. Prefer graph tools, then selective reads, then writes. After making changes, verify them.',
   ].join('\n');
 }
