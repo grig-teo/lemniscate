@@ -1,5 +1,6 @@
 import { ArrowDown } from 'lucide-react';
 
+import { ConsoleLogLine } from '@/components/console/ConsoleLogLine';
 import type { LogLine } from '@/components/console/useTaskConsole';
 import { useFollowLatest } from '@/lib/use-follow-latest';
 
@@ -9,8 +10,8 @@ interface HistoryQuery {
   error: { message: string } | null;
 }
 
-function LogLinePre({ line }: { line: LogLine }) {
-  return <pre className="whitespace-pre-wrap break-words">{line.text}</pre>;
+function LogLineRow({ line }: { line: LogLine }) {
+  return <ConsoleLogLine text={line.text} />;
 }
 
 function JumpToLatestButton({
@@ -58,10 +59,10 @@ function ConsoleStatus({
         </p>
       )}
       {historyLogs.map((line) => (
-        <LogLinePre key={line.key} line={line} />
+        <LogLineRow key={line.key} line={line} />
       ))}
       {liveLogs.map((line) => (
-        <LogLinePre key={line.key} line={line} />
+        <LogLineRow key={line.key} line={line} />
       ))}
       {streamError && (
         <p className="mt-2 text-yellow-600 dark:text-yellow-400">
@@ -76,10 +77,11 @@ function ConsoleStatus({
 }
 
 /**
- * Scrolling log area: history first, then live-streamed lines. Auto-scrolls
- * to the bottom on new output only while the user is pinned to the latest
- * logs; scrolling up pauses follow mode and reveals a "jump to latest"
- * button that re-engages it.
+ * Scrolling log area: history first, then live-streamed lines, each rendered
+ * as a structured UI row (see ConsoleLogLine) rather than raw text.
+ * Auto-scrolls to the bottom on new output only while the user is pinned to
+ * the latest logs; scrolling up pauses follow mode and reveals a "jump to
+ * latest" button that re-engages it.
  */
 export function ConsoleLog({
   historyQuery,
@@ -103,7 +105,7 @@ export function ConsoleLog({
       <div
         ref={follow.scrollRef}
         onScroll={follow.handleScroll}
-        className="min-h-0 flex-1 overflow-y-auto bg-white px-4 py-3 font-mono text-xs leading-5 text-zinc-900 dark:bg-zinc-950 dark:text-zinc-200"
+        className="min-h-0 flex-1 overflow-y-auto bg-white px-4 py-3 font-sans text-xs leading-5 text-zinc-900 dark:bg-zinc-950 dark:text-zinc-200"
         aria-live="polite"
       >
         <ConsoleStatus
