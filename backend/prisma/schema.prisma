@@ -300,6 +300,18 @@ model Task {
   // share it. The console elapsed timer anchors here instead of createdAt —
   // previously reruns accumulated all previous sessions' wall time.
   sessionStartedAt DateTime?
+  // Manual task chaining: when this task reaches 'done', the successor
+  // pointed to by nextTaskId is auto-queued (started). A NULL successor =
+  // no chaining. The link is cleared after firing so a rerun/re-merge does
+  // not resurrect it (idempotent — the claim is pending-only).
+  nextTaskId String?
+  // Successor task set by nextTaskId. Null when this task has no manual
+  // successor queued for it.
+  nextTask   Task?  @relation("TaskNext", fields: [nextTaskId], references: [id], onDelete: SetNull)
+  // Predecessor tasks (0+) that declared this task as their successor. A
+  // task can be the successor of multiple predecessors, but each task has at
+  // most one successor (nextTaskId).
+  nextOf     Task[] @relation("TaskNext")
   createdAt    DateTime    @default(now())
   updatedAt    DateTime    @updatedAt
   repository   Repository  @relation(fields: [repositoryId], references: [id], onDelete: Cascade)

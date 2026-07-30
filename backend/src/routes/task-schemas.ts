@@ -95,4 +95,15 @@ export const modelBodySchema = z
   .strict();
 export type ModelBody = z.infer<typeof modelBodySchema>;
 
+// POST /tasks/:id/follows — manually link a successor task that is
+// auto-queued when this task reaches 'done'. An explicit `null` clears the
+// link. The handler validates that the successor exists and belongs to the
+// same repository as the predecessor (a follow-up cannot cross repos).
+export const followsBodySchema = z
+  .object({
+    nextTaskId: z.string().min(1).nullable(),
+  })
+  .strict();
+export type FollowsBody = z.infer<typeof followsBodySchema>;
+
 export const idParamsSchema = z.object({ id: z.string().min(1) });

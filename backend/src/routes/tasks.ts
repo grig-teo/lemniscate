@@ -15,6 +15,7 @@ import {
 import { triggerMerge, triggerReview } from './task-review-handlers.js';
 import { getTaskRunTargets } from './task-run-targets.js';
 import { getTaskEvents } from './task-events-stream.js';
+import { setFollowsTask } from './task-follows-handlers.js';
 
 // Tasks API + SSE event stream. Registered under prefix `/api` (paths below
 // include the `/tasks` segment, matching routes/repositories.ts).
