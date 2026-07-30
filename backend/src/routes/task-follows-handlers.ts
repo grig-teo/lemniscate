@@ -54,7 +54,6 @@ export async function setFollowsTask(request: FastifyRequest, reply: FastifyRepl
   // predecessor, and be owned by the same user.
   const successor = await prisma.task.findFirst({
     where: {
-      id: body.nextTaskId,
       ...ownedTaskWhere(userId, body.nextTaskId),
       repositoryId: predecessor.repositoryId,
     },

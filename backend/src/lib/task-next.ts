@@ -71,6 +71,25 @@ export async function triggerNextTask(predecessorId: string): Promise<string | n
       return null;
     }
 
+    // Flip the successor to 'queued' only while it is still idle. The
+    // conditional where-clause guards on the already-validated status so a
+    // race (the user starting it between the select above and now) cannot
+    // resurrect or interrupt a live run — the update matches 0 rows and we
+    // skip the enqueue instead. Mirrors the pending-only claim used by every
+    // other start path (claimPendingTask / claimOldestPending), keeping the
+    // successor's displayed status consistent with its queued job.
+    const queued = await prisma.task.updateMany({
+      where: { id: nextTaskId, status: next.status },
+      data: { status: 'queued' },
+    });
+    if (queued.count === 0) {
+      logger.info(
+        { predecessorId, nextTaskId },
+        'task-next: successor changed state before claim; skipping',
+      );
+      return null;
+    }
+
     await logEvent(nextTaskId, `auto-started as the follow-up to ${predecessorId}`);
     await enqueueRunTask(nextTaskId);
     // Clear the link so a rerun/re-merge of the predecessor is idempotent.
