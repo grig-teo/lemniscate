@@ -3,8 +3,13 @@ import type { ChatToolCall } from '../llm-client.js';
 
 export interface LemcoreStep {
   stepId: string;
-  status: 'running' | 'done' | 'error';
+  // 'awaiting_approval' persists while the loop waits on a user decision
+  // (requireToolApproval) and on hydration for approved plan steps.
+  status: 'running' | 'done' | 'error' | 'awaiting_approval';
   kind: 'assistant' | 'tool';
+  // 'plan' (first-turn step plan), 'skill' (load_skill), 'steer' (mid-run
+  // user message). Anything non-'tool' renders as a card, not a tool row.
+  subtype?: 'plan' | 'skill' | 'steer';
   tool?: string;
   title: string;
   detail?: string;
@@ -12,6 +17,9 @@ export interface LemcoreStep {
   durationMs?: number;
   tokensUsed?: number;
 }
+
+/** 'edit' = implementation rounds; 'planner' = review/fix/verification. */
+export type RoundKind = 'edit' | 'planner';
 
 export interface LemcoreRunOptions {
   taskId: string;
@@ -30,6 +38,13 @@ export interface LemcoreRunOptions {
    * LEMCORE_STALLED_TURN_TIMEOUT_MINUTES.
    */
   turnTimeoutMs?: number;
+  /** Round kind for per-step model routing (default 'edit'). */
+  roundKind?: RoundKind;
+  /**
+   * Review-pr runs the impl loop on an existing session workdir: skip the
+   * plan gate, tool approvals and self-verification nudges.
+   */
+  skipSessionGates?: boolean;
 }
 
 /** Persistable transcript entries (JSON-safe). */
