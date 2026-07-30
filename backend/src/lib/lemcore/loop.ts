@@ -1,6 +1,4 @@
-// Structured agent loop for the lemcore executor.
-// Emits structured `agent_step` events and persists a resume transcript.
-
+// Structured agent loop: emits `agent_step` events, persists a resume transcript.
 import fs from 'node:fs';
 import path from 'node:path';
 import { config } from '../../config.js';
@@ -12,6 +10,7 @@ import {
   MAX_EMPTY_ASSISTANT_REPLIES,
   TRANSCRIPT_FILE,
   REVIEW_FILENAME,
+  DEFAULT_GOAL_PATTERN,
   lemcoreSystemPrompt,
   transcriptPath,
 } from './loop-constants.js';
@@ -31,6 +30,7 @@ export {
   MAX_EMPTY_ASSISTANT_REPLIES,
   TRANSCRIPT_FILE,
   REVIEW_FILENAME,
+  DEFAULT_GOAL_PATTERN,
   lemcoreSystemPrompt,
   transcriptPath,
 } from './loop-constants.js';

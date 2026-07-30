@@ -43,7 +43,25 @@ export function compactTranscript(
 
   const older = rest.slice(0, rest.length - keepRecent).map(compactOne);
   const recent = rest.slice(rest.length - keepRecent);
-  return [...system, ...older, ...recent];
+  return [...system, ...goalReminders(system), ...older, ...recent];
+}
+
+/**
+ * Goal-pattern anchor: if the model declared an "Objective:" line (see
+ * lemcoreSystemPrompt), re-inject it right after the system prompt so
+ * compaction never drops the one objective the run tracks to completion.
+ */
+function goalReminders(system: LemcoreMessage[]): LemcoreMessage[] {
+  const goal = latestGoalLine(system[0]?.content ?? '');
+  return goal ? [{ role: 'system', content: goal }] : [];
+}
+
+function latestGoalLine(content: string): string | null {
+  const goals = content
+    .split('\n')
+    .filter((line) => line.trimStart().toLowerCase().startsWith('objective:'));
+  const goal = goals[goals.length - 1]?.trim();
+  return goal ? `[goal] ${goal}` : null;
 }
 
 function compactOne(m: LemcoreMessage): LemcoreMessage {
