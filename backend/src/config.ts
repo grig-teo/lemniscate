@@ -182,6 +182,24 @@ const envSchema = z.object({
   SMTP_PASS: optionalString,
   SMTP_FROM: z.string().min(1).default('Lemniscate <notifications@localhost>'),
 
+  // --- lemcore phases 10-12 ---
+  // Runner pools (Phase 10): JSON list of remote docker hosts
+  // ([{"host":"ssh://user@runner1","maxJobs":2}]); heavy bash steps may be
+  // offloaded to a less-loaded runner with the workdir synced via tar over
+  // ssh. Unset/invalid = all bash steps run locally (routing layer only).
+  LEMCORE_RUNNERS: z.string().optional(),
+  // Semantic code index (Phase 11): embeddings provider base URL / key
+  // (text-embedding-3-small compatible). Unset = the semantic mode falls
+  // back to the static repo-context builder.
+  EMBEDDINGS_BASE_URL: optionalString,
+  EMBEDDINGS_API_KEY: optionalString,
+  EMBEDDINGS_MODEL: z.string().min(1).default('text-embedding-3-small'),
+  // Google SSO (Phase 12). GitHub SSO reuses GITHUB_CLIENT_* above.
+  GOOGLE_CLIENT_ID: optionalString,
+  GOOGLE_CLIENT_SECRET: optionalString,
+  // Public base URL of the API (OAuth callback + webhook docs).
+  PUBLIC_API_URL: z.string().default('http://localhost:3000'),
+
   // --- API limits ---
   // Queued+running tasks a single user may have at once; the 6th concurrent
   // create is rejected with 429.
