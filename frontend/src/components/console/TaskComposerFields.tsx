@@ -13,6 +13,7 @@ import type { TaskComposerState } from '@/components/console/useTaskComposer';
 import {
   ComposerRepoSelect,
   ContextRing,
+  FollowUpTaskSelect,
   LlmConfigSelect,
   ThinkingLevelSelect,
 } from '@/components/console/TaskComposerControls';
@@ -146,6 +147,13 @@ export function ComposerToolbar({ composer }: { composer: TaskComposerState }) {
           onChange={composer.setLlmConfigId}
         />
         <ThinkingLevelSelect value={composer.thinkingLevel} onChange={composer.setThinkingLevel} />
+        {composer.repositoryId && (
+          <FollowUpTaskSelect
+            repositoryId={composer.repositoryId}
+            value={composer.followUpTaskId}
+            onChange={composer.setFollowUpTaskId}
+          />
+        )}
         <div className="flex-1" />
         <ContextRing tokens={composer.estimatedTokens} contextWindow={composer.contextWindow} />
       </div>

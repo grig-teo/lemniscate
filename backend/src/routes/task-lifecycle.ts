@@ -85,6 +85,27 @@ export function buildStartUpdate(body: StartBody) {
   };
 }
 
+// Update applied when a pending task is PATCHed (saved without starting):
+// any edited field is written; undefined fields leave the column untouched
+// (Prisma ignores undefined). The async attachment resolution (MCP/AGENTS.md
+// snapshot) is folded in. llmConfigId/followUpTaskId are pre-validated by the
+// handler and passed already-resolved — single home for the PATCH data shape.
+export async function buildPatchUpdate(
+  body: PatchBody,
+  resolved: { llmConfigId?: string; followUpTaskId?: string | null },
+  userId?: string,
+) {
+  return {
+    ...(body.title !== undefined ? { title: body.title } : {}),
+    ...(body.prompt !== undefined ? { prompt: body.prompt } : {}),
+    ...attachmentsData(body.images),
+    ...(body.skills !== undefined ? { skills: body.skills } : {}),
+    ...(resolved.llmConfigId !== undefined ? { llmConfigId: resolved.llmConfigId } : {}),
+    ...followUpUpdateData(resolved.followUpTaskId),
+    ...(await resolveAttachmentUpdate(body, userId)),
+  };
+}
+
 // Rerun eligibility for POST /tasks/:id/rerun: failed tasks (including
 // user-cancelled ones, which are stored as failed) and closed tasks (PR
 // closed without merge) can be run again.
@@ -198,18 +219,31 @@ export async function attachmentValidationError(
 // Validates a manual followUpTaskId: it must reference a still-pending,
 // active (non-archived) task in the SAME repository — so the done-trigger
 // in task-events always enqueues a runnable target. Returns the 400 message
-// or null. A self-reference is rejected (a task cannot follow itself).
+// or null. A falsy/undefined followUpTaskId is a no-op (no chaining set), so
+// every call site can pass the field straight through without a guard. A
+// self-reference is rejected (a task cannot follow itself).
 export async function followUpValidationError(
-  followUpTaskId: string,
+  followUpTaskId: string | undefined | null,
   repositoryId: string,
   selfId?: string,
 ): Promise<string | null> {
+  if (!followUpTaskId) return null;
   if (followUpTaskId === selfId) return 'a task cannot be its own follow-up';
   const target = await prisma.task.findFirst({
     where: { id: followUpTaskId, repositoryId, status: 'pending', archivedAt: null },
     select: { id: true },
   });
   return target ? null : 'follow-up task not found, not pending, or in another repository';
+}
+
+// Manual-chaining update spread: the partial { followUpTaskId } to merge into
+// a create/update's data, or {} when no field was supplied. Validation is the
+// caller's responsibility (followUpValidationError) — this only shapes the
+// value so a store never writes `undefined` (Prisma treats that as "ignore").
+export function followUpUpdateData(
+  followUpTaskId: string | undefined | null,
+): { followUpTaskId?: string | null } {
+  return followUpTaskId === undefined ? {} : { followUpTaskId };
 }
 
 // SSE is served only when the client explicitly asks for it (EventSource// always sends Accept: text/event-stream). Everything else — fetch's

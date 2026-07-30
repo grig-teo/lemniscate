@@ -28,6 +28,12 @@ export type TaskEditBody = StartTaskBody & {
   skills?: string[];
   mcpServerSlugs?: string[];
   agentsMdFiles?: AgentsMdAssignment[];
+  /**
+   * Id of a pending same-repo task to auto-start once this task reaches 'done'.
+   * Always sent with start/save (null clears it); omitted only when the field
+   * was never touched, mirroring the other library selections.
+   */
+  followUpTaskId?: string | null;
 };
 
 /**
@@ -37,11 +43,12 @@ export type TaskEditBody = StartTaskBody & {
  * so no field-level diffing is needed.
  */
 export function buildTaskEditBody(args: {
-  task: { title: string; prompt: string };
+  task: { title: string; prompt: string; followUpTaskId?: string | null };
   title: string;
   prompt: string;
   images: TaskImage[];
   selections: TaskEditSelections;
+  followUpTaskId: string | null;
 }): TaskEditBody {
   const body: TaskEditBody = {};
   if (args.title !== args.task.title) body.title = args.title;
@@ -50,6 +57,11 @@ export function buildTaskEditBody(args: {
   body.skills = args.selections.skillSlugs;
   body.mcpServerSlugs = args.selections.mcpServerSlugs;
   body.agentsMdFiles = args.selections.agentsMdFiles;
+  // Always send the follow-up so a PATCH can clear it (null); only omit when
+  // the editor's value matches the stored one (no change to persist).
+  if (args.followUpTaskId !== (args.task.followUpTaskId ?? null)) {
+    body.followUpTaskId = args.followUpTaskId;
+  }
   return body;
 }
 

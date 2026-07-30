@@ -3,7 +3,10 @@
  * and the context-usage ring. Extracted from TaskComposerFields.tsx to keep
  * every module under the 300-line AGENTS.md section 2 limit.
  */
+import { ArrowRight } from 'lucide-react';
+
 import type { LlmConfig, Repository, TaskThinkingLevel } from '@/lib/hooks';
+import { useTasks } from '@/lib/hooks';
 import { ringTone, type RingTone } from '@/lib/prompt-composer';
 import { ProviderIcon } from '@/lib/providers';
 import {
@@ -114,6 +117,48 @@ const RING_TONE_CLASS: Record<RingTone, string> = {
   amber: 'stroke-amber-500',
   red: 'stroke-destructive',
 };
+
+/**
+ * Dropdown to manually chain tasks: pick a still-pending task in the same
+ * repository that should auto-start once this one reaches 'done'. Lists only
+ * pending, active tasks in the selected repo (the backend re-validates at
+ * create/edit + trigger time). Shared by the composer (new task / save-for-
+ * later) and the proposal/prompt detail editor (AGENTS.md §6 single control).
+ */
+export function FollowUpTaskSelect({
+  repositoryId,
+  selfId,
+  value,
+  onChange,
+}: {
+  repositoryId: string;
+  selfId?: string;
+  value: string | null;
+  onChange: (id: string | null) => void;
+}) {
+  const tasks = useTasks(repositoryId);
+  const followUps = (tasks.data ?? []).filter(
+    (task) => task.status === 'pending' && task.id !== selfId,
+  );
+  return (
+    <Select value={value ?? 'none'} onValueChange={(v) => onChange(v === 'none' ? null : v)}>
+      <SelectTrigger className="h-8 w-44 shrink-0" aria-label="Follow-up task">
+        <span className="flex items-center gap-1.5 truncate">
+          <ArrowRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden />
+          <SelectValue placeholder="No follow-up" />
+        </span>
+      </SelectTrigger>
+      <SelectContent>
+        <SelectItem value="none">No follow-up</SelectItem>
+        {followUps.map((task) => (
+          <SelectItem key={task.id} value={task.id}>
+            <span className="truncate">{task.title}</span>
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
+  );
+}
 
 /** Circular gauge of the estimated prompt-token share of the context window. */
 export function ContextRing({ tokens, contextWindow }: { tokens: number; contextWindow: number | null }) {

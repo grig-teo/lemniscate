@@ -4,7 +4,6 @@ import { enqueueRunTask } from '../lib/proposal-scheduler.js';
 import { applyTaskPrState } from '../lib/pr-merged-handler.js';
 import { closePullRequest, deleteBranch } from '../lib/pull-requests.js';
 import { prisma } from '../lib/prisma.js';
-import { attachmentsData } from '../lib/task-attachments.js';
 import { publishTaskEvent } from '../lib/task-events.js';
 import { findLlmConfig } from '../lib/agent-runtime.js';
 import { requestEstimatedTime, requestImprovedPrompt } from '../lib/task-improve.js';
@@ -17,6 +16,7 @@ import {
   buildStartUpdate,
   CANCELLABLE_STATUSES,
   closePrBlocker,
+  buildPatchUpdate,
   findOwnedLlmConfig,
   followUpValidationError,
   ownedTaskWhere,
@@ -131,28 +131,16 @@ export async function patchTask(request: FastifyRequest, reply: FastifyReply) {
   }
   // Manual chaining: validate a set follow-up (pending, same repo, not self)
   // before storing it, so the done-trigger always enqueues a runnable target.
-  if (body.followUpTaskId) {
-    const followUpError = await followUpValidationError(
-      body.followUpTaskId,
-      task.repositoryId,
-      task.id,
-    );
-    if (followUpError) {
-      return reply.code(400).send({ error: followUpError });
-    }
+  const followUpError = await followUpValidationError(
+    body.followUpTaskId,
+    task.repositoryId,
+    task.id,
+  );
+  if (followUpError) {
+    return reply.code(400).send({ error: followUpError });
   }
-  const updated = await prisma.task.update({
-    where: { id: task.id },
-    data: {
-      ...(body.title !== undefined ? { title: body.title } : {}),
-      ...(body.prompt !== undefined ? { prompt: body.prompt } : {}),
-      ...attachmentsData(body.images),
-      ...(body.skills !== undefined ? { skills: body.skills } : {}),
-      ...(llmConfigId !== undefined ? { llmConfigId } : {}),
-      ...(body.followUpTaskId !== undefined ? { followUpTaskId: body.followUpTaskId } : {}),
-      ...(await resolveAttachmentUpdate(body, userId)),
-    },
-  });
+  const data = await buildPatchUpdate(body, { llmConfigId, followUpTaskId: body.followUpTaskId }, userId);
+  const updated = await prisma.task.update({ where: { id: task.id }, data });
   return { task: updated };
 }
 

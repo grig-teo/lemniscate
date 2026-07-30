@@ -33,6 +33,7 @@ export function useTaskComposer(onSubmitted?: () => void) {
   const [thinkingLevel, setThinkingLevel] = React.useState<TaskThinkingLevel | null>(null);
   const [llmConfigId, setLlmConfigId] = React.useState<string | null>(null);
   const [images, setImages] = React.useState<TaskImage[]>([]);
+  const [followUpTaskId, setFollowUpTaskId] = React.useState<string | null>(null);
   const attachments = useLibraryAttachments();
 
   const manualChoiceValid = repositories.some((repo) => repo.id === manualRepositoryId);
@@ -60,6 +61,7 @@ export function useTaskComposer(onSubmitted?: () => void) {
   const resetDraft = () => {
     setPrompt('');
     setImages([]);
+    setFollowUpTaskId(null);
   };
 
   const buildBody = (later?: boolean): CreateTaskBody => {
@@ -77,6 +79,7 @@ export function useTaskComposer(onSubmitted?: () => void) {
         : {}),
       ...(agentsMdFiles.length > 0 ? { agentsMdFiles } : {}),
       ...(later ? { later: true } : {}),
+      ...(followUpTaskId ? { followUpTaskId } : {}),
     };
   };
 
@@ -129,6 +132,8 @@ export function useTaskComposer(onSubmitted?: () => void) {
     images,
     addImageFiles,
     removeImage,
+    followUpTaskId,
+    setFollowUpTaskId,
     estimatedTokens,
     contextWindow,
     canSend,
