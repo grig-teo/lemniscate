@@ -30,6 +30,9 @@ enum TaskStatus {
   pending
   queued
   running
+  // lemcore plan mode (Repository.planMode): the loop paused after its
+  // first-turn plan until the user approves or rejects it.
+  awaiting_plan_approval
   awaiting_review
   reviewing_code
   done
@@ -183,6 +186,17 @@ model Repository {
   // LLM config used by the review-pr job (review + fix iterations); null =
   // the standard resolution (task → repo llmConfigId → user default).
   reviewLlmConfigId String?
+  // lemcore plan mode: the loop's first turn must produce a step plan and
+  // pauses in 'awaiting_plan_approval' until the user approves/rejects it.
+  planMode Boolean @default(false)
+  // lemcore tool approval: mutating tool calls (bash/write_file/edit_file)
+  // pause in awaiting_approval until the user approves/denies them.
+  requireToolApproval Boolean @default(false)
+  // Optional lemcore per-round model routing: planning/verification rounds
+  // use plannerLlmConfigId, edit rounds editorLlmConfigId; null = the
+  // standard resolution. Failover still spans all enabled user configs.
+  plannerLlmConfigId String?
+  editorLlmConfigId  String?
   // Autonomous pipeline health: last successful generate-proposals run and
   // the last error message (scrubbed). Null until the first attempt; the
   // frontend shows a green/amber/red dot based on these (see RepoRow.tsx).
@@ -194,6 +208,7 @@ model Repository {
   tasks         Task[]
   eventTriggers EventTrigger[]
   service       Service?
+  executorRunStats ExecutorRunStat[]
 
   @@unique([connectionId, externalId])
   @@index([llmConfigId])
@@ -561,4 +576,23 @@ model Deployment {
   service    Service      @relation(fields: [serviceId], references: [id], onDelete: Cascade)
 
   @@index([serviceId])
+}
+
+// Executor scoreboard (AGENTS.md lemcore phases): one row per finished task
+// run recording which executor ran it, the outcome, cumulative tokens and
+// wall time. Settings → repository aggregates these per executor to compare
+// hermes vs lemcore before making lemcore the default.
+model ExecutorRunStat {
+  id           String   @id @default(cuid())
+  repositoryId String
+  // 'hermes' | 'internal' | 'lemcore' — free-form string (executor ids are
+  // validated in lib/agent-executor.ts, not at the DB layer).
+  executor     String
+  success      Boolean
+  tokensUsed   Int      @default(0)
+  wallTimeMs   Int      @default(0)
+  createdAt    DateTime @default(now())
+  repository   Repository @relation(fields: [repositoryId], references: [id], onDelete: Cascade)
+
+  @@index([repositoryId])
 }
