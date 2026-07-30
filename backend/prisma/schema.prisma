@@ -67,6 +67,7 @@ model User {
   notifications  Notification[]
   notificationSettings NotificationSetting[]
   vpsTargets     VpsTarget[]
+  gitlemUser     GitlemUser? @relation("UserGitlem")
 }
 
 model GitConnection {
@@ -389,6 +390,38 @@ model Device {
   commands   DeviceCommand[]
 
   @@index([userId])
+}
+
+// Gitlem (internal minimal git host) account. A Lemniscate user can have at
+// most one gitlem account, created either via the email-code registration
+// flow or provisioned on demand when they open the create-repo dialog with
+// the gitlem connection preselected. `passwordHash` holds the scrypt-derived
+// hash (the password is generated and emailed; it is never stored plaintext
+// or returned by the API). The gitlem username is also the git HTTP username.
+model GitlemUser {
+  id           String   @id @default(cuid())
+  userId       String   @unique
+  email        String   @unique
+  username     String   @unique
+  passwordHash String
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  user         User     @relation("UserGitlem", fields: [userId], references: [id], onDelete: Cascade)
+}
+
+// One-time registration / login code emailed to a gitlem candidate. The
+// user enters the 6-char code on the gitlem connect page; a valid code plus
+// the chosen password completes registration (or the emailed password is
+// the credential for an existing account). Codes expire (config
+// GITLEM_CODE_TTL_MINUTES) and are consumed after a single successful use.
+model GitlemCode {
+  id        String   @id @default(cuid())
+  email     String
+  code      String
+  purpose   String // 'register' | 'login'
+  consumedAt DateTime?
+  expiresAt DateTime
+  createdAt DateTime @default(now())
 }
 
 // Short-lived (10 min) 6-char code the user creates in the UI; the device
