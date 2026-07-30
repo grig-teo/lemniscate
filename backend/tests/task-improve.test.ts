@@ -1,8 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import {
+  ESTIMATE_TIME_MAX_CHARS,
+  estimateTimeSystemPrompt,
+  estimateTimeUserContent,
   IMPROVED_PROMPT_MAX_CHARS,
   improvePromptSystemPrompt,
   improvePromptUserContent,
+  sanitizeEstimatedTime,
   sanitizeImprovedPrompt,
 } from '../src/lib/task-improve.js';
 import { improveBodySchema } from '../src/routes/tasks.js';
@@ -79,6 +83,57 @@ describe('sanitizeImprovedPrompt', () => {
     // The editor applies the improved text and always sends the changed prompt
     // on Save/Start — anything above the schema cap bricks both actions.
     expect(IMPROVED_PROMPT_MAX_CHARS).toBe(8000);
+  });
+});
+
+describe('estimateTimeSystemPrompt', () => {
+  it('demands a short estimate phrase only — no JSON, no markdown', () => {
+    const prompt = estimateTimeSystemPrompt(null);
+    expect(prompt).toContain('estimate ONLY');
+    expect(prompt.toLowerCase()).toContain('one short phrase');
+  });
+
+  it('omits the owner block when no extra is set', () => {
+    expect(estimateTimeSystemPrompt(null)).not.toContain('Additional instructions');
+  });
+
+  it('appends the repository owner instructions when set', () => {
+    const prompt = estimateTimeSystemPrompt('Estimate conservatively.');
+    expect(prompt).toContain('Additional instructions from the repository owner:');
+    expect(prompt).toContain('Estimate conservatively.');
+  });
+});
+
+describe('estimateTimeUserContent', () => {
+  it('frames the title and document like the improve rewrite does', () => {
+    const content = estimateTimeUserContent('Fix login', '## 1. Summary\nbody');
+    expect(content).toBe(improvePromptUserContent('Fix login', '## 1. Summary\nbody'));
+  });
+});
+
+describe('sanitizeEstimatedTime', () => {
+  it('trims and collapses whitespace', () => {
+    expect(sanitizeEstimatedTime('  about   2 hours  ')).toBe('about 2 hours');
+  });
+
+  it('keeps only the first line of a chatty answer', () => {
+    expect(sanitizeEstimatedTime('1-2 days\n\nThis assumes…')).toBe('1-2 days');
+  });
+
+  it('strips bullets and markdown emphasis', () => {
+    expect(sanitizeEstimatedTime('- **about a week**')).toBe('about a week');
+    expect(sanitizeEstimatedTime('`3-4 hours`')).toBe('3-4 hours');
+  });
+
+  it('degrades to null on empty or markup-only output', () => {
+    expect(sanitizeEstimatedTime('')).toBeNull();
+    expect(sanitizeEstimatedTime('   \n  ')).toBeNull();
+    expect(sanitizeEstimatedTime('**')).toBeNull();
+  });
+
+  it('caps the estimate at the badge length', () => {
+    const long = `about ${'x'.repeat(ESTIMATE_TIME_MAX_CHARS)}`;
+    expect(sanitizeEstimatedTime(long)).toHaveLength(ESTIMATE_TIME_MAX_CHARS);
   });
 });
 

@@ -162,7 +162,9 @@ describe('useStartTask', () => {
 describe('useImproveTask', () => {
   it('POSTs /api/tasks/:id/improve and suppresses the toast', async () => {
     const queryClient = createTestQueryClient();
-    const { calls } = mockFetchSequence({ json: { prompt: 'improved' } });
+    const { calls } = mockFetchSequence({
+      json: { prompt: 'improved', estimatedTime: 'about 2 hours' },
+    });
 
     const { result } = renderHookWithClient(() => useImproveTask(), queryClient);
     result.current.mutate({ id: 't1', body: { title: 'T', prompt: 'P' } });
@@ -171,7 +173,7 @@ describe('useImproveTask', () => {
     expect(calls).toEqual([
       { url: '/api/tasks/t1/improve', method: 'POST', body: { title: 'T', prompt: 'P' } },
     ]);
-    expect(result.current.data).toEqual({ prompt: 'improved' });
+    expect(result.current.data).toEqual({ prompt: 'improved', estimatedTime: 'about 2 hours' });
     expect(lastMutationMeta(queryClient)).toEqual({ suppressErrorToast: true });
   });
 });
