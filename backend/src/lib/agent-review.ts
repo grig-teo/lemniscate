@@ -16,7 +16,6 @@ import {
 import { resolveAgentExecutor } from './agent-executor.js';
 import { buildSkillsSection, requestChanges, type LlmChangesResponse } from './agent-prompts.js';
 import {
-  llmCall,
   loadTaskWithRepo,
   prepareAgentRuntime,
   tokenSplit,
@@ -31,11 +30,10 @@ import { setTaskStatus } from './task-events.js';
 import { getPullRequestDiff } from './pull-requests.js';
 import {
   buildFixUserPrompt,
-  buildReviewMessages,
   HERMES_REVIEW_FILENAME,
-  parsePrReview,
   type PrReview,
 } from './pr-review.js';
+import { requestReviewWithRetry } from './review-request.js';
 import { buildRepoContext } from './repo-context.js';
 import { loadAgentsMdTemplate, loadTaskSkills } from './task-skills.js';
 
@@ -46,17 +44,10 @@ import { loadAgentsMdTemplate, loadTaskSkills } from './task-skills.js';
 
 const MAX_REVIEW_DIFF_CHARS = 24_000;
 
+// Direct structured review call. Empty/invalid replies (a z.ai GLM quirk)
+// are retried with a nudge inside review-request.ts.
 export async function requestReview(rt: LlmRuntime, task: Task, diff: string): Promise<PrReview> {
-  const content = await llmCall(
-    rt,
-    buildReviewMessages({
-      taskTitle: task.title,
-      taskPrompt: task.prompt,
-      diff,
-      systemPromptExtra: rt.cfg.systemPromptExtra,
-    }),
-  );
-  return parsePrReview(content);
+  return requestReviewWithRetry(rt, task, diff);
 }
 
 export async function fetchReviewDiff(task: TaskWithRepo, headBranch: string): Promise<string> {
