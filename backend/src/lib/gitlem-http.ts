@@ -124,17 +124,19 @@ export async function runHttpBackend(
 ): Promise<FastifyReply> {
   const body = request.method === 'POST' ? (request.body as Buffer | undefined) : undefined;
   const env = httpBackendEnv(request, params, gitDir, body);
-  return new Promise((resolve) => {
+  return new Promise<FastifyReply>((resolve) => {
     const child = execFile(
       'git',
       ['http-backend'],
       { env, maxBuffer: 256 * 1024 * 1024, encoding: 'buffer' },
       (err, stdout, stderr) => {
         if (err && !stdout?.length) {
-          resolve(reply.code(502).send({ error: `gitlem: git http-backend failed: ${stderr}` }));
+          void reply.code(502).send({ error: `gitlem: git http-backend failed: ${stderr}` });
+          resolve(reply);
           return;
         }
-        resolve(sendCgiResponse(reply, stdout.toString('binary'), stderr.toString()));
+        sendCgiResponse(reply, stdout.toString('binary'), stderr.toString());
+        resolve(reply);
       },
     );
     if (body?.length) child.stdin?.write(body);

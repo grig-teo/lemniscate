@@ -3,6 +3,7 @@ import { githubPrApi } from './pr-github.js';
 import { gitlabPrApi } from './pr-gitlab.js';
 import { gitversePrApi } from './pr-gitverse.js';
 import { giteePrApi } from './pr-gitee.js';
+import { gitlemPrApi } from './pr-gitlem.js';
 import type {
   ListedPullRequest,
   MergePullRequestResult,
@@ -60,6 +61,8 @@ function providerPrApi(connection: PrConnectionInput, token: string): ProviderPr
       return gitversePrApi(connection, token);
     case 'gitee':
       return giteePrApi(token);
+    case 'gitlem':
+      return gitlemPrApi(connection);
   }
 }
 
