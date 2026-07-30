@@ -11,6 +11,7 @@ import { errorKind, logJobFailure } from './job-failure-log.js';
 import { publishTaskEvent } from './task-events.js';
 import { errorMessage, redactSecrets } from './utils.js';
 import { archiveWorkdirToMinio } from './workdir-archive.js';
+import { scrubAgentScratchFiles } from './workdir-scrub.js';
 
 // Shared git/workdir/event plumbing for the agent-loop jobs (run-task,
 // review-pr, generate-proposals). Extracted from agent-loop.ts.
@@ -270,6 +271,8 @@ export async function commitAndPush(
   auth?: GitAuth,
 ): Promise<void> {
   const commitMessage = await generateCommitMessage(rt, task, summary);
+  // Review verdicts / transcripts are agent scratch, never repo content.
+  await scrubAgentScratchFiles(workdir);
   await git(['add', '-A'], { cwd: workdir, taskId: task.id });
   await git(['commit', '-m', commitMessage], { cwd: workdir, taskId: task.id });
   await logEvent(task.id, `committed: ${commitMessage}`);

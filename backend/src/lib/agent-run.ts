@@ -322,6 +322,17 @@ async function executeRunTask(
   await writeTaskAttachments(task, workdir);
   const summary = await implementTask(task, rt, workdir, secrets, resume);
   if (summary === null) {
+    if (task.prUrl) {
+      // A duplicate/resumed run found nothing new, but a PR is already open
+      // — the pipeline continues through review/merge. 'done' is only for
+      // merged work (or no-PR flows), never while a PR is still open.
+      await logEvent(
+        task.id,
+        'no changes produced; the existing pull request continues through review',
+      );
+      await setTaskStatus(task.id, 'awaiting_review');
+      return rt;
+    }
     await logEvent(task.id, 'no changes produced; nothing to commit');
     await prisma.task.update({ where: { id: task.id }, data: { changedPaths: [] } });
     await setTaskStatus(task.id, 'done');

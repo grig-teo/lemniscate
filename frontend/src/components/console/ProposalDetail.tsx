@@ -44,6 +44,7 @@ import {
   type TaskWithAttachments,
 } from '@/components/console/TaskEditorFields';
 import { PendingTaskModelSelect } from '@/components/console/PendingTaskModelSelect';
+import { FollowUpTaskSelect } from '@/components/console/TaskComposerControls';
 
 /** PATCH /api/tasks/:id — save edits on a pending task without starting it. */
 function usePatchTask() {
@@ -93,6 +94,12 @@ function TaskEditorInner({
   // prompt edit makes it stale, so it is cleared until the next Improve.
   const [estimatedTime, setEstimatedTime] = React.useState<string | null>(null);
   const [images, setImages] = React.useState<TaskImage[]>([]);
+  // Follow-up task: a still-pending same-repo task to auto-start once this
+  // one reaches 'done'. Prefilled from the stored task and edited via the
+  // right-side FollowUpTaskSelect (AGENTS.md §6 single control).
+  const [followUpTaskId, setFollowUpTaskId] = React.useState<string | null>(
+    task.followUpTaskId ?? null,
+  );
   const textareaRef = useAutoResizeTextarea(prompt, 14);
   const promptResize = useResizablePrompt();
   const attachments = useLibraryAttachments({
@@ -107,10 +114,11 @@ function TaskEditorInner({
 
   const editBody = () =>
     buildTaskEditBody({
-      task: { title: task.title, prompt: task.prompt ?? '' },
+      task: { title: task.title, prompt: task.prompt ?? '', followUpTaskId: task.followUpTaskId },
       title: title.trim(),
       prompt: prompt.trim(),
       images,
+      followUpTaskId,
       selections: {
         skillSlugs: attachments.skills.slugs,
         mcpServerSlugs: attachments.mcpServers.slugs,
@@ -129,6 +137,7 @@ function TaskEditorInner({
       skills: attachments.skills.slugs,
       mcpServerSlugs: attachments.mcpServers.slugs,
       agentsMdFiles: attachments.agentsMd.toAssignments(),
+      followUpTaskId,
     },
     onSave: async () => {
       await patchTask.mutateAsync({ id: task.id, body: editBody() });
@@ -231,7 +240,17 @@ function TaskEditorInner({
         <LibraryAttachments state={attachments} columns repositoryId={task.repositoryId} />
       </div>
       <div className="flex shrink-0 items-center gap-2">
-        {task.status === 'pending' && <PendingTaskModelSelect task={task} />}
+        {task.status === 'pending' && (
+          <>
+            <PendingTaskModelSelect task={task} />
+            <FollowUpTaskSelect
+              repositoryId={task.repositoryId}
+              selfId={task.id}
+              value={followUpTaskId}
+              onChange={setFollowUpTaskId}
+            />
+          </>
+        )}
         {(task.status === 'awaiting_review' || task.status === 'reviewing_code') && task.branchName && (
           <Button
             size="sm"

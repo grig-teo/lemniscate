@@ -48,7 +48,7 @@ export function buildTaskEditBody(args: {
   prompt: string;
   images: TaskImage[];
   selections: TaskEditSelections;
-  followUpTaskId: string | null;
+  followUpTaskId?: string | null;
 }): TaskEditBody {
   const body: TaskEditBody = {};
   if (args.title !== args.task.title) body.title = args.title;
@@ -57,9 +57,12 @@ export function buildTaskEditBody(args: {
   body.skills = args.selections.skillSlugs;
   body.mcpServerSlugs = args.selections.mcpServerSlugs;
   body.agentsMdFiles = args.selections.agentsMdFiles;
-  // Always send the follow-up so a PATCH can clear it (null); only omit when
-  // the editor's value matches the stored one (no change to persist).
-  if (args.followUpTaskId !== (args.task.followUpTaskId ?? null)) {
+  // Send the follow-up so a PATCH can set/clear it (null clears); omit when
+  // the field was never touched (undefined) or matches the stored value.
+  if (
+    args.followUpTaskId !== undefined &&
+    args.followUpTaskId !== (args.task.followUpTaskId ?? null)
+  ) {
     body.followUpTaskId = args.followUpTaskId;
   }
   return body;

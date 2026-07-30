@@ -8,6 +8,7 @@ import {
   type ProviderName,
 } from './git-providers.js';
 import {
+  LlmError,
   type ChatMessage,
   type ChatUsage,
   type ContentPart,
@@ -195,6 +196,14 @@ async function attemptLlmCall(rt: LlmRuntime, messages: ChatMessage[]): Promise<
   rt.usedCompletionTokens += split.completionTokens;
   await logLlmDone(rt, result.latencyMs, billed);
   assertWithinBudget(rt.usedTokens, rt.cfg.maxTokensPerRun);
+  // An empty completion (no content, no tool calls) is a broken reply, not
+  // an answer — some providers (z.ai GLM) return finish_reason 'stop' with
+  // an empty message once the reasoning budget is consumed. Routing it into
+  // the failover chain gives the next config a shot instead of poisoning
+  // the caller with blank output.
+  if (result.content.trim().length === 0 && !(result.toolCalls && result.toolCalls.length > 0)) {
+    throw new LlmError('protocol', 'LLM returned an empty reply (no content, no tool calls)');
+  }
   return result.content;
 }
 

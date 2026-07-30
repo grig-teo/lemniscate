@@ -223,6 +223,18 @@ describe('runTask with resolveAgentExecutor=hermes', () => {
     expect(mocks.setTaskStatus).toHaveBeenCalledWith('task-1', 'done');
   });
 
+  it('returns to awaiting_review instead of done when a PR is already open', async () => {
+    // A duplicate/resumed run that finds nothing new must not close the
+    // pipeline: the open PR continues through review/merge — 'done' is only
+    // for merged work (or no-PR flows).
+    mocks.hasDirtyWorkdir.mockResolvedValue(false);
+    mocks.loadTaskWithRepo.mockResolvedValue({ ...stubTask(), prUrl: 'https://pr/1' });
+    await runTask('task-1');
+
+    expect(mocks.setTaskStatus).toHaveBeenCalledWith('task-1', 'awaiting_review');
+    expect(mocks.setTaskStatus).not.toHaveBeenCalledWith('task-1', 'done');
+  });
+
   it('emits the task-completed hook after a successful run', async () => {
     await runTask('task-1');
     expect(mocks.notifyTaskCompleted).toHaveBeenCalledWith('task-1');
