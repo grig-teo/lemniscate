@@ -246,6 +246,66 @@ describe('runHermesTask without a taskId', () => {
   });
 });
 
+describe('runHermesTask stall watchdog', () => {
+  it('kills the process and rejects when output stays silent past the stall window', async () => {
+    const child = fakeChild();
+    mocks.spawn.mockReturnValue(child);
+    const promise = runHermesTask(makeOpts({ timeoutMs: 60_000, stallTimeoutMs: 30 }));
+    const err = await promise.then(
+      () => null,
+      (e: Error) => e,
+    );
+
+    expect(child.kill).toHaveBeenCalledWith('SIGKILL');
+    expect(err?.message).toMatch(/hermes agent stalled: no output for \d+s/);
+    expect(err?.message).toContain('likely a hung LLM provider');
+  });
+
+  it('fails fast on silence even when the stall window is far below the hard timeout', async () => {
+    const child = fakeChild();
+    mocks.spawn.mockReturnValue(child);
+    const startedMs = Date.now();
+    const promise = runHermesTask(makeOpts({ timeoutMs: 60_000, stallTimeoutMs: 40 }));
+    const err = await promise.then(
+      () => null,
+      (e: Error) => e,
+    );
+
+    expect(err?.message).toMatch(/stalled/);
+    expect(Date.now() - startedMs).toBeLessThan(5_000);
+  });
+
+  it('resets the stall window on stdout/stderr activity', async () => {
+    const child = fakeChild();
+    mocks.spawn.mockReturnValue(child);
+    const promise = runHermesTask(makeOpts({ timeoutMs: 60_000, stallTimeoutMs: 60 }));
+    // Keep pinging output inside the window: a naive total-runtime timer
+    // would fire; the watchdog must re-arm on every line.
+    for (let i = 0; i < 5; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      child.stdout.write(`progress ${i}\n`);
+    }
+    // Still inside the re-armed window from the last line: no kill.
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(child.kill).not.toHaveBeenCalled();
+
+    await closeWith(child, 0);
+    await expect(promise).resolves.toBeUndefined();
+  });
+
+  it('is disabled when stallTimeoutMs is unset or 0', async () => {
+    for (const stallTimeoutMs of [undefined, 0]) {
+      const child = fakeChild();
+      mocks.spawn.mockReturnValue(child);
+      const promise = runHermesTask(makeOpts({ timeoutMs: 5_000, stallTimeoutMs }));
+      await new Promise((resolve) => setTimeout(resolve, 80));
+      expect(child.kill).not.toHaveBeenCalled();
+      await closeWith(child, 0);
+      await expect(promise).resolves.toBeUndefined();
+    }
+  });
+});
+
 describe('buildHermesEnv', () => {
   it('builds an allowlisted env: no secrets even when set in process.env', async () => {
     const saved = {

@@ -117,6 +117,13 @@ const envSchema = z.object({
   AGENT_EXECUTOR: z.enum(['hermes', 'internal', 'lemcore']).default('hermes'),
   // Hard kill for one `hermes chat` run; the job then fails the task.
   AGENT_HERMES_TIMEOUT_MINUTES: z.coerce.number().int().positive().default(45),
+  // Hermes CLI stall watchdog: kills the child when nothing is printed for
+  // this long (typically a hung LLM provider) so the run fails fast instead
+  // of pinning a worker slot. 0 disables the watchdog.
+  AGENT_HERMES_STALL_TIMEOUT_MINUTES: z.coerce.number().int().nonnegative().default(15),
+  // Lemcore stall watchdog: aborts the run when a single LLM turn takes
+  // longer than this (same stalled-provider failure mode as above).
+  LEMCORE_STALLED_TURN_TIMEOUT_MINUTES: z.coerce.number().int().positive().default(15),
   // Lemcore-only: build a codebase graph (code-review-graph) on every repo
   // scan and prefer graph-derived implementation context to cut LLM tokens.
   // Default on. Set LEMCORE_CODE_GRAPH=false to disable.
