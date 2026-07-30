@@ -162,9 +162,14 @@ export function ConsolePane() {
               isError={consoleState.historyQuery.isError}
               errorMessage={consoleState.historyQuery.error?.message}
               startedAtMs={
-                taskQuery.data?.createdAt
-                  ? Date.parse(taskQuery.data.createdAt)
-                  : null
+                // Elapsed timer anchors at the current pipeline session, not
+                // the task's creation — reruns/re-reviews start a fresh
+                // session; legacy tasks (null) fall back to createdAt.
+                (() => {
+                  const anchor =
+                    taskQuery.data?.sessionStartedAt ?? taskQuery.data?.createdAt;
+                  return anchor ? Date.parse(anchor) : null;
+                })()
               }
             />
           ) : (

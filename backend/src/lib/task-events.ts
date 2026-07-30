@@ -155,6 +155,21 @@ async function ensureTruncationMarker(taskId: string): Promise<void> {
 // Updates the task status (plus optional extra columns) and emits the
 // matching status event. The errorCode is included in the event payload so
 // the frontend can render the ErrorBanner immediately on the SSE update.
+//
+// Session anchoring: one pipeline pass (run → review → merge gate) is ONE
+// session. sessionStartedAt is (re)set when the task enters an active status
+// from an idle/terminal one — a rerun after failed/done or a first start
+// begins a new session, while run → reviewing_code keeps the existing one.
+// The console elapsed timer anchors here, not at createdAt.
+const ACTIVE_SESSION_STATUSES: ReadonlySet<TaskStatus> = new Set(['running', 'reviewing_code']);
+const IDLE_SESSION_STATUSES: ReadonlySet<TaskStatus> = new Set([
+  'pending',
+  'queued',
+  'failed',
+  'done',
+  'closed',
+]);
+
 export async function setTaskStatus(
   taskId: string,
   status: TaskStatus,
@@ -165,10 +180,19 @@ export async function setTaskStatus(
     branchName?: string | null;
   } = {},
 ): Promise<void> {
+  const current = await prisma.task.findUnique({
+    where: { id: taskId },
+    select: { status: true, sessionStartedAt: true },
+  });
+  const startsSession =
+    ACTIVE_SESSION_STATUSES.has(status) &&
+    current !== null &&
+    (current.sessionStartedAt === null || IDLE_SESSION_STATUSES.has(current.status));
   await prisma.task.update({
     where: { id: taskId },
     data: {
       status,
+      ...(startsSession ? { sessionStartedAt: new Date() } : {}),
       ...(extra.error !== undefined ? { error: extra.error } : {}),
       ...(extra.errorCode !== undefined ? { errorCode: extra.errorCode } : {}),
       ...(extra.prUrl !== undefined ? { prUrl: extra.prUrl } : {}),
