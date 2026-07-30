@@ -203,7 +203,13 @@ export async function runLemcoreLoop(opts: LemcoreRunOptions): Promise<string> {
         model: rt.cfg.model,
         apiPattern: rt.cfg.apiPattern,
         messages: toChatMessages(messages),
-        maxTokens: Math.min(rt.cfg.maxTokens ?? 4096, 4096),
+        // Completion budget per turn: the config's maxTokens wins (default
+        // 16k), floored at 16k so thinking models have room for reasoning +
+        // a real reply, and capped at 64k so a misconfigured value (e.g.
+        // 1M) cannot make providers reject the call. The old hard 4096 cap
+        // truncated thinking models mid-turn and killed runs with
+        // "response truncated at maxTokens=4096".
+        maxTokens: Math.min(Math.max(rt.cfg.maxTokens ?? 16_384, 16_384), 65_536),
         temperature: rt.cfg.temperature ?? 0.2,
         tools: getAvailableTools(),
         onRetry: (info) => {
