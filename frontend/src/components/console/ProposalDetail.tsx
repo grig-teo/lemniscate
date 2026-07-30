@@ -10,7 +10,7 @@
  */
 import * as React from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { Hammer, Loader2, Paperclip, GitPullRequestClosed } from 'lucide-react';
+import { Loader2 } from 'lucide-react';
 
 import { api } from '@/lib/api';
 import { SUPPRESS_ERROR_TOAST_META } from '@/lib/mutation-error-toast';
@@ -23,19 +23,15 @@ import {
 import { useAutosave } from '@/lib/use-autosave';
 import { useSkills, useImproveTask, useStartTask, useClosePrTask, useTask, type TaskImage } from '@/lib/hooks';
 import { useLibraryAttachments } from '@/lib/library-attachments';
-import { IMAGE_ACCEPT, MAX_IMAGES } from '@/lib/prompt-composer';
 import { LibraryAttachments } from '@/components/library/LibraryAttachments';
 import { EstimatedTimeBadge } from '@/components/EstimatedTimeBadge';
 import { PriorityBadge } from '@/components/PriorityBadge';
 import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
-import { SaveStatusIndicator } from '@/components/console/SaveStatusIndicator';
 import { appendImageFiles, useAutoResizeTextarea } from '@/components/console/composer-utils';
 import { ImageThumbnails } from '@/components/console/TaskComposerFields';
 import {
-  AttachFileButton,
   DetailMessage,
   ImproveButton,
   PromptPreview,
@@ -43,8 +39,7 @@ import {
   ViewToggle,
   type TaskWithAttachments,
 } from '@/components/console/TaskEditorFields';
-import { PendingTaskModelSelect } from '@/components/console/PendingTaskModelSelect';
-import { FollowUpTaskSelect } from '@/components/console/TaskComposerControls';
+import { ProposalDetailActionBar } from '@/components/console/ProposalDetailActionBar';
 
 /** PATCH /api/tasks/:id — save edits on a pending task without starting it. */
 function usePatchTask() {
@@ -239,52 +234,19 @@ function TaskEditorInner({
       <div className="min-h-0 flex-1 overflow-y-auto">
         <LibraryAttachments state={attachments} columns repositoryId={task.repositoryId} />
       </div>
-      <div className="flex shrink-0 items-center gap-2">
-        {task.status === 'pending' && (
-          <>
-            <PendingTaskModelSelect task={task} />
-            <FollowUpTaskSelect
-              repositoryId={task.repositoryId}
-              selfId={task.id}
-              value={followUpTaskId}
-              onChange={setFollowUpTaskId}
-            />
-          </>
-        )}
-        {(task.status === 'awaiting_review' || task.status === 'reviewing_code') && task.branchName && (
-          <Button
-            size="sm"
-            variant="destructive"
-            onClick={closePr}
-            disabled={closePrTask.isPending}
-            aria-label="Close PR and delete branch"
-          >
-            {closePrTask.isPending ? (
-              <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
-            ) : (
-              <GitPullRequestClosed className="h-4 w-4" aria-hidden />
-            )}
-            Close PR
-          </Button>
-        )}
-        <div className="flex-1" />
-        <AttachFileButton
-          accept={IMAGE_ACCEPT}
-          label="Attach file"
-          icon={Paperclip}
-          disabled={images.length >= MAX_IMAGES}
-          onFiles={addImageFiles}
-        />
-        <SaveStatusIndicator status={autosave.status} onRetry={autosave.retry} />
-        <Button size="sm" onClick={start} disabled={startTask.isPending} aria-label="Start task">
-          {startTask.isPending ? (
-            <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
-          ) : (
-            <Hammer className="h-4 w-4" aria-hidden />
-          )}
-          Start
-        </Button>
-      </div>
+      <ProposalDetailActionBar
+        task={task}
+        followUpTaskId={followUpTaskId}
+        onFollowUpTaskIdChange={setFollowUpTaskId}
+        images={images}
+        onAttachFiles={addImageFiles}
+        startPending={startTask.isPending}
+        onStart={start}
+        closePrPending={closePrTask.isPending}
+        onClosePr={closePr}
+        autosaveStatus={autosave.status}
+        onRetrySave={autosave.retry}
+      />
     </div>
   );
 }
