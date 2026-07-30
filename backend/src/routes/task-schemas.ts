@@ -44,6 +44,8 @@ export const createBodySchema = z
     images: taskImagesSchema.optional(),
     // Save-for-later: create the task as pending without enqueueing it.
     later: z.boolean().optional(),
+    // Manual chaining: id of a pending same-repo task to auto-start on done.
+    followUpTaskId: z.string().min(1).optional(),
   })
   .merge(attachmentFieldsSchema)
   .strict();
@@ -71,6 +73,8 @@ export const patchBodySchema = z
     prompt: promptSchema.optional(),
     images: taskImagesSchema.optional(),
     llmConfigId: z.string().min(1).optional(),
+    // Manual chaining: set a pending same-repo follow-up, or null to clear.
+    followUpTaskId: z.string().min(1).nullable().optional(),
   })
   .merge(attachmentFieldsSchema)
   .strict();

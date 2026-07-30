@@ -195,6 +195,23 @@ export async function attachmentValidationError(
   return null;
 }
 
+// Validates a manual followUpTaskId: it must reference a still-pending,
+// active (non-archived) task in the SAME repository — so the done-trigger
+// in task-events always enqueues a runnable target. Returns the 400 message
+// or null. A self-reference is rejected (a task cannot follow itself).
+export async function followUpValidationError(
+  followUpTaskId: string,
+  repositoryId: string,
+  selfId?: string,
+): Promise<string | null> {
+  if (followUpTaskId === selfId) return 'a task cannot be its own follow-up';
+  const target = await prisma.task.findFirst({
+    where: { id: followUpTaskId, repositoryId, status: 'pending', archivedAt: null },
+    select: { id: true },
+  });
+  return target ? null : 'follow-up task not found, not pending, or in another repository';
+}
+
 // SSE is served only when the client explicitly asks for it (EventSource// always sends Accept: text/event-stream). Everything else — fetch's
 // default included — gets the JSON history; otherwise a plain fetch hangs
 // on the open stream forever ("Loading task history…" bug).

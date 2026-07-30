@@ -1,6 +1,7 @@
 import type { Prisma, TaskEventKind, TaskStatus } from '@prisma/client';
 import { Redis } from 'ioredis';
 import { config } from '../config.js';
+import { startFollowUpTask } from './task-follow-up.js';
 import { logger } from './logger.js';
 import { prisma } from './prisma.js';
 
@@ -182,7 +183,7 @@ export async function setTaskStatus(
 ): Promise<void> {
   const current = await prisma.task.findUnique({
     where: { id: taskId },
-    select: { status: true, sessionStartedAt: true },
+    select: { status: true, sessionStartedAt: true, repositoryId: true, followUpTaskId: true },
   });
   const startsSession =
     ACTIVE_SESSION_STATUSES.has(status) &&
@@ -202,5 +203,21 @@ export async function setTaskStatus(
   await publishTaskEvent(taskId, 'status', {
     status,
     ...(extra.errorCode ? { errorCode: extra.errorCode } : {}),
+  });
+  await triggerFollowUpIfDone(taskId, status, current);
+}
+
+// When a task transitions into 'done', auto-start its configured follow-up
+// (a still-pending same-repo task). The trigger is best-effort and never
+// fails the status update: a dispatch error is logged and the pointer is
+// left intact for a later manual retry.
+async function triggerFollowUpIfDone(
+  taskId: string,
+  status: TaskStatus,
+  current: { repositoryId: string; followUpTaskId: string | null } | null,
+): Promise<void> {
+  if (status !== 'done' || !current) return;
+  await startFollowUpTask(taskId, current.repositoryId, current.followUpTaskId).catch((err) => {
+    logger.error({ taskId, err }, 'task-events: follow-up start failed');
   });
 }
