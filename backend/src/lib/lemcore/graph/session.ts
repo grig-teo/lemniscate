@@ -12,7 +12,7 @@ export function graphSessionKey(workdir: string): string {
 export function storeGraphSession(
   workdir: string,
   graph: LemcoreCodebaseGraph,
-  maxDepth = 2,
+  maxDepth = graph.maxDepth ?? 2,
 ): GraphSession {
   const session: GraphSession = { graph, maxDepth };
   sessions.set(graphSessionKey(workdir), session);

@@ -48,6 +48,7 @@ export async function scanRepositoryGraph(
       repoRoot: workdir,
       enabled: false,
       dataDir: lemcoreGraphDataDir(workdir),
+      maxDepth: lemcoreGraphMaxDepth(),
     });
     storeGraphSession(workdir, graph, lemcoreGraphMaxDepth());
     return { graph, summaryText: summarizeGraph(graph), enabled: false };

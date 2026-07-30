@@ -71,6 +71,8 @@ export interface LemcoreCodebaseGraph {
   files: string[];
   /** Compact architecture / status text from the tool, when available. */
   architectureText?: string;
+  /** Max hop depth used when expanding neighborhoods (session default). */
+  maxDepth?: number;
   error?: string;
   stats: GraphStats;
 }

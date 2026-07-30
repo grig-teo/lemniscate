@@ -43,10 +43,9 @@ export async function buildLemcoreCodebaseGraph(
   const enabled = opts.enabled !== false;
   const timeoutMs = opts.timeoutMs ?? DEFAULT_BUILD_TIMEOUT_MS;
   const maxDepth = opts.maxDepth ?? 2;
-  void maxDepth;
 
   if (!enabled) {
-    return emptyGraph(repoRoot, dataDir, 'graph disabled by config');
+    return emptyGraph(repoRoot, dataDir, 'graph disabled by config', maxDepth);
   }
 
   const run: CliRunner = opts.runCli ?? defaultCliRunner(opts.cliPath ?? DEFAULT_CLI);
@@ -57,6 +56,7 @@ export async function buildLemcoreCodebaseGraph(
         repoRoot,
         dataDir,
         built.error ?? (built.stderr || 'build failed'),
+        maxDepth,
       );
     }
 
@@ -118,6 +118,7 @@ export async function buildLemcoreCodebaseGraph(
       builtAt: new Date().toISOString(),
       repoRoot,
       dataDir,
+      maxDepth,
       nodes: dedupeNodes([...nodes, ...fileNodes]),
       edges,
       files,
@@ -135,7 +136,7 @@ export async function buildLemcoreCodebaseGraph(
     return graph;
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    return withFallback(repoRoot, dataDir, msg);
+    return withFallback(repoRoot, dataDir, msg, maxDepth);
   }
 }
 
@@ -160,15 +161,17 @@ async function withFallback(
   repoRoot: string,
   dataDir: string,
   reason: string,
+  maxDepth: number,
 ): Promise<LemcoreCodebaseGraph> {
   try {
     const graph = await buildFallbackGraph(repoRoot);
     graph.dataDir = dataDir;
+    graph.maxDepth = maxDepth;
     graph.error = `code-review-graph unavailable (${reason}); using fallback scan`;
     return graph;
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    return emptyGraph(repoRoot, dataDir, `${reason}; fallback failed: ${msg}`);
+    return emptyGraph(repoRoot, dataDir, `${reason}; fallback failed: ${msg}`, maxDepth);
   }
 }
 
@@ -176,6 +179,7 @@ function emptyGraph(
   repoRoot: string,
   dataDir: string,
   error: string,
+  maxDepth?: number,
 ): LemcoreCodebaseGraph {
   return {
     source: 'none',
@@ -183,6 +187,7 @@ function emptyGraph(
     builtAt: new Date().toISOString(),
     repoRoot,
     dataDir,
+    maxDepth,
     nodes: [],
     edges: [],
     files: [],
