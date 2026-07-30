@@ -14,6 +14,7 @@ import {
   type AgentStep,
 } from '@/lib/agent-step';
 import { payloadToDiffText, payloadToLogText, statusFromPayload, agentStepToLogText } from '@/lib/event-payload';
+import { summarizeChanges } from '@/lib/session-changes';
 import { useWorkspaceSelection } from '@/lib/selection';
 import { applyTaskStatusToCaches } from '@/lib/task-status-cache';
 
@@ -70,10 +71,20 @@ function upsertLiveStep(prev: AgentStep[], event: StreamEvent): AgentStep[] {
   return next;
 }
 
+function toTaskEventItem(event: StreamEvent, fallbackId: string): TaskEventItem {
+  return {
+    id: event.id ?? fallbackId,
+    kind: event.kind,
+    payload: event.payload,
+    createdAt: event.createdAt ?? new Date().toISOString(),
+  };
+}
+
 function createEventDispatcher(
   logCounter: React.MutableRefObject<number>,
   setLiveLogs: React.Dispatch<React.SetStateAction<LogLine[]>>,
   setLiveSteps: React.Dispatch<React.SetStateAction<AgentStep[]>>,
+  setLiveDiffs: React.Dispatch<React.SetStateAction<TaskEventItem[]>>,
   onStatus: (status: string) => void,
 ) {
   return (event: StreamEvent) => {
@@ -84,6 +95,9 @@ function createEventDispatcher(
     }
     if (event.kind === 'agent_step') {
       setLiveSteps((prev) => upsertLiveStep(prev, event));
+    }
+    if (event.kind === 'diff') {
+      setLiveDiffs((prev) => [...prev, toTaskEventItem(event, `live-diff-${prev.length}`)]);
     }
     const text = eventToLogText(event.kind, event.payload);
     if (text === null) return;
@@ -125,6 +139,7 @@ function useTaskEventStream(
   const queryClient = useQueryClient();
   const [liveLogs, setLiveLogs] = React.useState<LogLine[]>([]);
   const [liveSteps, setLiveSteps] = React.useState<AgentStep[]>([]);
+  const [liveDiffs, setLiveDiffs] = React.useState<TaskEventItem[]>([]);
   const [streamError, setStreamError] = React.useState(false);
   const logCounter = React.useRef(0);
 
@@ -134,12 +149,12 @@ function useTaskEventStream(
       setLiveStatus(status);
       applyTaskStatusToCaches(queryClient, taskId, status);
     };
-    const dispatch = createEventDispatcher(logCounter, setLiveLogs, setLiveSteps, onStatus);
+    const dispatch = createEventDispatcher(logCounter, setLiveLogs, setLiveSteps, setLiveDiffs, onStatus);
     const source = openEventStream(taskId, seenEventIds, dispatch, setStreamError);
     return () => source.close();
   }, [taskId, seenEventIds, setLiveStatus, queryClient]);
 
-  return { liveLogs, liveSteps, streamError, setLiveLogs, setLiveSteps, setStreamError };
+  return { liveLogs, liveSteps, liveDiffs, streamError, setLiveLogs, setLiveSteps, setLiveDiffs, setStreamError };
 }
 
 function lastHistoryStatus(events: TaskEventItem[] | undefined): string | null {
@@ -181,12 +196,23 @@ export function useTaskConsole(taskId: string | null) {
   React.useEffect(() => {
     stream.setLiveLogs([]);
     stream.setLiveSteps([]);
+    stream.setLiveDiffs([]);
     stream.setStreamError(false);
   }, [taskId]);
 
   const agentSteps = React.useMemo(
     () => mergeAgentSteps(historySteps, stream.liveSteps),
     [historySteps, stream.liveSteps],
+  );
+
+  // Session file changes (one row per touched file, +/− totals) for the
+  // header's changes badge and the changes dialog. History comes from the
+  // events query; diff events arriving over the live stream are folded in so
+  // the badge updates while the agent is still running (the history query
+  // itself does not refetch on stream events).
+  const changes = React.useMemo(
+    () => summarizeChanges([...(historyQuery.data ?? []), ...stream.liveDiffs]),
+    [historyQuery.data, stream.liveDiffs],
   );
 
   return {
@@ -197,5 +223,6 @@ export function useTaskConsole(taskId: string | null) {
     streamError: stream.streamError,
     agentSteps,
     hasAgentSteps: agentSteps.length > 0,
+    changes,
   };
 }
