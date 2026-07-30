@@ -15,6 +15,22 @@ export function transcriptPath(workdir: string): string {
   return `${workdir.replace(/[/\\]+$/, '')}.${TRANSCRIPT_FILE}`;
 }
 
+/**
+ * Default goal pattern for every lemcore process: track exactly one
+ * objective — the proposal/prompt description that started the run — until
+ * it is complete.
+ */
+export const DEFAULT_GOAL_PATTERN =
+  'Track one (proposal/prompt description) objective until it is complete.';
+
+const GOAL_LINES = [
+  `Default goal pattern: ${DEFAULT_GOAL_PATTERN}`,
+  '- Pick exactly one objective from the proposal/prompt description and keep it in focus for the whole run.',
+  '- Restate the objective you are tracking in your first reply, prefixed with "Objective:", so it survives transcript compaction.',
+  '- Do not switch goals, broaden scope, or start side quests; park unrelated findings as notes for the final summary.',
+  '- Every turn moves the tracked objective forward; when it is verifiably complete, stop and summarize.',
+];
+
 const TOOL_LINES = [
   '- read_file(path, offset?, limit?): read a file',
   '- write_file(path, content): overwrite a file',
@@ -39,6 +55,8 @@ export function lemcoreSystemPrompt(workdir?: string, extraTools: string[] = [])
     `Work in the current directory${cwd}. Implement the task completely, including tests if the project has a test setup. Respect the repository's own rules (AGENTS.md, lint/size guards) and keep any repo-provided checks (e.g. check:max-lines, lint scripts) passing — split modules instead of growing files past a size limit. Do NOT git commit, push, or create branches — git is handled externally.`,
     '',
     'A codebase graph is built on each repository scan. Prefer graph_query, graph_impact, graph_neighbors, and graph_search to navigate structure (callers/callees/imports) before bulk raw-file reads. Only read full files when the graph cannot answer. This keeps prompt tokens low.',
+    '',
+    ...GOAL_LINES,
     '',
     'You have access to the following tools. Use them to read, write, and explore files.',
     ...TOOL_LINES,
