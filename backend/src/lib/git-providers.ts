@@ -17,6 +17,7 @@
 //   gitee.js       — GITEE_API, giteeHeaders, normalizeGiteeRepo, Gitee client
 //   gitverse.js    — GITVERSE_API, gitverseBase, gitverseApiBase,
 //                    normalizeGitverseRepo, GitVerse client
+//   gitlem.js      — internal minimal git host (on-disk bare repos)
 //   registry.js    — providerApis registry, fetchProviderProfile,
 //                    assertRepoPushAccess, getProviderClient
 //
@@ -32,4 +33,5 @@ export * from './git-providers/github.js';
 export * from './git-providers/gitlab.js';
 export * from './git-providers/gitee.js';
 export * from './git-providers/gitverse.js';
+export * from './git-providers/gitlem.js';
 export * from './git-providers/registry.js';

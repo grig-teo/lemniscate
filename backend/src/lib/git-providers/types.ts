@@ -54,7 +54,10 @@ export interface GitProviderClient {
   listRootEntries(repoFullName: string): Promise<string[]>;
 }
 
-export type ProviderName = 'github' | 'gitverse' | 'gitlab' | 'gitee';
+// 'gitlem' is the internal minimal git host (email+password); it has no
+// external REST API — repos live on disk under GITLEM_REPO_ROOT and are
+// served over the same origin (see gitlem.ts).
+export type ProviderName = 'github' | 'gitverse' | 'gitlab' | 'gitee' | 'gitlem';
 
 // How a stored token authenticates with the provider. Only GitLab differs:
 // OAuth access tokens need `Authorization: Bearer`, personal access tokens

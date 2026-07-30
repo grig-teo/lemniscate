@@ -5,7 +5,7 @@ import type { Prisma } from '@prisma/client';
 // for the route registration).
 
 export const connectBodySchema = z.object({
-  provider: z.enum(['github', 'gitverse', 'gitlab', 'gitee']),
+  provider: z.enum(['github', 'gitverse', 'gitlab', 'gitee', 'gitlem']),
   token: z.string().min(1),
   baseUrl: z.string().url().optional(),
 });
