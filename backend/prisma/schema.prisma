@@ -300,6 +300,11 @@ model Task {
   // share it. The console elapsed timer anchors here instead of createdAt —
   // previously reruns accumulated all previous sessions' wall time.
   sessionStartedAt DateTime?
+  // Manual chaining: the id of a pending task in the same repository that
+  // should be automatically started (enqueued) once THIS task reaches 'done'.
+  // null = no follow-up. Validated to be a still-pending same-repo task on
+  // create/PATCH; cleared on enqueue so a done task never chains twice.
+  followUpTaskId String?
   createdAt    DateTime    @default(now())
   updatedAt    DateTime    @updatedAt
   repository   Repository  @relation(fields: [repositoryId], references: [id], onDelete: Cascade)
