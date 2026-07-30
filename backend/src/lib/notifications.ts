@@ -28,6 +28,8 @@ export const NOTIFICATION_KINDS = [
   'job_failed',
   'proposal_generation_failed',
   'review_addressed',
+  // Internal gitlem host: account auto-provisioned for a user.
+  'gitlem_account_created',
 ] as const;
 
 export type NotificationKind = (typeof NOTIFICATION_KINDS)[number];

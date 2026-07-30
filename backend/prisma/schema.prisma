@@ -12,6 +12,7 @@ enum GitProvider {
   gitverse
   gitlab
   gitee
+  gitlem
 }
 
 enum ThinkingLevel {
@@ -66,6 +67,7 @@ model User {
   notifications  Notification[]
   notificationSettings NotificationSetting[]
   vpsTargets     VpsTarget[]
+  gitlemUser     GitlemUser?
 }
 
 model GitConnection {
@@ -607,4 +609,55 @@ model ExecutorRunStat {
   repository   Repository @relation(fields: [repositoryId], references: [id], onDelete: Cascade)
 
   @@index([repositoryId])
+}
+
+// ---------------------------------------------------------------------------
+// gitlem — the internal minimal git host (AGENTS.md: one home per concern;
+// the provider client lives in lib/git-providers/gitlem.ts).
+// ---------------------------------------------------------------------------
+
+// A gitlem account. Linked 1:1 to a lemniscate User (userId unique): the
+// GitConnection row with provider 'gitlem' stores an encrypted PAT whose
+// plaintext is also the GitlemUser.apiToken used by the git-over-HTTP
+// endpoints (lib/gitlem-http.ts).
+model GitlemUser {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  username     String   @unique
+  // scrypt hash in the `scrypt:N:r:p:salt:hash` format (lib/passwords.ts).
+  passwordHash String
+  // Plaintext PAT: gitlem is internal, and the same token authenticates both
+  // the REST provider client and `git clone/push` over HTTP.
+  apiToken     String   @unique
+  userId       String?  @unique
+  createdAt    DateTime @default(now())
+  user         User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  repositories GitlemRepository[]
+}
+
+// One emailed registration code (6 digits, 10-minute TTL). Rows are deleted
+// on consume/expiry; resending replaces the previous code.
+model GitlemRegistrationCode {
+  id        String   @id @default(cuid())
+  email     String
+  codeHash  String
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@index([email])
+}
+
+model GitlemRepository {
+  id            String   @id @default(cuid())
+  ownerId       String
+  name          String
+  // Repository metadata is stored as JSON documents (branches, files, PRs,
+  // CI runs — see lib/gitlem-store.ts), so one row is the whole repo state.
+  doc           String
+  defaultBranch String   @default("main")
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  owner         GitlemUser @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+
+  @@unique([ownerId, name])
 }
