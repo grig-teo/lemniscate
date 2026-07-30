@@ -9,7 +9,6 @@ import { chatCompletion } from '../llm-dispatch.js';
 import type { ChatMessage } from '../llm-client.js';
 import {
   MAX_TURNS,
-  LEMCORE_DEFAULT_MAX_TOKENS_PER_RUN,
   TRANSCRIPT_FILE,
   REVIEW_FILENAME,
   lemcoreSystemPrompt,
@@ -171,13 +170,13 @@ export async function runLemcoreLoop(opts: LemcoreRunOptions): Promise<string> {
 
     const totalChars = messages.reduce((sum, m) => sum + m.content.length, 0);
     const estimatedTokens = Math.ceil(totalChars / 4);
-    // Safety net applies even when the config sets no budget (the runtime
-    // usage is seeded with the task's cumulative spend, so this bounds the
-    // whole task, not just this loop invocation).
-    const tokenBudget = rt.cfg.maxTokensPerRun ?? LEMCORE_DEFAULT_MAX_TOKENS_PER_RUN;
-    if (rt.usedTokens + estimatedTokens > tokenBudget) {
+    // Budget enforcement only when the LLM config sets one (the runtime is
+    // seeded with the task's cumulative usage, so a configured budget spans
+    // the whole task). No implicit default — large tasks must not be
+    // killed by a hidden cap; the compaction cap bounds per-turn cost.
+    if (rt.cfg.maxTokensPerRun != null && rt.usedTokens + estimatedTokens > rt.cfg.maxTokensPerRun) {
       throw new Error(
-        `LLM token budget exceeded (${rt.usedTokens + estimatedTokens} > ${tokenBudget})`,
+        `LLM token budget exceeded (${rt.usedTokens + estimatedTokens} > ${rt.cfg.maxTokensPerRun})`,
       );
     }
 
