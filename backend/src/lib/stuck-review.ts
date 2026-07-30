@@ -1,25 +1,30 @@
-import { enqueueReviewTask, getAgentTasksQueue } from './proposal-scheduler.js';
+import { enqueueReviewTask, enqueueRunTask, getAgentTasksQueue } from './proposal-scheduler.js';
 import { logEvent } from './agent-git.js';
 import { prisma } from './prisma.js';
 import { logger } from './logger.js';
 
-// Stuck-review recovery (home moved out of pr-state-sync.ts to stay under the
-// 300-line guard — AGENTS.md §5). Two detection paths:
+// Stuck-task recovery (home moved out of pr-state-sync.ts to stay under the
+// 300-line guard — AGENTS.md §5). Covers tasks whose job died for good:
+// reviews stuck in awaiting_review/reviewing_code AND runs stuck in
+// 'running' — a BullMQ-level job death (worker killed mid-job by a deploy,
+// unrecoverable stall) never updates the task status, so without recovery
+// the task sits in its last status forever. Two detection paths:
 //
-// 1. Error fast path: a review job that exhausted its BullMQ attempts ends
-//    with an 'error:' log line (the job itself is gone via removeOnFail).
-// 2. Time-based path: a review can also die SILENTLY — no 'error:' line at
-//    all (agent finished without a verdict on an old build, worker redeploy
-//    wiping the in-memory job, crashed process). Then the task just sits in
-//    reviewing_code/awaiting_review forever. If nothing has happened for
+// 1. Error fast path: a job that exhausted its BullMQ attempts ends with an
+//    'error:' log line (the job itself is gone via removeOnFail).
+// 2. Time-based path: a job can also die SILENTLY — no 'error:' line at all
+//    (agent finished without a verdict on an old build, worker redeploy
+//    wiping the in-memory job, crashed process). If nothing has happened for
 //    STUCK_REVIEW_STALE_MS and no job for the task lives in the queue, the
-//    review is re-enqueued.
+//    task is re-enqueued.
 //
 // Both paths are bounded per task (MAX_REVIEW_RECOVERIES) so a persistently
-// failing endpoint cannot burn tokens in an infinite review loop.
+// failing endpoint cannot burn tokens in an infinite loop.
 
 const MAX_REVIEW_RECOVERIES = 3;
 const REVIEW_RECOVERY_LOG = 'recovery: re-enqueued PR review after a failed review job';
+const RUN_RECOVERY_LOG = 'recovery: re-enqueued task run after a failed run job';
+const RECOVERY_LOGS = [REVIEW_RECOVERY_LOG, RUN_RECOVERY_LOG];
 // Housekeeping logs (e.g. "cleaned up workdir") fire AFTER the error line and
 // mask it from a last-line-only check. Scan a small window of recent logs so
 // the error that caused the review job to die is still visible.
@@ -60,7 +65,11 @@ async function hasLiveJobForTask(taskId: string): Promise<boolean> {
 
 async function isReviewStuck(taskId: string, taskUpdatedAt: Date | null): Promise<boolean> {
   const recoveries = await prisma.taskEvent.count({
-    where: { taskId, kind: 'log', payload: { path: ['line'], equals: REVIEW_RECOVERY_LOG } },
+    where: {
+      taskId,
+      kind: 'log',
+      OR: RECOVERY_LOGS.map((line) => ({ payload: { path: ['line'], equals: line } })),
+    },
   });
   if (recoveries >= MAX_REVIEW_RECOVERIES) return false;
 
@@ -94,27 +103,42 @@ async function isReviewStuck(taskId: string, taskUpdatedAt: Date | null): Promis
   return !(await hasLiveJobForTask(taskId));
 }
 
-// Re-enqueues review for awaiting_review/reviewing_code tasks whose review
-// job died for good. The BullMQ jobId dedupes against a review job that is
-// still waiting/active/retrying.
+// Re-enqueues tasks whose job died for good: reviews in
+// awaiting_review/reviewing_code re-enqueue 'review-pr', runs stuck in
+// 'running' re-enqueue 'run-task' (lemcore resumes from its saved
+// transcript). The BullMQ jobId dedupes against a job that is still
+// waiting/active/retrying.
 export async function recoverStuckReviews(): Promise<void> {
   const tasks = await prisma.task.findMany({
     where: {
-      status: { in: ['awaiting_review', 'reviewing_code'] },
+      status: { in: ['awaiting_review', 'reviewing_code', 'running'] },
       archivedAt: null,
       branchName: { not: null },
-      repository: { autoReviewPr: true, connection: { disconnectedAt: null } },
+      repository: { connection: { disconnectedAt: null } },
     },
-    select: { id: true, updatedAt: true },
+    select: {
+      id: true,
+      status: true,
+      updatedAt: true,
+      repository: { select: { autoReviewPr: true } },
+    },
   });
   let recovered = 0;
   for (const task of tasks) {
+    // Review recovery is opt-in per repo; run recovery is not — a dead run
+    // job must always be retaken regardless of the review toggle.
+    if (task.status !== 'running' && task.repository?.autoReviewPr === false) continue;
     if (!(await isReviewStuck(task.id, task.updatedAt))) continue;
-    await logEvent(task.id, REVIEW_RECOVERY_LOG);
-    await enqueueReviewTask(task.id);
+    if (task.status === 'running') {
+      await logEvent(task.id, RUN_RECOVERY_LOG);
+      await enqueueRunTask(task.id);
+    } else {
+      await logEvent(task.id, REVIEW_RECOVERY_LOG);
+      await enqueueReviewTask(task.id);
+    }
     recovered += 1;
   }
   if (recovered > 0) {
-    logger.info({ recovered }, 'pr-state-sync: re-enqueued stuck reviews');
+    logger.info({ recovered }, 'pr-state-sync: re-enqueued stuck tasks');
   }
 }
