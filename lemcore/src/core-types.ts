@@ -25,6 +25,12 @@ export interface CoreStep {
   childResult?: SubagentResult;
 }
 
+/** Cumulative token counters rolled up across child runs (subagents). */
+export interface CoreTokenUsage {
+  prompt: number;
+  completion: number;
+}
+
 export interface CoreToolResult {
   tool: string;
   title: string;
@@ -78,6 +84,9 @@ export interface CoreChatRequest {
   temperature: number;
   onRetry?: (info: { attempt: number; delayMs: number }) => void;
 }
+
+/** Transport-agnostic LLM client (one call per loop turn). */
+export type CoreLlmClient = (request: CoreChatRequest) => Promise<CoreChatResponse>;
 
 /** Model wiring, platform-agnostic (values already resolved by the host). */
 export interface CoreModelConfig {

@@ -5,6 +5,7 @@
 // side effect goes through one of these interfaces.
 
 import type {
+  CoreChatMessage,
   CoreChatRequest,
   CoreChatResponse,
   CoreStep,
@@ -71,3 +72,39 @@ export interface SpawnSubagentRequest {
 /** Backend host port for the depth-1 subagent run (tool stays out of the
  * standalone CLI). */
 export type SubagentRunner = (req: SpawnSubagentRequest) => Promise<string>;
+
+/** Tool-call the host wants the loop to pause on for a human decision. */
+export interface ToolApprovalRequest {
+  stepId: string;
+  tool: string;
+  title: string;
+  args: Record<string, unknown>;
+}
+
+/** Adapter bundle consumed by runCoreLoop (core-loop.ts). Every host side
+ * effect — step streaming, steering, approvals, transcript persistence —
+ * goes through this surface so the loop stays platform-agnostic. */
+export interface CoreLoopAdapters {
+  /** Step-event sink (backend: publishTaskEvent; CLI: stderr). */
+  emitStep(step: CoreStep): Promise<void>;
+  /** Mid-run steering notes queued by the host (backend: steer queue). */
+  pollSteer(): Promise<string[]>;
+  /** Append a tool result to the transcript (host owns message storage). */
+  appendToolMessage(message: CoreChatMessage): void;
+  /** Approval gate for mutating tools; must return true when approvals are
+   * disabled (CLI default). */
+  approveToolCall(req: ToolApprovalRequest): Promise<boolean>;
+  /** Optional transcript persistence after each turn. */
+  saveTranscript?(messages: CoreChatMessage[]): void;
+  /** Optional plugin tool discovery (workdir .lemniscate/tools/*.tool.mjs). */
+  pluginTools?(): Promise<ToolDefinition[]>;
+  /** Optional MCP session for extra tools (see loop-mcp.ts). */
+  mcp?: McpAdapter;
+}
+
+/** MCP bridge the loop uses to offer/call MCP-provided tools. */
+export interface McpAdapter {
+  tools(): ToolDefinition[];
+  callTool(fullName: string, args: Record<string, unknown>): Promise<string>;
+  cleanup(): Promise<void>;
+}
