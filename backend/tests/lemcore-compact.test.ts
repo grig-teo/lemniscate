@@ -23,6 +23,18 @@ describe('estimateMessageTokens / shouldCompactTranscript', () => {
     expect(shouldCompactTranscript(messages, 1000)).toBe(false);
     expect(shouldCompactTranscript(messages, null)).toBe(false);
   });
+
+  it('compacts at the absolute cap even with a huge configured context window', () => {
+    // 200k chars ≈ 50k estimated tokens — under 80% of a 1M window but over
+    // the 40k cap. Configs advertising a 1M window must not disable
+    // compaction (the 11.5M-token runaway task grew to ~110k tokens/turn).
+    const messages: LemcoreMessage[] = [
+      { role: 'system', content: 's' },
+      { role: 'user', content: 'x'.repeat(200_000) },
+    ];
+    expect(shouldCompactTranscript(messages, 1_000_000)).toBe(true);
+    expect(shouldCompactTranscript(messages, null)).toBe(true);
+  });
 });
 
 describe('compactTranscript', () => {

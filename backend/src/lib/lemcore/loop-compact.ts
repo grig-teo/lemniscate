@@ -2,6 +2,15 @@ import type { LemcoreMessage } from './loop-types.js';
 
 /** Fraction of contextWindow at which the transcript is compacted. */
 export const COMPACT_THRESHOLD = 0.8;
+/**
+ * Absolute transcript size at which compaction fires regardless of the
+ * configured context window. Configs that advertise a huge window (e.g.
+ * 1M tokens) would otherwise never compact: the transcript grew past 110k
+ * tokens per turn on a real task and burned 11.5M tokens across its runs.
+ * 40k keeps per-turn prompt cost bounded while leaving plenty of working
+ * context.
+ */
+export const COMPACT_TOKEN_CAP = 40_000;
 /** Number of most recent non-system messages kept verbatim. */
 export const COMPACT_KEEP_RECENT = 6;
 const COMPACT_PREVIEW_CHARS = 500;
@@ -15,8 +24,10 @@ export function shouldCompactTranscript(
   messages: LemcoreMessage[],
   contextWindow: number | null | undefined,
 ): boolean {
+  const estimated = estimateMessageTokens(messages);
+  if (estimated >= COMPACT_TOKEN_CAP) return true;
   if (contextWindow == null || contextWindow <= 0) return false;
-  return estimateMessageTokens(messages) >= contextWindow * COMPACT_THRESHOLD;
+  return estimated >= contextWindow * COMPACT_THRESHOLD;
 }
 
 /** Collapse older tool/assistant payloads; keep system + recent turns full. */
