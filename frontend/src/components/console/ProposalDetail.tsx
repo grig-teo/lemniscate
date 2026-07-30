@@ -25,6 +25,7 @@ import { useSkills, useImproveTask, useStartTask, useClosePrTask, useTask, type 
 import { useLibraryAttachments } from '@/lib/library-attachments';
 import { IMAGE_ACCEPT, MAX_IMAGES } from '@/lib/prompt-composer';
 import { LibraryAttachments } from '@/components/library/LibraryAttachments';
+import { EstimatedTimeBadge } from '@/components/EstimatedTimeBadge';
 import { PriorityBadge } from '@/components/PriorityBadge';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -88,6 +89,9 @@ function TaskEditorInner({
   const [title, setTitle] = React.useState(task.title);
   const [prompt, setPrompt] = React.useState(task.prompt ?? '');
   const [preview, setPreview] = React.useState(true);
+  // LLM time estimate from the last Improve click; not persisted — a plain
+  // prompt edit makes it stale, so it is cleared until the next Improve.
+  const [estimatedTime, setEstimatedTime] = React.useState<string | null>(null);
   const [images, setImages] = React.useState<TaskImage[]>([]);
   const textareaRef = useAutoResizeTextarea(prompt, 14);
   const promptResize = useResizablePrompt();
@@ -138,8 +142,17 @@ function TaskEditorInner({
   const improve = () => {
     improveTask.mutate(
       { id: task.id, body: { title: title.trim() || undefined, prompt: prompt.trim() } },
-      { onSuccess: (data) => setPrompt(data.prompt) },
+      {
+        onSuccess: (data) => {
+          setPrompt(data.prompt);
+          setEstimatedTime(data.estimatedTime);
+        },
+      },
     );
+  };
+  const editPrompt = (value: string) => {
+    setPrompt(value);
+    setEstimatedTime(null); // hand-edits invalidate the last estimate
   };
   const closePr = () => {
     if (!window.confirm('Close the pull request and delete the branch? This cannot be undone.')) {
@@ -157,7 +170,7 @@ function TaskEditorInner({
         aria-label="Task title"
         className="shrink-0 border-0 px-0 text-base font-medium shadow-none focus-visible:ring-0"
       />
-      {(task.priority || task.effort) && (
+      {(task.priority || task.effort || estimatedTime) && (
         <div className="flex shrink-0 items-center gap-1.5">
           <PriorityBadge priority={task.priority} className="px-1.5 py-0 text-[10px]" />
           {task.effort && (
@@ -168,6 +181,7 @@ function TaskEditorInner({
               {task.effort} effort
             </Badge>
           )}
+          <EstimatedTimeBadge estimatedTime={estimatedTime} />
         </div>
       )}
       {actionError && <p className="shrink-0 text-xs text-destructive">{actionError.message}</p>}
@@ -196,7 +210,7 @@ function TaskEditorInner({
           <Textarea
             ref={textareaRef}
             value={prompt}
-            onChange={(event) => setPrompt(event.target.value)}
+            onChange={(event) => editPrompt(event.target.value)}
             placeholder="Prompt…"
             aria-label="Task prompt"
             className="min-h-0 flex-1 resize-none overflow-y-auto border-0 shadow-none focus-visible:ring-0"

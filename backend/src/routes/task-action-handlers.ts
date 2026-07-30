@@ -7,7 +7,7 @@ import { prisma } from '../lib/prisma.js';
 import { attachmentsData } from '../lib/task-attachments.js';
 import { publishTaskEvent } from '../lib/task-events.js';
 import { findLlmConfig } from '../lib/agent-runtime.js';
-import { requestImprovedPrompt } from '../lib/task-improve.js';
+import { requestEstimatedTime, requestImprovedPrompt } from '../lib/task-improve.js';
 import { authenticatedUserId } from '../plugins/auth.js';
 import { errorMessage } from '../lib/utils.js';
 import { parseOrReply } from './helpers.js';
@@ -144,7 +144,9 @@ export async function patchTask(request: FastifyRequest, reply: FastifyReply) {
 
 // Improve a pending task's description with the LLM (same structured shape
 // as generated proposals). Same eligibility as start/PATCH; the improved
-// text is returned to the editor without touching the stored task.
+// text is returned to the editor without touching the stored task. The
+// response also carries a time estimate for the improved document, generated
+// on the same connected LLM (best-effort — null when unusable).
 export async function improveTask(request: FastifyRequest, reply: FastifyReply) {
   const userId = authenticatedUserId(request);
   const params = parseOrReply(idParamsSchema, request.params, reply, 'Invalid task id');
@@ -179,7 +181,11 @@ export async function improveTask(request: FastifyRequest, reply: FastifyReply) 
   }
   try {
     const prompt = await requestImprovedPrompt(llmConfig, body);
-    return { prompt };
+    const estimatedTime = await requestEstimatedTime(llmConfig, {
+      title: body.title,
+      prompt,
+    });
+    return { prompt, estimatedTime };
   } catch (err) {
     request.log.warn({ err }, 'task prompt improvement failed');
     return reply.code(502).send({ error: 'Prompt improvement failed — try again' });

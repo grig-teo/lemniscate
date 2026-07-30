@@ -94,12 +94,13 @@ export function useStartTask() {
 }
 
 export type ImproveTaskBody = { title?: string; prompt: string };
+export type ImproveTaskResult = { prompt: string; estimatedTime: string | null };
 
 /** POST /api/tasks/:id/improve — LLM-improved task description (not persisted). */
 export function useImproveTask() {
   return useMutation({
     mutationFn: ({ id, body }: { id: string; body: ImproveTaskBody }) =>
-      api.post<{ prompt: string }>(`/api/tasks/${id}/improve`, body),
+      api.post<ImproveTaskResult>(`/api/tasks/${id}/improve`, body),
     meta: SUPPRESS_ERROR_TOAST_META, // ProposalDetail renders the error inline
   });
 }
