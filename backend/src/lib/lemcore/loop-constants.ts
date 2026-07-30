@@ -1,5 +1,11 @@
 export const MAX_TURNS = 60;
 export const MAX_TOOL_FAILURES = 2;
+// Consecutive empty assistant replies (no content, no tool calls) tolerated
+// before the run aborts. Some providers (e.g. z.ai GLM) intermittently return
+// finish_reason "stop" with an empty message once the reasoning budget is
+// consumed; treating that as the final answer silently ended runs as 'done'
+// with zero changes.
+export const MAX_EMPTY_ASSISTANT_REPLIES = 3;
 /** Basename only — never store under the git clone (see transcriptPath). */
 export const TRANSCRIPT_FILE = 'lemcore-transcript.json';
 export const REVIEW_FILENAME = '.lemniscate-review.json';
@@ -35,5 +41,7 @@ export function lemcoreSystemPrompt(): string {
     '- graph_search(query): search symbols/files in the codebase graph',
     '',
     'Use tools in a structured way. Prefer graph tools, then selective reads, then writes. After making changes, verify them.',
+    '',
+    'When the task is complete, finish with a concise plain-text summary of the changes (no tool calls). Never reply with an empty message.',
   ].join('\n');
 }

@@ -9,6 +9,7 @@ import { chatCompletion } from '../llm-dispatch.js';
 import type { ChatMessage } from '../llm-client.js';
 import {
   MAX_TURNS,
+  MAX_EMPTY_ASSISTANT_REPLIES,
   TRANSCRIPT_FILE,
   REVIEW_FILENAME,
   lemcoreSystemPrompt,
@@ -26,6 +27,7 @@ import {
 export {
   MAX_TURNS,
   MAX_TOOL_FAILURES,
+  MAX_EMPTY_ASSISTANT_REPLIES,
   TRANSCRIPT_FILE,
   REVIEW_FILENAME,
   lemcoreSystemPrompt,
@@ -38,6 +40,11 @@ let stepCounter = 0;
 function nextStepId(): string {
   return `step-${++stepCounter}`;
 }
+
+const EMPTY_REPLY_NUDGE =
+  'Your previous reply was empty (no content and no tool calls). Continue the task: ' +
+  'call the next tool, or — if the implementation is complete — reply with a concise ' +
+  'summary of the changes as plain text.';
 
 async function publishStepEvent(taskId: string, step: LemcoreStep): Promise<void> {
   await publishTaskEvent(taskId, 'agent_step', {
@@ -147,6 +154,7 @@ export async function runLemcoreLoop(opts: LemcoreRunOptions): Promise<string> {
   }
 
   let consecutiveToolFailures = 0;
+  let consecutiveEmptyReplies = 0;
   const startTime = Date.now();
   const wallClockCapMs = config.AGENT_HERMES_TIMEOUT_MINUTES * 60_000;
   // Stall watchdog for a single LLM turn (LEMCORE_STALLED_TURN_TIMEOUT_MINUTES
@@ -248,11 +256,38 @@ export async function runLemcoreLoop(opts: LemcoreRunOptions): Promise<string> {
       saveTranscript(workdir, messages);
       return result.content;
     }
-    if (!hasToolCalls) {
+    // A non-empty text reply without tool calls is the agent's final answer.
+    if (!hasToolCalls && result.content.trim().length > 0) {
       saveTranscript(workdir, messages);
       return result.content;
     }
+    // An empty reply is never a legitimate final answer — some providers
+    // (e.g. z.ai GLM) return finish_reason "stop" with an empty message when
+    // the reasoning budget is consumed. Nudge and continue; abort the run
+    // (visible failure) instead of silently ending as 'done' with no changes.
+    if (!hasToolCalls) {
+      consecutiveEmptyReplies += 1;
+      if (consecutiveEmptyReplies >= MAX_EMPTY_ASSISTANT_REPLIES) {
+        throw new Error(
+          `lemcore agent stopped: the LLM returned ${consecutiveEmptyReplies} ` +
+            'consecutive empty replies (no content, no tool calls)',
+        );
+      }
+      await publishStepEvent(taskId, {
+        stepId: nextStepId(),
+        status: 'done',
+        kind: 'assistant',
+        title: 'Empty LLM reply — nudging the model',
+        detail:
+          `Provider returned no content and no tool calls ` +
+          `(${consecutiveEmptyReplies}/${MAX_EMPTY_ASSISTANT_REPLIES}); asking the model to continue.`,
+      });
+      messages.push({ role: 'user', content: EMPTY_REPLY_NUDGE });
+      saveTranscript(workdir, messages);
+      continue;
+    }
 
+    consecutiveEmptyReplies = 0;
     consecutiveToolFailures = await runToolCalls({
       taskId,
       workdir,
