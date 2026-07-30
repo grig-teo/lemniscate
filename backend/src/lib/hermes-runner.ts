@@ -33,6 +33,12 @@ export interface HermesTaskOptions {
   taskId?: string;
   secrets: string[];
   timeoutMs: number;
+  /**
+   * Kill the hermes process when it stays silent for this many ms — a stalled
+   * LLM provider leaves the CLI hung without output, so silence is the stall
+   * signal. Disabled when 0/undefined; clamped to at least timeoutMs.
+   */
+  stallTimeoutMs?: number;
   /** Cancel-poll interval; defaults to CANCEL_POLL_MS. */
   pollMs?: number;
 }
@@ -127,13 +133,17 @@ type OutputTail = ReturnType<typeof makeOutputTail>;
 
 // Creates a readline interface over the stream, pushing each processed line
 // to the output tail and (when a taskId is set) to the LineBatcher for
-// coalesced DB writes. Returns the batcher so the caller can flush on close.
+// coalesced DB writes. Every raw line pings onActivity so the stall watchdog
+// knows the agent is alive. Returns the batcher so the caller can flush on
+// close.
 function streamLines(
   stream: NodeJS.ReadableStream,
   opts: HermesTaskOptions,
   tail: OutputTail,
+  onActivity: () => void,
 ): LineBatcher | undefined {
   const rl = readline.createInterface({ input: stream, terminal: false });
+  rl.on('line', onActivity);
   if (!opts.taskId) {
     rl.on('line', (raw) => tail.push(redactSecrets(stripAnsi(raw), opts.secrets)));
     return undefined;
@@ -161,6 +171,41 @@ function timeoutError(timeoutMs: number): Error {
   return new Error(`hermes agent timed out after ${Math.round(timeoutMs / 1000)}s`);
 }
 
+function stallError(stallMs: number): Error {
+  return new Error(
+    `hermes agent stalled: no output for ${Math.round(stallMs / 1000)}s ` +
+      `(likely a hung LLM provider); the process was killed`,
+  );
+}
+
+// Effective stall window: undefined/0 disables the watchdog; a configured
+// window shorter than the hard timeout is clamped up so the hard timeout
+// always fires first and the watchdog only catches true stalls.
+function stallWindowMs(opts: HermesTaskOptions): number | null {
+  if (!opts.stallTimeoutMs) return null;
+  return Math.max(opts.stallTimeoutMs, opts.timeoutMs);
+}
+
+// Stall watchdog: the hard timeout caps total runtime, but a hung LLM
+// provider leaves the CLI alive and silent — pinning a worker slot until the
+// hard limit hits. Silence beyond the window fails the run fast. The timer
+// is cleared before any re-arm so activity can never stack parallel timers.
+function makeStallWatchdog(
+  child: ChildProcess,
+  opts: HermesTaskOptions,
+  onStall: (stallMs: number) => void,
+): { ping: () => void; stop: () => void } {
+  const stallMs = stallWindowMs(opts);
+  if (stallMs == null) return { ping: () => {}, stop: () => {} };
+  let timer: NodeJS.Timeout | null = null;
+  const ping = () => {
+    if (timer) clearTimeout(timer);
+    timer = setTimeout(() => onStall(stallMs), stallMs);
+  };
+  ping();
+  return { ping, stop: () => { if (timer) clearTimeout(timer); } };
+}
+
 function waitForHermes(child: ChildProcess, opts: HermesTaskOptions): Promise<void> {
   return new Promise((resolve, reject) => {
     const tail = makeOutputTail(OUTPUT_TAIL_CHARS);
@@ -177,10 +222,17 @@ function waitForHermes(child: ChildProcess, opts: HermesTaskOptions): Promise<vo
     const batchers: LineBatcher[] = [];
     const settle = (fn: () => void) => {
       clearTimeout(timer);
+      watchdog.stop();
       if (cancelPoll) clearInterval(cancelPoll);
       batchers.forEach((b) => b.close());
       fn();
     };
+    const watchdog = makeStallWatchdog(child, opts, (stallMs) => {
+      settle(() => {
+        child.kill('SIGKILL');
+        reject(stallError(stallMs));
+      });
+    });
     const timer = setTimeout(() => {
       settle(() => {
         child.kill('SIGKILL');
@@ -188,11 +240,11 @@ function waitForHermes(child: ChildProcess, opts: HermesTaskOptions): Promise<vo
       });
     }, opts.timeoutMs);
     if (child.stdout) {
-      const b = streamLines(child.stdout, opts, tail);
+      const b = streamLines(child.stdout, opts, tail, watchdog.ping);
       if (b) batchers.push(b);
     }
     if (child.stderr) {
-      const b = streamLines(child.stderr, opts, tail);
+      const b = streamLines(child.stderr, opts, tail, watchdog.ping);
       if (b) batchers.push(b);
     }
     child.on('error', (err) => {
