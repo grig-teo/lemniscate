@@ -9,6 +9,8 @@ import {
   USAGE_CONFIG_SELECT,
   type UsageConfigInfo,
 } from '../lib/usage.js';
+import { requestTaskTitle, fallbackTaskTitle } from '../lib/task-title.js';
+import { findLlmConfig } from '../lib/agent-runtime.js';
 import { authenticatedUserId } from '../plugins/auth.js';
 import { parseOrReply } from './helpers.js';
 import {

@@ -1,0 +1,22 @@
+{
+  "verdict": "changes_requested",
+  "summary": "This PR does not implement the task. The diff adds a backend title-generation helper module (`task-title.ts`), adds three `@dnd-kit/*` entries to the frontend's package files, and adds two import lines to `task-crud-handlers.ts` — and that is the entirety of the change. None of the helper code is actually wired into `createTask()` (the title is still `data.prompt.slice(0, 80)` at line 139, exactly as before), the imports of `requestTaskTitle`/`fallbackTaskTitle`/`findLlmConfig` are completely unused, and the entire frontend — the icon button, the four-column Kanban board, TaskColumn/TaskCard components, the cross-column drag-and-drop, the status-transition dispatcher, the `taskBoard` store slice — does not exist at all (no `frontend/src` files changed; `@dnd-kit` is never imported anywhere in `frontend/src`). The promised unit tests (`tests/task-title.test.ts`) referenced by the new module's own header comment are also missing. The task is, in effect, unimplemented.",
+  "issues": [
+    {
+      "path": "frontend/src",
+      "comment": "The entire Task Manager UI is missing: no icon button on the repository-name header line, no `TaskBoard` component, no four columns (Prompts/Proposals, Processes, Code Review (LLM), Done), no `TaskCard` with title/EffortBadge/category chip, no `@dnd-kit` drag-and-drop wiring, and no `taskBoard` store slice. `frontend/src` has zero changes despite `@dnd-kit/*` being added to package.json — these dependencies are never imported or used."
+    },
+    {
+      "path": "backend/src/routes/task-crud-handlers.ts",
+      "comment": "`createTask()` still sets `title: data.prompt.slice(0, 80)` (line 139) — the naive truncation the task explicitly says to replace. The imported `requestTaskTitle`/`fallbackTaskTitle`/`findLlmConfig` are never called, so they are dead imports. Either wire the LLM title generation into createTask (with the documented fallback) or remove the imports."
+    },
+    {
+      "path": "backend/src/lib/task-title.ts",
+      "comment": "The module header promises tests in `tests/task-title.test.ts` ('The pure builders/sanitizers are unit-tested in tests/task-title.test.ts'), but that test file does not exist. AGENTS.md section 7 requires a locking test for the pure helpers (`fallbackTaskTitle`, `taskTitleSystemPrompt`, `sanitizeTaskTitle`) before this is mergeable."
+    },
+    {
+      "path": "",
+      "comment": "The status data model work (unified status enum spanning prompt/proposal → in_process → llm_review → done, the status-transition dispatcher mapping columns to startImplementation/startCodeReview/mergeTask/returnToBacklog with guards, and the PATCH /tasks/:id status persistence) is entirely absent. None of the workflow side-effects described in the task are implemented."
+    }
+  ]
+}
