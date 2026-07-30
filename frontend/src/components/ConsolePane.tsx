@@ -7,6 +7,7 @@ import { useTask, useTaskRunTargets } from '@/lib/hooks';
 import { useWorkspaceSelection } from '@/lib/selection';
 
 import { ConsoleHeader } from '@/components/console/ConsoleHeader';
+import { ChangesDialog } from '@/components/console/ChangesDialog';
 import { ConsoleFooterStatusBar } from '@/components/console/ConsoleFooterStatusBar';
 import { ConsoleLog } from '@/components/console/ConsoleLog';
 import { LemcoreRunView } from '@/components/console/LemcoreRunView';
@@ -97,6 +98,7 @@ export function ConsolePane() {
   // to done (and a target has an online device); also opened manually from the
   // console header button for done / awaiting_review tasks.
   const [runDialogOpen, setRunDialogOpen] = React.useState(false);
+  const [changesDialogOpen, setChangesDialogOpen] = React.useState(false);
   const [autoOpenPending, setAutoOpenPending] = React.useState(false);
   const prevLiveStatusRef = React.useRef<string | null>(liveStatus);
   const autoOpenedForRef = React.useRef<string | null>(null);
@@ -146,6 +148,8 @@ export function ConsolePane() {
         task={selectedTask}
         status={status}
         usage={usage}
+        changes={consoleState.changes}
+        onOpenChanges={() => setChangesDialogOpen(true)}
         onRunOnDevice={() => setRunDialogOpen(true)}
       />
       <ErrorBanner errorCode={errorCode} />
@@ -187,6 +191,12 @@ export function ConsolePane() {
         </>
       )}
       <RunTaskDialog open={runDialogOpen} onOpenChange={setRunDialogOpen} task={selectedTask} />
+      <ChangesDialog
+        open={changesDialogOpen}
+        onOpenChange={setChangesDialogOpen}
+        branchName={selectedTask.branchName ?? null}
+        summary={consoleState.changes}
+      />
       <TaskStepsRail status={status} />
     </section>
   );

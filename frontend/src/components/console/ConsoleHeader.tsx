@@ -2,6 +2,7 @@ import { ExternalLink, GitBranch, Loader2, Play, Smartphone, Square, X } from 'l
 
 import { useCancelTask, useStartTask } from '@/lib/hooks';
 import { useWorkspaceSelection, type SelectedTask } from '@/lib/selection';
+import type { ChangeSummary } from '@/lib/session-changes';
 import { isSafeHttpUrl } from '@/lib/url';
 import { StatusBadge } from '@/components/StatusBadge';
 import { TokensBadge } from '@/components/TokensBadge';
@@ -17,17 +18,49 @@ export interface ConsoleUsage {
   costUsd?: number | null;
 }
 
+/** Session-changes count next to the branch name; opens the changes dialog. */
+export function ChangesBadge({
+  summary,
+  onOpen,
+}: {
+  summary: ChangeSummary;
+  onOpen: () => void;
+}) {
+  if (summary.count === 0) return null;
+  return (
+    <button
+      type="button"
+      onClick={onOpen}
+      title="View changes"
+      aria-label={`View ${summary.count} ${summary.count === 1 ? 'change' : 'changes'}`}
+      className="shrink-0 rounded px-1 py-0.5 font-mono text-[11px] hover:bg-muted"
+    >
+      <span className="text-muted-foreground">
+        {summary.count} {summary.count === 1 ? 'change' : 'changes'}
+      </span>{' '}
+      <span className="text-green-600 dark:text-green-400">+{summary.additions}</span>{' '}
+      <span className="text-red-600 dark:text-red-400">−{summary.deletions}</span>
+    </button>
+  );
+}
+
 /** Console header: task title, live status badge, branch and PR link. */
 export function ConsoleHeader({
   task,
   status,
   usage,
+  changes,
+  onOpenChanges,
   onRunOnDevice,
 }: {
   task: SelectedTask;
   status: string;
   /** Token usage of the task; the badge warns at ≥80% of the budget while running. */
   usage?: ConsoleUsage;
+  /** Session file changes; the badge renders only when at least one exists. */
+  changes?: ChangeSummary;
+  /** Opens the GitHub-style changes dialog (branch name and count both open it). */
+  onOpenChanges?: () => void;
   /** Opens the run-on-device dialog; rendered only for finished tasks. */
   onRunOnDevice?: () => void;
 }) {
@@ -49,11 +82,17 @@ export function ConsoleHeader({
         />
       )}
       {task.branchName && (
-        <span className="flex items-center gap-1 text-xs text-muted-foreground">
+        <button
+          type="button"
+          onClick={onOpenChanges}
+          title="View session changes"
+          className="flex items-center gap-1 rounded px-1 py-0.5 text-xs text-muted-foreground hover:bg-muted hover:text-foreground"
+        >
           <GitBranch className="h-3.5 w-3.5" aria-hidden />
           <span className="max-w-40 truncate font-mono">{task.branchName}</span>
-        </span>
+        </button>
       )}
+      {changes && onOpenChanges && <ChangesBadge summary={changes} onOpen={onOpenChanges} />}
       {task.prUrl && isSafeHttpUrl(task.prUrl) && (
         <a
           href={task.prUrl}
