@@ -2,6 +2,7 @@ import { withGitlabRefreshRetry } from '../token-refresh.js';
 import { giteeApi } from './gitee.js';
 import { githubApi } from './github.js';
 import { gitlabApi } from './gitlab.js';
+import { gitlemApi } from './gitlem.js';
 import { gitverseApi } from './gitverse.js';
 import type {
   CreateFileInput,
@@ -24,6 +25,7 @@ const providerApis: Record<ProviderName, ProviderApi> = {
   gitlab: gitlabApi,
   gitee: giteeApi,
   gitverse: gitverseApi,
+  gitlem: gitlemApi,
 };
 
 // Validates a token by fetching the provider profile. Used when connecting

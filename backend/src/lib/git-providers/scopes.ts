@@ -23,6 +23,7 @@ const PUSH_ACCESS_HINTS: Record<ProviderName, string> = {
   gitlab: `the 'api' scope and a Developer (or higher) role on the project or its group`,
   gitverse: `a token with write permission on the repository`,
   gitee: `a token with the 'projects' scope and write access to the repository`,
+  gitlem: `a gitlem account that owns the repository`,
 };
 
 export function noPushAccessError(

@@ -2,8 +2,8 @@ import { createHash, randomBytes, randomInt } from 'node:crypto';
 import { config } from '../config.js';
 import { encrypt } from './crypto.js';
 import { DeliveryError, sendEmail } from './notification-email.js';
-import { notify } from './notifications.js';
-import { hashPassword } from './passwords.js';
+import { NOTIFICATION_KINDS, notify } from './notifications.js';
+import { hashPassword, verifyPassword } from './passwords.js';
 import { prisma } from './prisma.js';
 
 // gitlem account lifecycle: registration codes, account creation, and the
@@ -133,6 +133,40 @@ export async function findGitlemAccountForUser(userId: string) {
   return prisma.gitlemUser.findUnique({ where: { userId } });
 }
 
+/** Email+password sign-in against the gitlem account table. */
+export async function authenticateGitlem(
+  email: string,
+  password: string,
+): Promise<{ id: string; username: string; userId: string | null } | null> {
+  const account = await prisma.gitlemUser.findUnique({ where: { email } });
+  if (!account) return null;
+  if (!verifyPassword(password, account.passwordHash)) return null;
+  return { id: account.id, username: account.username, userId: account.userId };
+}
+
+/**
+ * Make sure the user has an enabled 'email' notification channel pointing
+ * at the given address, so gitlem emails also flow through the standard
+ * delivery pipeline (and show up in notification settings).
+ */
+export async function ensureEmailChannel(userId: string, email: string): Promise<void> {
+  const existing = await prisma.notificationSetting.findFirst({
+    where: { userId, channel: 'email', target: email },
+  });
+  if (existing) {
+    if (!existing.enabled) {
+      await prisma.notificationSetting.update({
+        where: { id: existing.id },
+        data: { enabled: true },
+      });
+    }
+    return;
+  }
+  await prisma.notificationSetting.create({
+    data: { userId, channel: 'email', target: email, events: [...NOTIFICATION_KINDS] },
+  });
+}
+
 export function generateGitlemPassword(): string {
   return randomBytes(9).toString('base64url');
 }
@@ -164,6 +198,16 @@ export async function ensureGitlemAccountForUser(
   const existing = await findGitlemAccountForUser(userId);
   if (existing) return { created: false, username: existing.username, emailed: false };
 
+  // The email may already own a standalone gitlem account (registered via
+  // the emailed code before ever logging into lemniscate) — link it instead
+  // of failing on the unique email constraint.
+  const byEmail = await prisma.gitlemUser.findUnique({ where: { email } });
+  if (byEmail) {
+    await linkGitlemConnection(userId, byEmail.id, byEmail.username, byEmail.apiToken);
+    return { created: false, username: byEmail.username, emailed: false };
+  }
+
+  await ensureEmailChannel(userId, email);
   const password = generateGitlemPassword();
   const account = await createGitlemAccount(email, password);
   await linkGitlemConnection(userId, account.gitlemUserId, account.username, account.apiToken);
