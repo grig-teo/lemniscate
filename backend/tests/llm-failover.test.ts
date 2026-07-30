@@ -158,6 +158,34 @@ describe('llmCall failover', () => {
     expect(secondParams.apiKey).toBe('dec:enc-B');
   });
 
+  it('treats an empty completion as a broken reply and fails over', async () => {
+    const cfgA = stubConfig('A', 'Primary', 'model-a', true);
+    const cfgB = stubConfig('B', 'Backup', 'model-b');
+    mocks.findMany.mockResolvedValue([cfgB]);
+    mocks.chatCompletions
+      // z.ai GLM quirk: finish_reason 'stop' with an empty message after the
+      // reasoning budget is consumed — must fail over, not return blank.
+      .mockResolvedValueOnce({ ...OK_RESULT, content: '   ' })
+      .mockResolvedValueOnce(OK_RESULT);
+    const rt = stubRuntime(cfgA, { taskId: 'task-1' });
+
+    const content = await llmCall(rt, messages);
+
+    expect(content).toBe('ok');
+    expect(rt.cfg.id).toBe('B');
+    expect(mocks.chatCompletions).toHaveBeenCalledTimes(2);
+  });
+
+  it('rethrows the empty-reply error when no failover config remains', async () => {
+    const cfgA = stubConfig('A', 'Primary', 'model-a', true);
+    mocks.findMany.mockResolvedValue([]);
+    mocks.chatCompletions.mockResolvedValue({ ...OK_RESULT, content: '' });
+    const rt = stubRuntime(cfgA, { taskId: 'task-1' });
+
+    await expect(llmCall(rt, messages)).rejects.toThrow(/empty reply/);
+    expect(mocks.chatCompletions).toHaveBeenCalledTimes(1);
+  });
+
   it('logs the failover switch to the task console', async () => {
     const cfgA = stubConfig('A', 'Primary', 'model-a');
     const cfgB = stubConfig('B', 'Backup', 'model-b');
