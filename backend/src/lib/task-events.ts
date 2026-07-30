@@ -203,4 +203,17 @@ export async function setTaskStatus(
     status,
     ...(extra.errorCode ? { errorCode: extra.errorCode } : {}),
   });
+
+  // Manual follow-up chaining: when a task reaches 'done', auto-queue its
+  // declared successor (Task.nextTaskId). Loaded dynamically to avoid a
+  // static import cycle (task-next → agent-git → task-events); best-effort
+  // and never blocks the status transition.
+  if (status === 'done') {
+    try {
+      const { triggerNextTask } = await import('./task-next.js');
+      await triggerNextTask(taskId);
+    } catch (err) {
+      logger.error({ taskId, err }, 'failed to trigger follow-up task');
+    }
+  }
 }

@@ -15,6 +15,7 @@ import {
 import { triggerMerge, triggerReview } from './task-review-handlers.js';
 import { getTaskRunTargets } from './task-run-targets.js';
 import { getTaskEvents } from './task-events-stream.js';
+import { setFollowsTask } from './task-follows-handlers.js';
 
 // Tasks API + SSE event stream. Registered under prefix `/api` (paths below
 // include the `/tasks` segment, matching routes/repositories.ts).
@@ -45,6 +46,9 @@ const tasksRoutes: FastifyPluginAsync = async (app) => {
   app.post('/tasks/:id/merge', triggerMerge);
   app.post('/tasks/:id/archive', archiveTask);
   app.post('/tasks/:id/unarchive', unarchiveTask);
+  // Manual follow-up link: which task auto-queues when this one reaches 'done'.
+  // An explicit null in the body clears the link (DELETE semantics via POST).
+  app.post('/tasks/:id/follows', setFollowsTask);
   app.get('/tasks/:id/events', getTaskEvents);
 };
 
