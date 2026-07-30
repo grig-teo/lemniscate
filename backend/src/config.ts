@@ -174,6 +174,17 @@ const envSchema = z.object({
   APPS_CONTAINER_MEMORY: z.string().min(1).default('512m'),
   APPS_CONTAINER_CPUS: z.string().min(1).default('1'),
 
+  // --- Gitlem (internal minimal git host) ---
+  // Root directory for on-disk bare git repositories managed by the internal
+  // "gitlem" host. Defaults to a sibling of the agent workdir. Unset =
+  // AGENT_WORKDIR/../gitlem-repos.
+  GITLEM_REPO_ROOT: z.string().min(1).default('/tmp/lemniscate-gitlem-repos'),
+  // Base URL the internal gitlem host is served from, used to build clone
+  // URLs. Defaults to BACKEND_URL so cloning goes through the same origin.
+  GITLEM_BASE_URL: z.string().url().optional(),
+  // Minutes an email-code login token stays valid for gitlem registration.
+  GITLEM_CODE_TTL_MINUTES: z.coerce.number().int().positive().default(15),
+
   // --- Outbound email notifications (phase 2 channel; webhooks need none
   // of this). Unset SMTP_HOST = email channels are recorded as 'skipped'.
   SMTP_HOST: optionalString,

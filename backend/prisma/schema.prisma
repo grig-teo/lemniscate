@@ -12,6 +12,7 @@ enum GitProvider {
   gitverse
   gitlab
   gitee
+  gitlem
 }
 
 enum ThinkingLevel {
