@@ -2,6 +2,7 @@ import { prisma } from './prisma.js';
 import { MONITORED_SECRETS } from '../config.js';
 import { dispatchToChannels } from './notification-delivery.js';
 import { failureSecrets } from './notification-secrets.js';
+import { friendlyErrorMessage } from './friendly-error.js';
 import { logger } from './logger.js';
 import { redactSecrets } from './utils.js';
 
@@ -130,7 +131,7 @@ export async function notifyTaskFailure(
   const secrets = await failureSecrets(task.repository.connection);
   await notifyOncePerTask(task.repository.connection.userId, kind, {
     title: `${title}: ${task.title}`,
-    body: `${task.repository.fullName} — ${redactSecrets(message, secrets)}`,
+    body: `${task.repository.fullName} — ${friendlyErrorMessage(redactSecrets(message, secrets))}`,
     taskId,
   });
 }
@@ -199,7 +200,7 @@ export async function notifyJobFailure(entry: JobFailureNotification): Promise<v
     const secrets = await failureSecrets(repository.connection);
     await notify(repository.connection.userId, 'job_failed', {
       title,
-      body: `${repository.fullName} — ${redactSecrets(entry.message, secrets)}`,
+      body: `${repository.fullName} — ${friendlyErrorMessage(redactSecrets(entry.message, secrets))}`,
     });
   } catch (err) {
     logger.error({ jobName: entry.jobName, err }, 'failed to notify job failure');
@@ -261,7 +262,7 @@ export async function notifyProposalGenerationFailure(
     const secrets = await failureSecrets(repository.connection);
     await notify(repository.connection.userId, 'proposal_generation_failed', {
       title,
-      body: `${repository.fullName} — ${redactSecrets(message, secrets)}`,
+      body: `${repository.fullName} — ${friendlyErrorMessage(redactSecrets(message, secrets))}`,
     });
   } catch (err) {
     logger.error({ repositoryId, err }, 'failed to notify proposal generation failure');
