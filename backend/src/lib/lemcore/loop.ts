@@ -15,6 +15,7 @@ import {
   transcriptPath,
 } from './loop-constants.js';
 import type { LemcoreMessage, LemcoreRunOptions, LemcoreStep } from './loop-types.js';
+import { chatWithTurnTimeout, turnTimeoutMs } from './loop-types.js';
 import { getAvailableTools } from './tool-catalog.js';
 import { runToolCalls } from './loop-tool-runner.js';
 import {
@@ -31,6 +32,7 @@ export {
   transcriptPath,
 } from './loop-constants.js';
 export type { LemcoreMessage, LemcoreRunOptions, LemcoreStep } from './loop-types.js';
+export { LemcoreStalledError } from './loop-types.js';
 
 let stepCounter = 0;
 function nextStepId(): string {
@@ -147,6 +149,10 @@ export async function runLemcoreLoop(opts: LemcoreRunOptions): Promise<string> {
   let consecutiveToolFailures = 0;
   const startTime = Date.now();
   const wallClockCapMs = config.AGENT_HERMES_TIMEOUT_MINUTES * 60_000;
+  // Stall watchdog for a single LLM turn (LEMCORE_STALLED_TURN_TIMEOUT_MINUTES
+  // by default): a hung provider aborts the run fast instead of pinning the
+  // worker slot until the wall-clock cap fires.
+  const perTurnTimeoutMs = turnTimeoutMs(opts);
 
   for (let turn = 0; turn < MAX_TURNS; turn++) {
     if (Date.now() - startTime > wallClockCapMs) {
@@ -190,25 +196,27 @@ export async function runLemcoreLoop(opts: LemcoreRunOptions): Promise<string> {
     await publishStepEvent(taskId, assistantStep);
 
     const startedMs = Date.now();
-    const result = await chatCompletion({
-      baseUrl: rt.cfg.baseUrl,
-      apiKey: rt.apiKey,
-      model: rt.cfg.model,
-      apiPattern: rt.cfg.apiPattern,
-      messages: toChatMessages(messages),
-      maxTokens: Math.min(rt.cfg.maxTokens ?? 4096, 4096),
-      temperature: rt.cfg.temperature ?? 0.2,
-      tools: getAvailableTools(),
-      onRetry: (info) => {
-        void publishStepEvent(taskId, {
-          stepId: `${stepId}-retry-${info.attempt}`,
-          status: 'running',
-          kind: 'assistant',
-          title: `Retry ${info.attempt}`,
-          durationMs: info.delayMs,
-        });
-      },
-    });
+    const result = await chatWithTurnTimeout(turn + 1, perTurnTimeoutMs, () =>
+      chatCompletion({
+        baseUrl: rt.cfg.baseUrl,
+        apiKey: rt.apiKey,
+        model: rt.cfg.model,
+        apiPattern: rt.cfg.apiPattern,
+        messages: toChatMessages(messages),
+        maxTokens: Math.min(rt.cfg.maxTokens ?? 4096, 4096),
+        temperature: rt.cfg.temperature ?? 0.2,
+        tools: getAvailableTools(),
+        onRetry: (info) => {
+          void publishStepEvent(taskId, {
+            stepId: `${stepId}-retry-${info.attempt}`,
+            status: 'running',
+            kind: 'assistant',
+            title: `Retry ${info.attempt}`,
+            durationMs: info.delayMs,
+          });
+        },
+      }),
+    );
 
     if (result.usage?.totalTokens) {
       rt.usedTokens += result.usage.totalTokens;

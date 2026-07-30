@@ -90,6 +90,7 @@ async function runCiFixViaHermes(ctx: GateContext): Promise<void> {
       taskId: task.id,
       secrets,
       timeoutMs: config.AGENT_HERMES_TIMEOUT_MINUTES * 60_000,
+      stallTimeoutMs: config.AGENT_HERMES_STALL_TIMEOUT_MINUTES * 60_000,
     });
   }
   if (!(await hasDirtyWorkdir(workdir))) {

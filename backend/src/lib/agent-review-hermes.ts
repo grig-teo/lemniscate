@@ -68,6 +68,7 @@ export async function requestReviewViaHermes(
     taskId: task.id,
     secrets,
     timeoutMs: config.AGENT_HERMES_TIMEOUT_MINUTES * 60_000,
+    stallTimeoutMs: config.AGENT_HERMES_STALL_TIMEOUT_MINUTES * 60_000,
   });
   return readHermesReviewFile(workdir);
 }
@@ -96,6 +97,7 @@ export async function runHermesFixIteration(
     taskId: task.id,
     secrets,
     timeoutMs: config.AGENT_HERMES_TIMEOUT_MINUTES * 60_000,
+    stallTimeoutMs: config.AGENT_HERMES_STALL_TIMEOUT_MINUTES * 60_000,
   });
   if (!(await hasDirtyWorkdir(workdir))) {
     await logEvent(task.id, 'no fix changes produced; re-reviewing the existing branch');

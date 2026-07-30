@@ -1,3 +1,4 @@
+import { config } from '../../config.js';
 import type { ChatToolCall } from '../llm-client.js';
 
 export interface LemcoreStep {
@@ -50,5 +51,37 @@ export class LemcoreStalledError extends Error {
         `${Math.round(timeoutMs / 60_000)}m on turn ${turn}; aborting`,
     );
     this.name = 'LemcoreStalledError';
+  }
+}
+
+/** Per-turn stall cap: the run option wins, else the configured default. */
+export function turnTimeoutMs(opts: LemcoreRunOptions): number {
+  return opts.turnTimeoutMs ?? config.LEMCORE_STALLED_TURN_TIMEOUT_MINUTES * 60_000;
+}
+
+// Promise.race wrapper for one chatCompletion call. A stalled provider
+// (hung stream, dead connection that never errors) would otherwise block
+// the turn forever; on expiry the run aborts with LemcoreStalledError. The
+// losing call still settles in the background — its rejection is swallowed
+// here so it never surfaces as an unhandled rejection.
+export async function chatWithTurnTimeout<T>(
+  turn: number,
+  timeoutMs: number,
+  call: () => Promise<T>,
+): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  const pending = call();
+  try {
+    return await Promise.race([
+      pending,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new LemcoreStalledError(turn, timeoutMs)), timeoutMs);
+      }),
+    ]);
+  } catch (err) {
+    if (err instanceof LemcoreStalledError) pending.catch(() => {});
+    throw err;
+  } finally {
+    clearTimeout(timer);
   }
 }

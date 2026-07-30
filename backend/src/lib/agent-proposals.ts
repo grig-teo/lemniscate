@@ -25,8 +25,7 @@ import { loadAgentsMdTemplate, parseSkillSlugs } from './task-skills.js';
 // Job: generate-proposals — the LLM suggests up to 5 improvement tasks for a
 // repository. They are created as pending proposal tasks (click-to-run: the
 // user starts each via POST /tasks/:id/start), deduped by title against
-// pending/queued ones and topped up to at most MAX_PENDING_PROPOSALS pending.
-// Extracted from agent-loop.ts.
+// pending/queued ones and topped up to at most MAX_PENDING_PROPOSALS.
 
 type RepositoryWithConnection = Repository & { connection: GitConnection };
 
@@ -37,7 +36,7 @@ export const MAX_PENDING_PROPOSALS = 5;
 const PROPOSALS_FILENAME = '.lemniscate-proposals.json';
 
 // ---------------------------------------------------------------------------
-// Hermes executor (pure helpers, unit-tested in tests/agent-proposals.test.ts)
+// Hermes executor (unit-tested in tests/agent-proposals.test.ts)
 // ---------------------------------------------------------------------------
 
 export interface HermesProposalPromptOptions {
@@ -201,6 +200,7 @@ async function requestProposalsViaHermes(
     llm: hermesLlmConfig(rt),
     secrets,
     timeoutMs: config.AGENT_HERMES_TIMEOUT_MINUTES * 60_000,
+    stallTimeoutMs: config.AGENT_HERMES_STALL_TIMEOUT_MINUTES * 60_000,
   });
   return readHermesProposalsFile(workdir);
 }

@@ -36,7 +36,8 @@ export interface HermesTaskOptions {
   /**
    * Kill the hermes process when it stays silent for this many ms — a stalled
    * LLM provider leaves the CLI hung without output, so silence is the stall
-   * signal. Disabled when 0/undefined; clamped to at least timeoutMs.
+   * signal. Disabled when 0/undefined; independent of timeoutMs so it can
+   * fail fast well before the hard cap.
    */
   stallTimeoutMs?: number;
   /** Cancel-poll interval; defaults to CANCEL_POLL_MS. */
@@ -178,12 +179,13 @@ function stallError(stallMs: number): Error {
   );
 }
 
-// Effective stall window: undefined/0 disables the watchdog; a configured
-// window shorter than the hard timeout is clamped up so the hard timeout
-// always fires first and the watchdog only catches true stalls.
+// Effective stall window: undefined/0 disables the watchdog. The window is
+// deliberately NOT clamped against timeoutMs — the point of the watchdog is
+// to fail fast on a stalled provider instead of pinning a worker slot until
+// the hard cap fires.
 function stallWindowMs(opts: HermesTaskOptions): number | null {
   if (!opts.stallTimeoutMs) return null;
-  return Math.max(opts.stallTimeoutMs, opts.timeoutMs);
+  return opts.stallTimeoutMs;
 }
 
 // Stall watchdog: the hard timeout caps total runtime, but a hung LLM

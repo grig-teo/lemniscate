@@ -169,6 +169,7 @@ export async function rebaseHeadBranchViaHermes(ctx: GateContext): Promise<void>
       taskId: task.id,
       secrets,
       timeoutMs: config.AGENT_HERMES_TIMEOUT_MINUTES * 60_000,
+      stallTimeoutMs: config.AGENT_HERMES_STALL_TIMEOUT_MINUTES * 60_000,
     });
     await stageResolvedConflicts(ctx, conflicted, 'hermes');
   });
