@@ -1,0 +1,35 @@
+{
+  "name": "@lemniscate/core",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Platform-agnostic lemcore agent loop + tools + MCP client (consumed by the Lemniscate backend and the standalone CLI)",
+  "engines": {
+    "node": ">=24.18.0"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "bin": {
+    "lemcore": "./dist/cli.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "zod": "^3.24.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "typescript": "^5.9.0",
+    "vitest": "^4.1.10"
+  }
+}
