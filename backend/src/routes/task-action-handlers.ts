@@ -18,6 +18,7 @@ import {
   CANCELLABLE_STATUSES,
   closePrBlocker,
   findOwnedLlmConfig,
+  followUpValidationError,
   ownedTaskWhere,
   rerunBlocker,
   resolveAttachmentUpdate,
@@ -103,7 +104,7 @@ export async function patchTask(request: FastifyRequest, reply: FastifyReply) {
   if (body === null) return;
   const task = await prisma.task.findFirst({
     where: ownedTaskWhere(userId, params.id),
-    select: { id: true, kind: true, status: true },
+    select: { id: true, kind: true, status: true, repositoryId: true },
   });
   if (!task) {
     return reply.code(404).send({ error: 'Task not found' });
@@ -128,6 +129,18 @@ export async function patchTask(request: FastifyRequest, reply: FastifyReply) {
     }
     llmConfigId = config.id;
   }
+  // Manual chaining: validate a set follow-up (pending, same repo, not self)
+  // before storing it, so the done-trigger always enqueues a runnable target.
+  if (body.followUpTaskId) {
+    const followUpError = await followUpValidationError(
+      body.followUpTaskId,
+      task.repositoryId,
+      task.id,
+    );
+    if (followUpError) {
+      return reply.code(400).send({ error: followUpError });
+    }
+  }
   const updated = await prisma.task.update({
     where: { id: task.id },
     data: {
@@ -136,6 +149,7 @@ export async function patchTask(request: FastifyRequest, reply: FastifyReply) {
       ...attachmentsData(body.images),
       ...(body.skills !== undefined ? { skills: body.skills } : {}),
       ...(llmConfigId !== undefined ? { llmConfigId } : {}),
+      ...(body.followUpTaskId !== undefined ? { followUpTaskId: body.followUpTaskId } : {}),
       ...(await resolveAttachmentUpdate(body, userId)),
     },
   });

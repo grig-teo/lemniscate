@@ -1,10 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-// Locking tests for follow-up-task chaining helpers (task-follow-up.ts):
-//   * resolveFollowUp — a still-pending same-repo follow-up task is eligible
-//     to run; an archived, non-pending, or cross-repo one is not (returns null).
-//   * startFollowUpTask — enqueues the resolved follow-up and clears the
-//     pointer so a done task never chains twice.
+// Locking tests for follow-up-task chaining (task-follow-up.ts):
+//   * startFollowUpTask — enqueues a still-pending same-repo follow-up when a
+//     task reaches 'done', then clears the pointer so a done task never
+//     chains twice. The eligibility check (pending + same repo + active) is
+//     re-evaluated at trigger time: an archived, non-pending, or cross-repo
+//     target is skipped (no enqueue, no clear).
 // The enqueue helper and prisma are mocked so no DB/queue is contacted.
 
 const mocks = vi.hoisted(() => ({
@@ -18,11 +19,13 @@ vi.mock('../src/lib/prisma.js', () => ({
     task: { findFirst: mocks.taskFindFirst, update: mocks.taskUpdate },
   },
 }));
-vi.mock('../src/lib/task-queue.js', () => ({
+// enqueueRunTask is imported from proposal-scheduler.js (single home), so the
+// mock must target that module — not task-queue.js.
+vi.mock('../src/lib/proposal-scheduler.js', () => ({
   enqueueRunTask: mocks.enqueue,
 }));
 
-import { resolveFollowUp, startFollowUpTask } from '../src/lib/task-follow-up.js';
+import { startFollowUpTask } from '../src/lib/task-follow-up.js';
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -30,11 +33,11 @@ beforeEach(() => {
   mocks.enqueue.mockResolvedValue(undefined);
 });
 
-describe('resolveFollowUp', () => {
-  it('returns a still-pending same-repo follow-up', async () => {
+describe('startFollowUpTask', () => {
+  it('enqueues a pending same-repo follow-up and clears the pointer', async () => {
     mocks.taskFindFirst.mockResolvedValue({ id: 'next-task' });
-    const next = await resolveFollowUp('done-task', 'repo-1');
-    expect(next).toBe('next-task');
+    await startFollowUpTask('done-task', 'repo-1', 'follow-up-id');
+
     expect(mocks.taskFindFirst).toHaveBeenCalledWith({
       where: {
         id: 'follow-up-id',
@@ -44,20 +47,6 @@ describe('resolveFollowUp', () => {
       },
       select: { id: true },
     });
-  });
-
-  it('returns null when the follow-up was started, archived, or removed', async () => {
-    mocks.taskFindFirst.mockResolvedValue(null);
-    expect(await resolveFollowUp('done-task', 'repo-1')).toBeNull();
-    expect(mocks.enqueue).not.toHaveBeenCalled();
-  });
-});
-
-describe('startFollowUpTask', () => {
-  it('enqueues a pending follow-up and clears the pointer', async () => {
-    mocks.taskFindFirst.mockResolvedValue({ id: 'next-task' });
-    await startFollowUpTask('done-task', 'repo-1', 'follow-up-id');
-
     expect(mocks.enqueue).toHaveBeenCalledWith('next-task');
     expect(mocks.taskUpdate).toHaveBeenCalledWith({
       where: { id: 'done-task' },
@@ -65,8 +54,18 @@ describe('startFollowUpTask', () => {
     });
   });
 
+  it('skips an ineligible follow-up (started, archived, or wrong repo) without enqueueing', async () => {
+    mocks.taskFindFirst.mockResolvedValue(null);
+    await startFollowUpTask('done-task', 'repo-1', 'follow-up-id');
+
+    expect(mocks.enqueue).not.toHaveBeenCalled();
+    // Pointer is left intact so a later manual retry can pick it up.
+    expect(mocks.taskUpdate).not.toHaveBeenCalled();
+  });
+
   it('does nothing when no follow-up is set', async () => {
     await startFollowUpTask('done-task', 'repo-1', null);
+    expect(mocks.taskFindFirst).not.toHaveBeenCalled();
     expect(mocks.enqueue).not.toHaveBeenCalled();
     expect(mocks.taskUpdate).not.toHaveBeenCalled();
   });

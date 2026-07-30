@@ -45,6 +45,11 @@ export type Task = {
   attachments?: TaskImage[] | null;
   /** Soft-archive timestamp; null = active. Archived tasks only appear in ?archived=true lists. */
   archivedAt: string | null;
+  /**
+   * Id of a still-pending same-repo task to auto-start once this task reaches
+   * 'done'; null = no follow-up configured. Cleared after the follow-up runs.
+   */
+  followUpTaskId?: string | null;
   /** Cumulative LLM tokens across run/review/merge jobs of this task. */
   llmTokensUsed: number;
   /** Prompt/completion split; null for tasks that predate the split columns. */
@@ -90,6 +95,8 @@ export type CreateTaskBody = {
   mcpServerSlugs?: string[];
   /** Per-folder AGENTS.md assignments (template skillId or uploaded content). */
   agentsMdFiles?: { folder: string; skillId?: string; content?: string }[];
+  /** Id of a pending same-repo task to auto-start once this task reaches 'done'. */
+  followUpTaskId?: string;
 };
 
 /** POST /api/tasks/:id/start body — proposal edits applied before queueing. */

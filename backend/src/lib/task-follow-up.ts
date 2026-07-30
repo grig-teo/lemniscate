@@ -24,27 +24,6 @@ function eligibleFollowUpWhere(followUpTaskId: string, repositoryId: string) {
 }
 
 /**
- * Resolves a task's followUpTaskId to a still-runnable task id, or null when
- * there is none set, the target was already started/archived, or it belongs
- * to a different repository. Re-checks pending + same-repo + active at read
- * time so a race between create and trigger (the target gets started,
- * archived, or moved) can never resurrect a stale pointer.
- */
-export async function resolveFollowUp(
-  taskId: string,
-  repositoryId: string,
-): Promise<string | null> {
-  const task = await prisma.task.findFirst({
-    where: { id: taskId },
-    select: { followUpTaskId: true },
-  });
-  const followUpTaskId = task?.followUpTaskId ?? null;
-  if (!followUpTaskId) return null;
-  const eligible = await prisma.task.findFirst(eligibleFollowUpWhere(followUpTaskId, repositoryId));
-  return eligible?.id ?? null;
-}
-
-/**
  * Starts the configured follow-up of a done task (if any) and clears the
  * pointer in one step. Enqueue happens before the clear so a failed enqueue
  * leaves the pointer intact for a later retry; the follow-up is not

@@ -14,6 +14,7 @@ import { parseOrReply } from './helpers.js';
 import {
   attachmentValidationError,
   archivedTasksWhere,
+  followUpValidationError,
   initialTaskStatus,
   ownedTaskWhere,
   resolveAttachmentUpdate,
@@ -129,6 +130,14 @@ export async function createTask(request: FastifyRequest, reply: FastifyReply) {
   if (validationError) {
     return reply.code(400).send({ error: validationError });
   }
+  // Manual chaining: validate the follow-up (pending, same repo, not self)
+  // before creating, so the done-trigger always enqueues a runnable target.
+  if (data.followUpTaskId) {
+    const followUpError = await followUpValidationError(data.followUpTaskId, data.repositoryId);
+    if (followUpError) {
+      return reply.code(400).send({ error: followUpError });
+    }
+  }
 
   const task = await prisma.task.create({
     data: {
@@ -144,6 +153,8 @@ export async function createTask(request: FastifyRequest, reply: FastifyReply) {
       skills: data.skills ?? parseSkillSlugs(repository.skillSlugs),
       ...attachmentsData(data.images),
       ...(await resolveAttachmentUpdate(data, userId)),
+      // Manual chaining: id of a pending same-repo task to auto-start on done.
+      ...(data.followUpTaskId ? { followUpTaskId: data.followUpTaskId } : {}),
     },
   });
 
