@@ -65,6 +65,13 @@ export type Task = {
   /** Effective config's context window — the session context indicator's 100%. */
   contextWindow?: number | null;
   createdAt: string;
+  /**
+   * Start of the current pipeline session (run → review → merge = one
+   * session); the console elapsed timer anchors here so reruns/re-reviews
+   * don't accumulate previous sessions' wall time. Null for tasks that
+   * haven't run since the column existed — fall back to createdAt.
+   */
+  sessionStartedAt?: string | null;
   updatedAt: string;
 };
 

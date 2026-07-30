@@ -278,6 +278,13 @@ model Task {
   // Soft-archive timestamp: archived tasks are hidden from task lists but
   // never deleted; null = active.
   archivedAt   DateTime?
+  // Start of the current pipeline session (run → review → merge gate counts
+  // as ONE session). Set on the first active transition (running /
+  // reviewing_code) after an idle or terminal status, so a rerun or a
+  // re-review starts a new session while the steps inside one pipeline pass
+  // share it. The console elapsed timer anchors here instead of createdAt —
+  // previously reruns accumulated all previous sessions' wall time.
+  sessionStartedAt DateTime?
   createdAt    DateTime    @default(now())
   updatedAt    DateTime    @updatedAt
   repository   Repository  @relation(fields: [repositoryId], references: [id], onDelete: Cascade)
