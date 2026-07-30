@@ -6,6 +6,7 @@ import {
   createGitlemAccount,
   ensureEmailChannel,
   ensureGitlemAccountForUser,
+  findGitlemAccountForUser,
   generateGitlemPassword,
   issueRegistrationCode,
   linkGitlemConnection,
@@ -143,6 +144,12 @@ async function notifyCredentialsEmail(
 export async function ensureAccountHandler(request: FastifyRequest, reply: FastifyReply) {
   const userId = request.userId;
   if (!userId) return reply.code(401).send({ error: 'Authentication required' });
+  // A connected user never needs the email channel — check first so a user
+  // without one can still open the repos pane / create-repo modal.
+  const existing = await findGitlemAccountForUser(userId);
+  if (existing) {
+    return reply.code(200).send({ created: false, username: existing.username, emailed: false });
+  }
   const email = await resolveUserEmail(userId);
   if (!email) {
     return reply.code(400).send({
