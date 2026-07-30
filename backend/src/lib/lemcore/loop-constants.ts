@@ -1,5 +1,13 @@
 export const MAX_TURNS = 60;
 export const MAX_TOOL_FAILURES = 2;
+/**
+ * Safety-net token budget (cumulative per task — the runtime is seeded with
+ * the task's stored usage) applied when the LLM config leaves
+ * maxTokensPerRun unset. Without it a runaway run burns tokens unbounded;
+ * one real task reached 11.5M. 2M leaves room for a full implementation +
+ * review + fix iterations after context capping.
+ */
+export const LEMCORE_DEFAULT_MAX_TOKENS_PER_RUN = 2_000_000;
 /** Basename only — never store under the git clone (see transcriptPath). */
 export const TRANSCRIPT_FILE = 'lemcore-transcript.json';
 export const REVIEW_FILENAME = '.lemniscate-review.json';
