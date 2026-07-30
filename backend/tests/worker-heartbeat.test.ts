@@ -31,6 +31,10 @@ describe('startHeartbeat', () => {
     await new Promise((resolve) => setTimeout(resolve, 30));
     stop();
     stop = null;
+    // Beats are fire-and-forget: a write started just before stop() can land
+    // after it. Give any in-flight beat time to finish, THEN snapshot —
+    // everything after this point must be still.
+    await new Promise((resolve) => setTimeout(resolve, 50));
     const before = (await fs.stat(file)).mtimeMs;
     await new Promise((resolve) => setTimeout(resolve, 60));
     const after = (await fs.stat(file)).mtimeMs;

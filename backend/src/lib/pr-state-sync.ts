@@ -5,10 +5,10 @@ import {
   type ListedPullRequest,
   type PrState,
 } from './pull-requests.js';
-import { enqueueAddressReview, enqueueReviewTask, getAgentTasksQueue } from './proposal-scheduler.js';
+import { enqueueAddressReview, getAgentTasksQueue } from './proposal-scheduler.js';
 import { applyTaskPrStateSafe, type TaskWithConnection } from './pr-merged-handler.js';
+import { recoverStuckReviews } from './stuck-review.js';
 import { reviewFeedbackSkipReason } from './review-feedback.js';
-import { logEvent } from './agent-git.js';
 import { config } from '../config.js';
 import { prisma } from './prisma.js';
 import { logger } from './logger.js';
@@ -26,8 +26,11 @@ import { sleep } from './utils.js';
 // pr-merged-handler.ts so both this poller and the inbound webhook receiver
 // share the same code path (AGENTS.md §6 — single home).
 
-// Re-exported so existing importers (tests) keep a single import path.
+// Re-exported so existing importers (worker, tests) keep a single import path.
 export { taskStatusForPrState } from './pr-merged-handler.js';
+// Stuck-review recovery lives in stuck-review.ts (300-line guard); re-exported
+// for worker.ts and tests that import it from this module.
+export { recoverStuckReviews } from './stuck-review.js';
 
 // Configurable (config.PR_STATE_SYNC_INTERVAL_MS, default 5 minutes) so the
 // e2e stack can shorten the cadence and observe the poll fallback.
@@ -217,62 +220,4 @@ async function pollTaskReviewFeedback(task: TaskWithConnection): Promise<number>
     enqueued += 1;
   }
   return enqueued;
-}
-
-// ---------------------------------------------------------------------------
-// Stuck-review recovery
-// ---------------------------------------------------------------------------
-
-const MAX_REVIEW_RECOVERIES = 3;
-const REVIEW_RECOVERY_LOG = 'recovery: re-enqueued PR review after a failed review job';
-// Housekeeping logs (e.g. "cleaned up workdir") fire AFTER the error line and
-// mask it from a last-line-only check. Scan a small window of recent logs so
-// the error that caused the review job to die is still visible to the
-// recovery poller.
-const STUCK_REVIEW_LOG_SCAN = 5;
-
-// A review that concluded (approve / changes requested / checks gate) ends
-// with a distinct log line; a review whose job exhausted its BullMQ attempts
-// ends with an 'error:' line. Only the latter is stuck.
-async function isReviewStuck(taskId: string): Promise<boolean> {
-  const recoveries = await prisma.taskEvent.count({
-    where: { taskId, kind: 'log', payload: { path: ['line'], equals: REVIEW_RECOVERY_LOG } },
-  });
-  if (recoveries >= MAX_REVIEW_RECOVERIES) return false;
-  const recentLogs = await prisma.taskEvent.findMany({
-    where: { taskId, kind: 'log' },
-    orderBy: { createdAt: 'desc' },
-    take: STUCK_REVIEW_LOG_SCAN,
-    select: { payload: true },
-  });
-  return recentLogs.some((entry) => {
-    const line = (entry.payload as { line?: unknown } | null)?.line;
-    return typeof line === 'string' && line.startsWith('error:');
-  });
-}
-
-// Re-enqueues review for awaiting_review tasks whose review job died for good
-// (e.g. repeated LLM timeouts). Bounded per task so a persistently failing
-// endpoint cannot burn tokens in an infinite review loop. The BullMQ jobId
-// dedupes against a review job that is still waiting/active/retrying.
-export async function recoverStuckReviews(): Promise<void> {
-  const tasks = await prisma.task.findMany({
-    where: {
-      status: { in: ['awaiting_review', 'reviewing_code'] },
-      archivedAt: null,
-      branchName: { not: null },
-      repository: { autoReviewPr: true, connection: { disconnectedAt: null } },
-    },
-    select: { id: true },
-  });
-  let recovered = 0;
-  for (const task of tasks) {
-    if (!(await isReviewStuck(task.id))) continue;
-    await logEvent(task.id, REVIEW_RECOVERY_LOG);
-    await enqueueReviewTask(task.id);
-    recovered += 1;
-  }
-  if (recovered > 0) {
-    logger.info({ recovered }, 'pr-state-sync: re-enqueued stuck reviews');
-  }
 }

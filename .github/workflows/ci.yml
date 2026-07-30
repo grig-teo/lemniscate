@@ -35,6 +35,11 @@ jobs:
         working-directory: backend
         run: npx prisma generate
 
+      # lemcore's grep tool spawns ripgrep; its tests exercise the real binary
+      # (the prod image installs it via apk — backend/Dockerfile).
+      - name: Install ripgrep
+        run: sudo apt-get update && sudo apt-get install -y ripgrep
+
       - name: Build (tsc strict)
         working-directory: backend
         run: npm run build

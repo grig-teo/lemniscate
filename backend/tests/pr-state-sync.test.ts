@@ -323,6 +323,73 @@ describe('recoverStuckReviews', () => {
 
     expect(mocks.enqueueReviewTask).toHaveBeenCalledWith('t-masked');
   });
+
+  it('recovers a stale review that died silently (no error line, no live job)', async () => {
+    const twoHoursAgo = new Date(Date.now() - 2 * 3_600_000);
+    mocks.taskFindMany.mockResolvedValue([{ id: 't-silent', updatedAt: twoHoursAgo }]);
+    mocks.taskEventFindMany.mockResolvedValue([
+      { payload: { line: 'no valid .lemniscate-review.json from lemcore; caller should fall back if needed' } },
+    ]);
+    mocks.taskEventFindFirst.mockResolvedValue({ createdAt: twoHoursAgo });
+    const getJobs = vi.fn().mockResolvedValue([]);
+    vi.mocked(getAgentTasksQueue).mockReturnValue({ getJobs } as never);
+
+    await recoverStuckReviews();
+
+    expect(mocks.enqueueReviewTask).toHaveBeenCalledWith('t-silent');
+  });
+
+  it('skips a stale review while any job for the task is still in the queue', async () => {
+    const twoHoursAgo = new Date(Date.now() - 2 * 3_600_000);
+    mocks.taskFindMany.mockResolvedValue([{ id: 't-gated', updatedAt: twoHoursAgo }]);
+    mocks.taskEventFindMany.mockResolvedValue([{ payload: { line: 'some non-decisive line' } }]);
+    mocks.taskEventFindFirst.mockResolvedValue({ createdAt: twoHoursAgo });
+    const getJobs = vi.fn().mockResolvedValue([{ id: 'merge-gate-t-gated-0-0' }]);
+    vi.mocked(getAgentTasksQueue).mockReturnValue({ getJobs } as never);
+
+    await recoverStuckReviews();
+
+    expect(mocks.enqueueReviewTask).not.toHaveBeenCalled();
+  });
+
+  it('skips a review with recent activity without touching the queue', async () => {
+    mocks.taskFindMany.mockResolvedValue([{ id: 't-fresh', updatedAt: new Date() }]);
+    mocks.taskEventFindMany.mockResolvedValue([
+      { payload: { line: '⇄ model switch requested → k3 [Kimi-K3] — takes effect on the next LLM call' } },
+    ]);
+    mocks.taskEventFindFirst.mockResolvedValue({ createdAt: new Date() });
+    const getJobs = vi.fn().mockResolvedValue([]);
+    vi.mocked(getAgentTasksQueue).mockReturnValue({ getJobs } as never);
+
+    await recoverStuckReviews();
+
+    expect(mocks.enqueueReviewTask).not.toHaveBeenCalled();
+    expect(getJobs).not.toHaveBeenCalled();
+  });
+
+  it('treats a concluded review as finished even with an older error line in the window', async () => {
+    mocks.taskFindMany.mockResolvedValue([{ id: 't-concluded' }]);
+    mocks.taskEventFindMany.mockResolvedValue([
+      { payload: { line: 'approved by LLM, awaiting manual merge' } },
+      { payload: { line: 'error: boom' } },
+    ]);
+
+    await recoverStuckReviews();
+
+    expect(mocks.enqueueReviewTask).not.toHaveBeenCalled();
+  });
+
+  it('recovers when the error line is newer than a queued re-review marker', async () => {
+    mocks.taskFindMany.mockResolvedValue([{ id: 't-rereview-died' }]);
+    mocks.taskEventFindMany.mockResolvedValue([
+      { payload: { line: 'error: Request timed out' } },
+      { payload: { line: 'queued re-review of the updated pull request' } },
+    ]);
+
+    await recoverStuckReviews();
+
+    expect(mocks.enqueueReviewTask).toHaveBeenCalledWith('t-rereview-died');
+  });
 });
 
 describe('pollReviewFeedback (webhook fallback)', () => {
