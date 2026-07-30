@@ -9,6 +9,7 @@ import { chatCompletion } from '../llm-dispatch.js';
 import type { ChatMessage } from '../llm-client.js';
 import {
   MAX_TURNS,
+  MAX_EMPTY_ASSISTANT_REPLIES,
   TRANSCRIPT_FILE,
   REVIEW_FILENAME,
   lemcoreSystemPrompt,
@@ -22,10 +23,12 @@ import {
   compactTranscript,
   shouldCompactTranscript,
 } from './loop-compact.js';
+import { classifyAssistantReply, EMPTY_REPLY_NUDGE } from './loop-reply.js';
 
 export {
   MAX_TURNS,
   MAX_TOOL_FAILURES,
+  MAX_EMPTY_ASSISTANT_REPLIES,
   TRANSCRIPT_FILE,
   REVIEW_FILENAME,
   lemcoreSystemPrompt,
@@ -147,6 +150,7 @@ export async function runLemcoreLoop(opts: LemcoreRunOptions): Promise<string> {
   }
 
   let consecutiveToolFailures = 0;
+  let consecutiveEmptyReplies = 0;
   const startTime = Date.now();
   const wallClockCapMs = config.AGENT_HERMES_TIMEOUT_MINUTES * 60_000;
   // Stall watchdog for a single LLM turn (LEMCORE_STALLED_TURN_TIMEOUT_MINUTES
@@ -248,11 +252,35 @@ export async function runLemcoreLoop(opts: LemcoreRunOptions): Promise<string> {
       saveTranscript(workdir, messages);
       return result.content;
     }
-    if (!hasToolCalls) {
+    const action = classifyAssistantReply(hasToolCalls, result.content, consecutiveEmptyReplies);
+    // A non-empty text reply without tool calls is the agent's final answer.
+    if (action.kind === 'final') {
       saveTranscript(workdir, messages);
       return result.content;
     }
+    if (action.kind === 'abort') {
+      throw new Error(
+        `lemcore agent stopped: the LLM returned ${action.count} ` +
+          'consecutive empty replies (no content, no tool calls)',
+      );
+    }
+    if (action.kind === 'nudge') {
+      consecutiveEmptyReplies = action.count;
+      await publishStepEvent(taskId, {
+        stepId: nextStepId(),
+        status: 'done',
+        kind: 'assistant',
+        title: 'Empty LLM reply — nudging the model',
+        detail:
+          `Provider returned no content and no tool calls ` +
+          `(${action.count}/${MAX_EMPTY_ASSISTANT_REPLIES}); asking the model to continue.`,
+      });
+      messages.push({ role: 'user', content: EMPTY_REPLY_NUDGE });
+      saveTranscript(workdir, messages);
+      continue;
+    }
 
+    consecutiveEmptyReplies = 0;
     consecutiveToolFailures = await runToolCalls({
       taskId,
       workdir,
