@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it } from 'vitest';
-import { cleanup, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 
 import { LocaleProvider, useLocale } from '@/lib/i18n';
 import en from '@/locales/en.json';
@@ -81,7 +81,7 @@ describe('LocaleProvider', () => {
       </LocaleProvider>,
     );
     expect(screen.getByTestId('locale').textContent).toBe('en');
-    screen.getByText('switch').click();
+    fireEvent.click(screen.getByText('switch'));
     expect(screen.getByText(ru['login.tagline'])).toBeTruthy();
     expect(localStorage.getItem('lemniscate:locale')).toBe('ru');
     expect(document.documentElement.lang).toBe('ru');
