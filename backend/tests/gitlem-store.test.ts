@@ -10,6 +10,7 @@ import {
   openPullRequest,
   parseGitlemDoc,
   readFile,
+  replaceBranchTree,
   startCiRun,
   upsertFile,
 } from '../src/lib/gitlem-store.js';
@@ -53,6 +54,40 @@ describe('branch + file operations', () => {
     upsertFile(doc, 'feature', 'x.ts', 'v2');
     expect(readFile(doc, 'feature', 'x.ts')?.content).toBe('v2');
     expect(doc.branches).toHaveLength(1);
+  });
+});
+
+// A git push defines the full authoritative state of the pushed branch, so the
+// ingest path replaces (not merges) that branch's file tree. PRs/CI/nextPrNumber
+// survive — a push must not clobber the repo's history metadata.
+describe('replaceBranchTree', () => {
+  it('replaces an existing branch tree, removing files no longer present', () => {
+    const doc = emptyGitlemDoc();
+    upsertFile(doc, 'main', 'README.md', '# hi');
+    upsertFile(doc, 'main', 'old.txt', 'gone');
+    openPullRequest(doc, { title: 'pr', body: '', head: 'dev', base: 'main' });
+
+    replaceBranchTree(doc, 'main', [{ path: 'README.md', content: '# hi v2' }, { path: 'new.txt', content: 'fresh' }]);
+
+    expect(readFile(doc, 'main', 'README.md')?.content).toBe('# hi v2');
+    expect(readFile(doc, 'main', 'new.txt')?.content).toBe('fresh');
+    expect(readFile(doc, 'main', 'old.txt')).toBeUndefined();
+    // PRs and counters are untouched.
+    expect(doc.prs).toHaveLength(1);
+  });
+
+  it('creates the branch when it does not exist yet', () => {
+    const doc = emptyGitlemDoc();
+    replaceBranchTree(doc, 'feature', [{ path: 'a.txt', content: 'a' }]);
+    expect(readFile(doc, 'feature', 'a.txt')?.content).toBe('a');
+    expect(doc.branches.map((b) => b.name)).toContain('feature');
+  });
+
+  it('does not affect other branches', () => {
+    const doc = emptyGitlemDoc();
+    upsertFile(doc, 'main', 'keep.txt', 'main');
+    replaceBranchTree(doc, 'other', [{ path: 'o.txt', content: 'o' }]);
+    expect(readFile(doc, 'main', 'keep.txt')?.content).toBe('main');
   });
 });
 
