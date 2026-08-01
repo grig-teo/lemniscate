@@ -46,6 +46,7 @@ enum TaskEventKind {
   diff
   status
   agent_step
+  retrospective
 }
 
 model User {
@@ -58,6 +59,11 @@ model User {
   // (AGENT_EXECUTOR env). 'hermes' runs the Hermes CLI; 'internal' the
   // built-in single-shot LLM loop. Resolved by lib/agent-executor.ts.
   agentExecutor  String?
+  // Phase 12 quotas: null = unlimited. Configurable per-user monthly caps;
+  // enforced by lib/quota.ts before a task is enqueued (tasks) and at the
+  // LLM-call layer (tokens).
+  monthlyTokenQuota Int?
+  monthlyTaskQuota  Int?
   gitConnections GitConnection[]
   llmConfigs     LlmConfig[]
   skills         Skill[]
@@ -68,6 +74,11 @@ model User {
   notificationSettings NotificationSetting[]
   vpsTargets     VpsTarget[]
   gitlemUser     GitlemUser?
+  apiTokens      ApiToken[]
+  orgMemberships OrgMember[]
+  oauthIdentities OauthIdentity[]
+  usageSnapshots  UsageSnapshot[]
+  ownedMarketplaceListings MarketplaceListing[] @relation("MarketplaceOwner")
 }
 
 model GitConnection {
@@ -132,6 +143,9 @@ model LlmConfig {
   timeoutSeconds    Int           @default(120)
   maxRetries        Int           @default(3)
   requestsPerMinute Int
+  // Phase 12: owning organization; null = the creating user's personal org.
+  orgId         String?
+  org           Organization? @relation(fields: [orgId], references: [id], onDelete: SetNull)
   maxTokensPerRun   Int?
   // Optional user-entered USD prices per million tokens; both must be set
   // for the API/UI to show estimated costs (absent, never guessed).
@@ -171,6 +185,21 @@ model Repository {
   // to not intervene in the autonomous loop unless a repo opts in.
   autoAddressReview Boolean @default(false)
   hidden        Boolean      @default(false)
+  // Phase 10: bash routing to a paired device. deviceId of a paired Device;
+  // deviceRouteWhen: 'always' (all bash steps go to the device; offline →
+  // clear error, never a silent local fallback) | 'on-demand' (only when the
+  // agent picks the run_on_device tool).
+  deviceRouteId   String?
+  deviceRouteWhen String  @default("on-demand")
+  // Phase 11: semantic code index (pgvector) feature flag; off = the
+  // classic static repo-context builder is used.
+  semanticIndex   Boolean @default(false)
+  // Phase 12: owning organization; null = user's personal repo. Org rows are
+  // auto-created for existing users ('personal' kind) by migration 0039.
+  orgId         String?
+  org           Organization? @relation(fields: [orgId], references: [id], onDelete: SetNull)
+  marketplaceInstalls MarketplaceInstall[]
+  webhooks             Webhook[]
   // Slugs of skills (Skill model) injected into the agent's system prompt
   // for tasks on this repository; string[] stored as JSON.
   skillSlugs    Json?
@@ -365,6 +394,7 @@ model TaskEvent {
   id        String        @id @default(cuid())
   taskId    String
   createdAt DateTime      @default(now())
+  // 'agent_step'|'status'|'log'|'diff'|'retrospective' (see enum above).
   kind      TaskEventKind
   payload   Json
   task      Task          @relation(fields: [taskId], references: [id], onDelete: Cascade)
@@ -419,6 +449,10 @@ model DeviceCommand {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   device    Device   @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  // Phase 10: lemcore run on whose behalf this command was dispatched
+  // (null = UI-driven command from the devices page). Set by
+  // lib/lemcore/device-tools.ts so the tool runner polls only its own row.
+  lemcoreRunId String?
 
   @@index([deviceId])
   @@index([taskId])
@@ -660,4 +694,149 @@ model GitlemRepository {
   owner         GitlemUser @relation(fields: [ownerId], references: [id], onDelete: Cascade)
 
   @@unique([ownerId, name])
+}
+
+// ─── lemcore phases 10–12 ────────────────────────────────────────────────
+
+// Personal access token for the public API v1 (Phase 12). Only the sha256
+// of the token is stored; the plaintext is shown once at creation.
+model ApiToken {
+  id         String    @id @default(cuid())
+  userId     String
+  name       String
+  tokenHash  String    @unique
+  // Scope list (string[] as JSON): 'tasks:read'|'tasks:write'|'repos:read'.
+  scopes     Json
+  lastUsedAt DateTime?
+  createdAt  DateTime  @default(now())
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+// Outbound webhook endpoint registered per repository (Phase 12). Events:
+// task.finished | pr.merged | run.failed. Deliveries are HMAC-signed
+// (X-Lemniscate-Signature) and retried 5 times with backoff.
+model Webhook {
+  id           String            @id @default(cuid())
+  repositoryId String
+  url          String
+  secretEnc    String
+  events       Json
+  active       Boolean           @default(true)
+  createdAt    DateTime          @default(now())
+  repository   Repository        @relation(fields: [repositoryId], references: [id], onDelete: Cascade)
+  deliveries   WebhookDelivery[]
+
+  @@index([repositoryId])
+}
+
+model WebhookDelivery {
+  id             String   @id @default(cuid())
+  webhookId      String
+  event          String
+  payload        Json
+  attempt        Int      @default(0)
+  status         String   @default("pending") // pending|delivered|failed
+  responseStatus Int?
+  createdAt      DateTime @default(now())
+  deliveredAt    DateTime?
+  webhook        Webhook  @relation(fields: [webhookId], references: [id], onDelete: Cascade)
+
+  @@index([webhookId])
+  @@index([status])
+}
+
+// Organization (Phase 12): every user gets a personal org on migration;
+// repositories and LLM configs can additionally attach to shared orgs with
+// owner/maintainer/member role checks.
+model Organization {
+  id           String       @id @default(cuid())
+  slug         String       @unique
+  name         String
+  kind         String       @default("shared") // personal|shared
+  createdAt    DateTime     @default(now())
+  members      OrgMember[]
+  repositories Repository[]
+  llmConfigs   LlmConfig[]
+}
+
+model OrgMember {
+  id     String @id @default(cuid())
+  orgId  String
+  userId String
+  // 'owner'|'maintainer'|'member' — TEXT, validated by zod at the API.
+  role   String @default("member")
+  org    Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  user   User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([orgId, userId])
+  @@index([userId])
+}
+
+// SSO identity (Phase 12): a user may sign in via Google/GitHub OAuth next
+// to the git-host login. The provider subject is unique.
+model OauthIdentity {
+  id               String   @id @default(cuid())
+  userId           String
+  provider         String // google|github
+  providerSub      String
+  email            String?
+  createdAt        DateTime @default(now())
+  user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerSub])
+  @@index([userId])
+}
+
+// Monthly usage meter (Phase 12 quotas). One row per user per calendar
+// month (UTC); hard-stop checks read the live task sums, snapshots are
+// written by the usage-meter job for the admin page.
+model UsageSnapshot {
+  id          String   @id @default(cuid())
+  userId      String
+  month       String // 'YYYY-MM'
+  tasksRun    Int      @default(0)
+  tokensUsed  Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, month])
+}
+
+// Marketplace listing (Phase 12): a published skill/tool/MCP config. The
+// payload is stored in MinIO (listingKey); moderation = owner-approval
+// queue only.
+model MarketplaceListing {
+  id          String   @id @default(cuid())
+  slug        String   @unique
+  name        String
+  // 'skill'|'tool'|'mcp' — TEXT, validated by zod at the API.
+  kind        String
+  description String
+  tags        String[]
+  // MinIO object key holding the installable payload (JSON).
+  payloadKey  String
+  publisherId String
+  // 'pending'|'approved'|'rejected' — only approved listings are public.
+  status      String   @default("pending")
+  installCount Int     @default(0)
+  createdAt   DateTime @default(now())
+  publisher   User     @relation("MarketplaceOwner", fields: [publisherId], references: [id], onDelete: Cascade)
+  installs    MarketplaceInstall[]
+
+  @@index([status, kind])
+}
+
+// One-click install record (Phase 12): which listing went into which repo.
+model MarketplaceInstall {
+  id           String             @id @default(cuid())
+  listingId    String
+  repositoryId String
+  createdAt    DateTime           @default(now())
+  listing      MarketplaceListing @relation(fields: [listingId], references: [id], onDelete: Cascade)
+  repository   Repository         @relation(fields: [repositoryId], references: [id], onDelete: Cascade)
+
+  @@unique([listingId, repositoryId])
 }
