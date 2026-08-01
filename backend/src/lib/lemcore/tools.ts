@@ -133,7 +133,7 @@ export async function toolMultiEdit(
     if (count !== 1) {
       throw new Error(`multi_edit: expected exactly 1 match for edit ${applied + 1}, found ${count}`);
     }
-    content = content.replace(search, () => replace);
+    content = content.replace(search, replace);
     applied += 1;
   }
   await fs.writeFile(absPath, content, 'utf8');
