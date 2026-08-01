@@ -41,6 +41,8 @@ export type Task = {
   errorCode?: string | null;
   branchName?: string | null;
   prUrl?: string | null;
+  /** Manual follow-up: the task auto-queued (started) when this one reaches 'done'. */
+  nextTaskId?: string | null;
   thinkingLevel?: TaskThinkingLevel | null;
   attachments?: TaskImage[] | null;
   /** Soft-archive timestamp; null = active. Archived tasks only appear in ?archived=true lists. */
