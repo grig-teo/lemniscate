@@ -152,8 +152,10 @@ ALTER TABLE "LlmConfig" ADD CONSTRAINT "LlmConfig_orgId_fkey"
   FOREIGN KEY ("orgId") REFERENCES "Organization"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- Migration path: every existing user becomes the owner of a personal org.
+-- The User table carries no display name, so the personal org gets a static
+-- name (the slug 'user-<id>' still uniquely identifies the owner).
 INSERT INTO "Organization" ("id", "slug", "name", "kind", "createdAt")
-SELECT 'porg-' || u."id", 'user-' || u."id", u."name", 'personal', NOW()
+SELECT 'porg-' || u."id", 'user-' || u."id", 'Personal workspace', 'personal', NOW()
 FROM "User" u;
 
 INSERT INTO "OrgMember" ("id", "orgId", "userId", "role")
