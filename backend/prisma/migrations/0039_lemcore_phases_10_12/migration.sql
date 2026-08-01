@@ -13,6 +13,11 @@ ALTER TABLE "Repository"
 
 ALTER TABLE "LlmConfig" ADD COLUMN "orgId" TEXT;
 ALTER TABLE "DeviceCommand" ADD COLUMN "lemcoreRunId" TEXT;
+-- Phase 12 per-user monthly quotas (null = unlimited); both nullable so the
+-- column add is instant on existing rows. See model User in schema.prisma.
+ALTER TABLE "User"
+  ADD COLUMN "monthlyTokenQuota" INTEGER,
+  ADD COLUMN "monthlyTaskQuota" INTEGER;
 
 CREATE TABLE "ApiToken" (
   "id" TEXT NOT NULL,
