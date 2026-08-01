@@ -57,7 +57,7 @@ export async function runSubagent(opts: {
         tools: getReadOnlyTools(),
       }),
     );
-    childRt.usedTokens += result.usage.totalTokens;
+    childRt.usedTokens += result.usage?.totalTokens ?? 0;
     const content = result.content ?? '';
     const toolCalls = result.toolCalls ?? [];
     messages.push({ role: 'assistant', content, toolCalls });

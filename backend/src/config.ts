@@ -132,6 +132,8 @@ const envSchema = z.object({
   // make one additional LLM call (different seed + nudge) and try the
   // alternative. Default on. Set LEMCORE_MULTI_SAMPLE=false to disable.
   LEMCORE_MULTI_SAMPLE: z.coerce.boolean().default(true),
+  LEMCORE_SUBAGENT_ENABLED: z.coerce.boolean().default(true),
+  LEMCORE_SUBAGENT_MAX_TURNS: z.coerce.number().int().positive().default(8),
   // Lemcore-only: build a codebase graph (code-review-graph) on every repo
   // scan and prefer graph-derived implementation context to cut LLM tokens.
   // Default on. Set LEMCORE_CODE_GRAPH=false to disable.

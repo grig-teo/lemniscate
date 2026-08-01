@@ -26,13 +26,13 @@ import {
 import { MAX_TOOL_FAILURES } from './loop-constants.js';
 import type { LemcoreMessage, LemcoreStep } from './loop-types.js';
 import { resolveSkillContent, type LemcoreSkill } from './skills.js';
-
 export async function executeTool(
   name: string,
   args: Record<string, unknown>,
   workdir: string,
   secrets: string[],
   skills: LemcoreSkill[] = [],
+  multiSampleCtx?: { rt: LlmRuntime; taskId: string; toolCall: ChatToolCall },
 ): Promise<ToolResult> {
   switch (name) {
     case 'read_file':
@@ -101,36 +101,8 @@ export async function executeTool(
       return toolUndoEdit(workdir, String(args.path ?? ''), secrets);
     case 'todo_write':
       return toolTodoWrite(workdir, String(args.content ?? ''), secrets);
-    case 'spawn_subagent': {
-      if (!multiSampleCtx) {
-        return {
-          tool: 'spawn_subagent' as ToolName, title: 'spawn_subagent', durationMs: 0,
-          outputPreview: 'Subagent unavailable (no runtime context).',
-          error: 'spawn_subagent requires runtime context',
-        };
-      }
-      const { runSubagent } = await import('./subagent.js');
-      const startMs = Date.now();
-      try {
-        const summary = await runSubagent({
-          rt: multiSampleCtx.rt, workdir, secrets, taskId: multiSampleCtx.taskId,
-          prompt: String(args.prompt ?? ''),
-        });
-        // Roll child tokens into parent budget.
-        return {
-          tool: 'spawn_subagent' as ToolName,
-          title: `spawn_subagent(${String(args.prompt ?? '').slice(0, 40)})`,
-          outputPreview: summary, durationMs: Date.now() - startMs,
-        };
-      } catch (err) {
-        return {
-          tool: 'spawn_subagent' as ToolName,
-          title: `spawn_subagent`, durationMs: Date.now() - startMs,
-          outputPreview: `Subagent failed: ${(err as Error).message}`,
-          error: `subagent error: ${(err as Error).message}`,
-        };
-      }
-    }
+    case 'spawn_subagent':
+      return runSpawnSubagent(multiSampleCtx, workdir, secrets, args);
     default:
       return {
         tool: name as ToolName,
@@ -141,12 +113,29 @@ export async function executeTool(
       };
   }
 }
-
+async function runSpawnSubagent(
+  ctx: { rt: LlmRuntime; taskId: string; toolCall: ChatToolCall } | undefined,
+  workdir: string, secrets: string[], args: Record<string, unknown>,
+): Promise<ToolResult> {
+  if (!ctx) return {
+    tool: 'spawn_subagent' as ToolName, title: 'spawn_subagent', durationMs: 0,
+    outputPreview: 'Subagent unavailable (no runtime context).',
+    error: 'spawn_subagent requires runtime context',
+  };
+  const { runSubagent } = await import('./subagent.js');
+  const start = Date.now();
+  const prompt = String(args.prompt ?? '');
+  try {
+    const summary = await runSubagent({ rt: ctx.rt, workdir, secrets, taskId: ctx.taskId, prompt });
+    return { tool: 'spawn_subagent' as ToolName, title: `spawn_subagent(${prompt.slice(0, 40)})`, outputPreview: summary, durationMs: Date.now() - start };
+  } catch (err) {
+    return { tool: 'spawn_subagent' as ToolName, title: 'spawn_subagent', outputPreview: `Subagent failed: ${(err as Error).message}`, durationMs: Date.now() - start, error: `subagent error: ${(err as Error).message}` };
+  }
+}
 function asStringArray(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
   return value.map((v) => String(v)).filter(Boolean);
 }
-
 function toolTitle(name: string, args: Record<string, unknown>): string {
   const hint =
     args.path ??
@@ -160,7 +149,6 @@ function toolTitle(name: string, args: Record<string, unknown>): string {
   const hintText = hint === undefined || hint === null ? '' : String(hint);
   return hintText ? `${name}(${hintText})` : name;
 }
-
 export async function runToolCalls(opts: {
   taskId: string;
   workdir: string;
@@ -192,7 +180,6 @@ export async function runToolCalls(opts: {
       });
       continue;
     }
-
     const toolStep: LemcoreStep = {
       stepId: toolStepId,
       status: 'running',
