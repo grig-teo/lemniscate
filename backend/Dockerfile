@@ -20,6 +20,9 @@ FROM node:24.18.0-alpine AS runtime
 WORKDIR /app
 ENV NODE_ENV=production
 # git: the worker clones repositories; openssl: required by Prisma engines on alpine.
+# git-daemon: Alpine splits git-http-backend out of the base git package;
+# without it the gitlem git-over-HTTP endpoint (lib/gitlem-http.ts) cannot
+# spawn `git http-backend` and every clone of a gitlem repo fails with a 502.
 # bash/curl/xz/ripgrep: prerequisites of the Hermes Agent CLI installer below.
 # tar: cleanupWorkdir snapshots workdirs into MinIO tarballs before removal.
 # docker-cli: the deploy-service job builds/starts user service containers
@@ -28,7 +31,7 @@ ENV NODE_ENV=production
 # `ssh` and `sshpass` CLIs to deploy onto a user's own server.
 # python3+pip: lemcore installs code-review-graph (PyPI) to build a codebase
 # graph on every repository scan and cut implementation-context tokens.
-RUN apk add --no-cache git openssl bash curl xz ripgrep tar docker-cli openssh sshpass \
+RUN apk add --no-cache git git-daemon openssl bash curl xz ripgrep tar docker-cli openssh sshpass \
     python3 py3-pip \
   && addgroup -S app && adduser -S app -G app \
   && pip3 install --break-system-packages --no-cache-dir 'code-review-graph==2.3.7'
