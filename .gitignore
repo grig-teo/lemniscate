@@ -28,3 +28,4 @@ tmp/
 
 # Local backups (scripts/backup.sh; contain secrets — never commit)
 backups/
+.zcode/

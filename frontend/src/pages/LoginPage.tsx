@@ -6,7 +6,7 @@ import { ConnectProviderButtons } from '@/components/ConnectProviderButtons';
 import { GitVerseConnectDialog } from '@/components/GitVerseConnectDialog';
 import { useMe } from '@/lib/hooks';
 
-function LoginCard({ onGitverse }: { onGitverse: () => void }) {
+function LoginCard({ onGitverse, onGitlem }: { onGitverse: () => void; onGitlem: () => void }) {
   return (
     <div className="flex w-full max-w-sm flex-col items-center gap-6 rounded-lg border bg-card p-8 shadow-sm">
       <div className="flex flex-col items-center gap-2">
@@ -18,7 +18,7 @@ function LoginCard({ onGitverse }: { onGitverse: () => void }) {
       </div>
 
       <div className="flex w-full flex-col gap-2">
-        <ConnectProviderButtons onGitverse={onGitverse} className="w-full" />
+        <ConnectProviderButtons onGitverse={onGitverse} onGitlem={onGitlem} className="w-full" />
       </div>
 
       <p className="text-xs text-muted-foreground/70">
@@ -52,7 +52,7 @@ export function LoginPage() {
 
   return (
     <div className="flex min-h-screen flex-col items-center justify-center px-4">
-      <LoginCard onGitverse={() => setGitverseOpen(true)} />
+      <LoginCard onGitverse={() => setGitverseOpen(true)} onGitlem={() => navigate('/connect/gitlem')} />
 
       <GitVerseConnectDialog
         open={gitverseOpen}

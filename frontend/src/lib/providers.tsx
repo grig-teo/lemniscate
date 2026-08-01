@@ -5,6 +5,7 @@
  */
 import { GitBranch, Github, Gitlab } from 'lucide-react';
 
+import { GitlemIcon } from '@/components/icons/GitlemIcon';
 import { GitVerseIcon } from '@/components/icons/GitVerseIcon';
 
 // Official Gitee glyph (lucide has no Gitee icon); currentColor so it
@@ -22,6 +23,7 @@ const PROVIDER_BRAND_LABELS: Record<string, string> = {
   gitlab: 'GitLab',
   gitverse: 'GitVerse',
   gitee: 'Gitee',
+  gitlem: 'Gitlem',
 };
 
 export type ProviderLabelCasing = 'brand' | 'capitalized';
@@ -47,5 +49,6 @@ export function ProviderIcon({ provider, className }: { provider: string; classN
   if (name === 'gitlab') return <Gitlab className={className} aria-hidden />;
   if (name === 'gitee') return <GiteeIcon className={className} />;
   if (name === 'gitverse') return <GitVerseIcon className={className} />;
+  if (name === 'gitlem') return <GitlemIcon className={className} />;
   return <GitBranch className={className} aria-hidden />; // unknown
 }

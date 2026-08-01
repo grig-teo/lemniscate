@@ -7,6 +7,7 @@ import { useMe } from '@/lib/hooks';
 import { useHasActiveProcesses } from '@/lib/queries/tasks';
 import { LandingPage } from '@/pages/LandingPage';
 import { LoginPage } from '@/pages/LoginPage';
+import { GitlemConnectPage } from '@/pages/GitlemConnectPage';
 import { ShellPage } from '@/pages/ShellPage';
 
 /** Gate for authenticated routes: spinner while the session loads, /login on 401. */
@@ -32,6 +33,10 @@ const router = createBrowserRouter(
     {
       path: '/login',
       element: <LoginPage />,
+    },
+    {
+      path: '/connect/gitlem',
+      element: <GitlemConnectPage />,
     },
     {
       path: '/dashboard',

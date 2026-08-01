@@ -19,13 +19,16 @@ function OauthConnectButton({ provider, className }: { provider: OauthProvider; 
 
 /**
  * The "Connect …" buttons (GitHub/GitLab/Gitee via OAuth redirect, GitVerse
- * via token dialog). Shared by the login page and the settings dialog.
+ * via token dialog, Gitlem via its email+password page). Shared by the login
+ * page and the settings dialog.
  */
 export function ConnectProviderButtons({
   onGitverse,
+  onGitlem,
   className,
 }: {
   onGitverse: () => void;
+  onGitlem: () => void;
   className?: string;
 }) {
   return (
@@ -36,6 +39,10 @@ export function ConnectProviderButtons({
       <Button variant="outline" className={className} onClick={onGitverse}>
         <ProviderIcon provider="gitverse" className="h-4 w-4" />
         Connect {providerLabel('gitverse')}
+      </Button>
+      <Button variant="outline" className={className} onClick={onGitlem}>
+        <ProviderIcon provider="gitlem" className="h-4 w-4" />
+        Connect {providerLabel('gitlem')}
       </Button>
     </>
   );

@@ -25,7 +25,7 @@ export type Me = {
   createdAt: string;
 };
 
-export type GitProvider = 'github' | 'gitlab' | 'gitverse' | 'gitee';
+export type GitProvider = 'github' | 'gitlab' | 'gitverse' | 'gitee' | 'gitlem';
 
 export type Connection = {
   id: string;

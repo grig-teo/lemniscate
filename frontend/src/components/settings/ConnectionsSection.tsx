@@ -5,7 +5,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { ConnectProviderButtons } from '@/components/ConnectProviderButtons';
 import { GitVerseConnectDialog } from '@/components/GitVerseConnectDialog';
-import { useConnections, useDeleteConnection, type Connection } from '@/lib/hooks';
+import { useConnections, useDeleteConnection, useEnsureGitlemAccount, type Connection } from '@/lib/hooks';
 import { providerLabel, ProviderIcon } from '@/lib/providers';
 
 function ConnectionRow({
@@ -54,6 +54,7 @@ function ConnectionRow({
 export function ConnectionsSection() {
   const connections = useConnections();
   const deleteConnection = useDeleteConnection();
+  const ensureGitlem = useEnsureGitlemAccount();
   const [gitverseOpen, setGitverseOpen] = React.useState(false);
 
   function disconnect(connection: Connection) {
@@ -94,8 +95,22 @@ export function ConnectionsSection() {
       )}
 
       <div className="flex flex-wrap gap-2 border-t pt-4">
-        <ConnectProviderButtons onGitverse={() => setGitverseOpen(true)} />
+        <ConnectProviderButtons
+          onGitverse={() => setGitverseOpen(true)}
+          onGitlem={() => ensureGitlem.mutate()}
+        />
       </div>
+
+      {ensureGitlem.isError && (
+        <p className="text-sm text-destructive">{ensureGitlem.error.message}</p>
+      )}
+      {ensureGitlem.isSuccess && (
+        <p className="text-sm text-muted-foreground">
+          {ensureGitlem.data.created
+            ? `Gitlem account "@${ensureGitlem.data.username}" created — credentials sent to your email.`
+            : `Gitlem account "@${ensureGitlem.data.username}" is already connected.`}
+        </p>
+      )}
 
       <GitVerseConnectDialog open={gitverseOpen} onOpenChange={setGitverseOpen} />
     </div>
