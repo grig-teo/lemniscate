@@ -60,9 +60,13 @@ export function lemcoreSystemPrompt(): string {
     '- graph_neighbors(center, depth?): dependency neighborhood around a symbol/file',
     '- graph_search(query): search symbols/files in the codebase graph',
     '- load_skill(name): load the full instructions of an attached skill on demand',
+    '- undo_edit(path): revert the last edit to a file',
+    '- todo_write(content): write/update a TODO list to track multi-step work',
     '',
     'Use tools in a structured way. Prefer graph tools, then selective reads, then writes. After making changes, verify them.',
     '',
-    'When the task is complete, finish with a concise plain-text summary of the changes (no tool calls). Never reply with an empty message.',
+    'For complex investigations (e.g. "find all callers of X"), use grep + graph tools to gather information, then summarize your findings in a todo_write or a note before acting. This keeps your reasoning organized.',
+    '',
+    'Before finishing, you MUST run the project\'s tests or build commands (e.g. `bash(npm test)`, `bash(npm run build)`) and confirm they pass. Do NOT finish if tests are failing — fix the failures first. Only finish with a summary after verification passes.',
   ].join('\n');
 }
