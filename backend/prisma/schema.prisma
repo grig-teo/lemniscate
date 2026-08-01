@@ -31,6 +31,9 @@ enum TaskStatus {
   pending
   queued
   running
+  // User-paused run: the agent job left the queue (or parks before claiming);
+  // workdir + lemcore transcript survive so resume continues mid-implementation.
+  paused
   // lemcore plan mode (Repository.planMode): the loop paused after its
   // first-turn plan until the user approves or rejects it.
   awaiting_plan_approval
