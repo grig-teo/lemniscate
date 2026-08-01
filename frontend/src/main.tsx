@@ -4,6 +4,7 @@ import { MutationCache, QueryClient, QueryClientProvider } from '@tanstack/react
 
 import { App } from '@/App';
 import { Toasts } from '@/components/Toasts';
+import { LocaleProvider } from '@/lib/i18n';
 import { reportMutationError } from '@/lib/mutation-error-toast';
 import { ThemeProvider } from '@/lib/theme';
 import '@/index.css';
@@ -28,8 +29,10 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <QueryClientProvider client={queryClient}>
       <ThemeProvider>
-        <App />
-        <Toasts />
+        <LocaleProvider>
+          <App />
+          <Toasts />
+        </LocaleProvider>
       </ThemeProvider>
     </QueryClientProvider>
   </React.StrictMode>,

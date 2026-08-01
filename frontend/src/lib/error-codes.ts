@@ -1,9 +1,12 @@
 /**
  * Frontend mapping from backend TaskErrorCode strings to user-friendly
- * banner content. Each code produces a title, a short hint, and (when
- * applicable) a settings tab the user should visit to fix the issue.
+ * banner content. Each code produces a title/hint message id (resolved via
+ * react-intl so the banner is translatable) and (when applicable) a
+ * settings tab the user should visit to fix the issue.
  *
- * Codes mirror the backend enum in backend/src/lib/errors.ts.
+ * Codes mirror the backend enum in backend/src/lib/errors.ts. The actual
+ * copy lives in the locale catalogs as `error.<CODE>.title` /
+ * `error.<CODE>.hint` — see frontend/src/locales/en.json.
  */
 
 export type TaskErrorCode =
@@ -24,72 +27,59 @@ export type TaskErrorCode =
 export type SettingsTab = 'agent' | 'llm' | 'git' | 'repos' | 'notifications' | 'usage' | 'vps';
 
 export interface ErrorBannerInfo {
-  title: string;
-  hint: string;
+  /** The error code this banner describes (falls back to 'UNKNOWN'). */
+  code: string;
+  /** react-intl message id for the banner title: `error.<CODE>.title`. */
+  titleId: string;
+  /** react-intl message id for the banner hint: `error.<CODE>.hint`. */
+  hintId: string;
   /** Settings tab the user can open to fix the issue; absent when no direct fix exists. */
   settingsTab?: SettingsTab;
 }
 
-const ERROR_BANNER_MAP: Record<string, ErrorBannerInfo> = {
-  LLM_AUTH_FAILED: {
-    title: 'LLM API key is invalid or unauthorized',
-    hint: 'The LLM provider rejected the API key. Update the key or switch to a working config, then rerun the task.',
-    settingsTab: 'llm',
-  },
-  LLM_RATE_LIMITED: {
-    title: 'LLM rate limit reached',
-    hint: 'Too many requests were sent to the LLM provider. Wait a moment and rerun, or reduce the requests-per-minute in the config.',
-    settingsTab: 'llm',
-  },
-  LLM_QUOTA_EXCEEDED: {
-    title: 'LLM quota or billing limit exceeded',
-    hint: 'The LLM provider reports insufficient quota. Add billing credits on the provider side or switch to a different config.',
-    settingsTab: 'llm',
-  },
-  LLM_TIMEOUT: {
-    title: 'The LLM request timed out',
-    hint: 'The provider did not respond within the timeout. Increase the timeout in the LLM config or retry.',
-    settingsTab: 'llm',
-  },
-  LLM_CONNECTION_FAILED: {
-    title: 'Cannot connect to the LLM endpoint',
-    hint: 'The LLM base URL is unreachable (DNS, network, or firewall). Check the base URL and server availability.',
-    settingsTab: 'llm',
-  },
-  LLM_SERVER_ERROR: {
-    title: 'The LLM provider returned a server error',
-    hint: 'The provider is experiencing issues (HTTP 5xx). Retry shortly; if it persists, check the provider status page.',
-  },
-  GIT_AUTH_FAILED: {
-    title: 'Git authentication failed',
-    hint: 'The repository token is missing or invalid. Reconnect the Git provider to refresh the token.',
-    settingsTab: 'git',
-  },
-  GIT_PERMISSION_DENIED: {
-    title: 'Git push permission denied',
-    hint: 'The token does not have write access to this repository. Grant push permission or reconnect with the right scopes.',
-    settingsTab: 'git',
-  },
-  GIT_WORKFLOW_SCOPE: {
-    title: 'Missing GitHub "workflow" scope',
-    hint: 'The task edited .github/workflows but the token lacks the workflow OAuth scope. Reconnect GitHub to grant it, then rerun.',
-    settingsTab: 'git',
-  },
-  PROPOSAL_GENERATION_FAILED: {
-    title: 'Autonomous proposal generation failed',
-    hint: 'The background pipeline could not generate proposals after multiple retries. Check the LLM config and try again, or trigger proposals manually.',
-    settingsTab: 'llm',
-  },
+const ERROR_CODES = [
+  'LLM_AUTH_FAILED',
+  'LLM_RATE_LIMITED',
+  'LLM_QUOTA_EXCEEDED',
+  'LLM_TIMEOUT',
+  'LLM_CONNECTION_FAILED',
+  'LLM_SERVER_ERROR',
+  'GIT_AUTH_FAILED',
+  'GIT_PERMISSION_DENIED',
+  'GIT_WORKFLOW_SCOPE',
+  'PROPOSAL_GENERATION_FAILED',
+] as const;
+
+const SETTINGS_TAB_BY_CODE: Partial<Record<string, SettingsTab>> = {
+  LLM_AUTH_FAILED: 'llm',
+  LLM_RATE_LIMITED: 'llm',
+  LLM_QUOTA_EXCEEDED: 'llm',
+  LLM_TIMEOUT: 'llm',
+  LLM_CONNECTION_FAILED: 'llm',
+  GIT_AUTH_FAILED: 'git',
+  GIT_PERMISSION_DENIED: 'git',
+  GIT_WORKFLOW_SCOPE: 'git',
+  PROPOSAL_GENERATION_FAILED: 'llm',
 };
 
-const UNKNOWN_BANNER: ErrorBannerInfo = {
-  title: 'Task failed with an unexpected error',
-  hint: 'Check the console log below for details. If the issue persists, retry the task.',
-};
+function bannerFor(code: string): ErrorBannerInfo {
+  return {
+    code,
+    titleId: `error.${code}.title`,
+    hintId: `error.${code}.hint`,
+    settingsTab: SETTINGS_TAB_BY_CODE[code],
+  };
+}
+
+const ERROR_BANNER_MAP: Record<string, ErrorBannerInfo> = Object.fromEntries(
+  ERROR_CODES.map((code) => [code, bannerFor(code)]),
+);
+
+const UNKNOWN_BANNER: ErrorBannerInfo = bannerFor('UNKNOWN');
 
 /**
- * Resolves an error code (or null) to user-friendly banner content.
- * Unknown codes fall back to a generic message.
+ * Resolves an error code (or null) to user-friendly banner message ids.
+ * Unknown codes fall back to the generic 'UNKNOWN' messages.
  */
 export function getErrorBannerInfo(code: string | null | undefined): ErrorBannerInfo {
   if (code && ERROR_BANNER_MAP[code]) return ERROR_BANNER_MAP[code]!;
