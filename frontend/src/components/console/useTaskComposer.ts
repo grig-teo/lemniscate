@@ -17,6 +17,7 @@ import {
   type TaskImage,
   type TaskThinkingLevel,
 } from '@/lib/hooks';
+import { followUpCandidates } from '@/lib/follow-up';
 import { useLibraryAttachments } from '@/lib/library-attachments';
 import { estimateTokens, resolveContextWindow } from '@/lib/prompt-composer';
 import { useWorkspaceSelection } from '@/lib/selection';
@@ -46,10 +47,10 @@ export function useTaskComposer(onSubmitted?: () => void) {
   const repository = repositories.find((repo) => repo.id === repositoryId) ?? null;
   const enabledConfigs = llmConfigs.filter((config) => config.enabled);
 
-  // Eligible successors for the follow-up dropdown: idle tasks in this repo.
+  // Eligible successors for the follow-up dropdown: all non-archived tasks
+  // in this repo (the rule's single home is lib/follow-up.ts).
   const repoTasks = useTasks(repositoryId);
-  const followCandidates = (repoTasks.data ?? [])
-    .filter((t) => t.status === 'pending' || t.status === 'queued');
+  const followCandidates = followUpCandidates(repoTasks.data ?? []);
 
   const canSend =
     repositories.length > 0 &&
