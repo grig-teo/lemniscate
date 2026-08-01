@@ -60,6 +60,8 @@ export function buildReviewMessages(input: {
   taskPrompt: string | null;
   diff: string;
   systemPromptExtra?: string | null;
+  /** Optional repo context (file tree + key files + AGENTS.md) for repo-aware review. */
+  repoContext?: string | null;
 }): ChatMessage[] {
   return [
     {
@@ -84,6 +86,9 @@ export function buildReviewMessages(input: {
       content: [
         `# Task\n${input.taskTitle}`,
         input.taskPrompt ? `\n${input.taskPrompt}` : '',
+        ...(input.repoContext
+          ? [`\n# Repository context\n${input.repoContext}`]
+          : []),
         `\n# Pull request diff\n\`\`\`diff\n${input.diff}\n\`\`\``,
       ].join('\n'),
     },

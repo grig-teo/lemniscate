@@ -18,12 +18,12 @@ import type { LemcoreMessage, LemcoreRunOptions, LemcoreStep } from './loop-type
 import { chatWithTurnTimeout, turnTimeoutMs } from './loop-types.js';
 import { getAvailableTools } from './tool-catalog.js';
 import { runToolCalls } from './loop-tool-runner.js';
+import type { LemcoreSkill } from './skills.js';
 import {
   compactTranscript,
   shouldCompactTranscript,
 } from './loop-compact.js';
 import { classifyAssistantReply, EMPTY_REPLY_NUDGE } from './loop-reply.js';
-
 export {
   MAX_TURNS,
   MAX_TOOL_FAILURES,
@@ -36,12 +36,10 @@ export {
 } from './loop-constants.js';
 export type { LemcoreMessage, LemcoreRunOptions, LemcoreStep } from './loop-types.js';
 export { LemcoreStalledError } from './loop-types.js';
-
 let stepCounter = 0;
 function nextStepId(): string {
   return `step-${++stepCounter}`;
 }
-
 async function publishStepEvent(taskId: string, step: LemcoreStep): Promise<void> {
   await publishTaskEvent(taskId, 'agent_step', {
     stepId: step.stepId,
@@ -55,7 +53,6 @@ async function publishStepEvent(taskId: string, step: LemcoreStep): Promise<void
     tokensUsed: step.tokensUsed,
   });
 }
-
 /** Drop a legacy in-clone transcript left by older builds so it cannot be committed. */
 export function scrubLegacyInCloneTranscript(workdir: string): void {
   const legacy = path.join(workdir, TRANSCRIPT_FILE);
@@ -65,7 +62,6 @@ export function scrubLegacyInCloneTranscript(workdir: string): void {
     // absent is fine
   }
 }
-
 export function loadTranscript(workdir: string): LemcoreMessage[] | null {
   const file = transcriptPath(workdir);
   try {
@@ -121,14 +117,14 @@ function toChatMessages(messages: LemcoreMessage[]): ChatMessage[] {
 
 export async function runLemcoreLoop(opts: LemcoreRunOptions): Promise<string> {
   const { taskId, task, workdir, rt, prompt, secrets, resumeTranscript, skillsSection } = opts;
+  const skills: LemcoreSkill[] = opts.skills ?? [];
   const messages: LemcoreMessage[] = resumeTranscript ? [...resumeTranscript] : [];
-  const resuming = Boolean(resumeTranscript && resumeTranscript.length > 0);
-
+  const resuming = Boolean(resumeTranscript?.length);
   if (!messages.some((m) => m.role === 'system')) {
-    const skills = skillsSection?.trim() ? `\n\n${skillsSection.trim()}` : '';
+    const skillsBlock = skillsSection?.trim() ? `\n\n${skillsSection.trim()}` : '';
     messages.push({
       role: 'system',
-      content: `${lemcoreSystemPrompt()}${skills}\n\n${task.title}${task.prompt ? `\n${task.prompt}` : ''}`,
+      content: `${lemcoreSystemPrompt()}${skillsBlock}\n\n${task.title}${task.prompt ? `\n${task.prompt}` : ''}`,
     });
   }
   if (!messages.some((m) => m.role === 'user')) {
@@ -153,9 +149,7 @@ export async function runLemcoreLoop(opts: LemcoreRunOptions): Promise<string> {
   let consecutiveEmptyReplies = 0;
   const startTime = Date.now();
   const wallClockCapMs = config.AGENT_HERMES_TIMEOUT_MINUTES * 60_000;
-  // Stall watchdog for a single LLM turn (LEMCORE_STALLED_TURN_TIMEOUT_MINUTES
-  // by default): a hung provider aborts the run fast instead of pinning the
-  // worker slot until the wall-clock cap fires.
+  // Stall watchdog: a hung provider aborts the run fast instead of pinning the slot.
   const perTurnTimeoutMs = turnTimeoutMs(opts);
 
   for (let turn = 0; turn < MAX_TURNS; turn++) {
@@ -290,10 +284,16 @@ export async function runLemcoreLoop(opts: LemcoreRunOptions): Promise<string> {
       consecutiveToolFailures,
       nextStepId,
       publishStepEvent,
+      skills,
     });
     saveTranscript(workdir, messages);
   }
 
-  const lastMsg = messages[messages.length - 1];
-  return lastMsg?.content ?? '';
+  // MAX_TURNS exhausted — surface a truncation signal so the run isn't mistaken for done.
+  const lastContent = messages[messages.length - 1]?.content ?? '';
+  await publishStepEvent(taskId, {
+    stepId: nextStepId(), status: 'done', kind: 'assistant',
+    title: `Turn limit reached (${MAX_TURNS}) — run may be incomplete`,
+  });
+  return `[Run reached the ${MAX_TURNS}-turn limit without completing. ${lastContent}]`;
 }

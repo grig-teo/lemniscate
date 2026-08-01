@@ -45,9 +45,16 @@ import { loadAgentsMdTemplate, loadTaskSkills } from './task-skills.js';
 const MAX_REVIEW_DIFF_CHARS = 24_000;
 
 // Direct structured review call. Empty/invalid replies (a z.ai GLM quirk)
-// are retried with a nudge inside review-request.ts.
-export async function requestReview(rt: LlmRuntime, task: Task, diff: string): Promise<PrReview> {
-  return requestReviewWithRetry(rt, task, diff);
+// are retried with a nudge inside review-request.ts. When repoContext is
+// provided the reviewer sees the file tree + key files + AGENTS.md alongside
+// the diff, so verdicts can reference repo conventions and surrounding code.
+export async function requestReview(
+  rt: LlmRuntime,
+  task: Task,
+  diff: string,
+  repoContext?: string | null,
+): Promise<PrReview> {
+  return requestReviewWithRetry(rt, task, diff, repoContext);
 }
 
 export async function fetchReviewDiff(task: TaskWithRepo, headBranch: string): Promise<string> {
@@ -187,7 +194,17 @@ async function executeReviewTask(
   }
   const diff = await fetchReviewDiff(task, headBranch);
   await logEvent(task.id, `reviewing pull request (attempt ${attempt + 1})`);
-  const review = await requestReview(rt, task, diff);
+  // Feed repo context (file tree + key files + AGENTS.md) into the internal
+  // review so the reviewer can reference repo conventions and surrounding code
+  // — not just the bare diff. Hermes/lemcore review in a checked-out clone
+  // and don't need this (they read files themselves).
+  const agentsMdTemplate = await loadAgentsMdTemplate(task.repository);
+  const { text: reviewRepoContext } = await buildRepoContext(
+    workdir,
+    rt.cfg.contextWindow,
+    agentsMdTemplate,
+  );
+  const review = await requestReview(rt, task, diff, reviewRepoContext);
   await logReview(task.id, review, rt.usedTokens);
   await continueOrFinishReview(task, rt, review, attempt, () =>
     runReviewFixIteration(task, rt, review, headBranch, workdir, cloneUrl, secrets, gitAuth),

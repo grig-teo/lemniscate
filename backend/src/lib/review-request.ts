@@ -32,12 +32,14 @@ export async function requestReviewWithRetry(
   rt: LlmRuntime,
   task: Task,
   diff: string,
+  repoContext?: string | null,
 ): Promise<PrReview> {
   const messages = buildReviewMessages({
     taskTitle: task.title,
     taskPrompt: task.prompt,
     diff,
     systemPromptExtra: rt.cfg.systemPromptExtra,
+    repoContext,
   });
   for (let attempt = 1; attempt <= MAX_INVALID_REVIEW_REPLIES; attempt++) {
     try {

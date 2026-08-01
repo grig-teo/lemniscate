@@ -110,6 +110,14 @@ export function getAvailableTools(): ChatCompletionTool[] {
       },
       ['query'],
     ),
+    fnTool(
+      'load_skill',
+      'Load the full instructions (SKILL.md) of an attached skill by name or slug. Call this before applying a skill — only load what you need.',
+      {
+        name: { type: 'string', description: 'Skill name or slug' },
+      },
+      ['name'],
+    ),
   ];
 }
 

@@ -1,9 +1,9 @@
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { logEvent, hasDirtyWorkdir } from '../agent-git.js';
-import { buildSkillsSection } from '../agent-prompts.js';
-import type { LlmRuntime, TaskWithRepo } from '../agent-runtime.js';
 import { loadTaskSkills } from '../task-skills.js';
+import { toLemcoreSkills, buildSkillsPromptSection, type LemcoreSkill } from './skills.js';
+import type { LlmRuntime, TaskWithRepo } from '../agent-runtime.js';
 import { buildLemcoreImplContext } from './graph-context.js';
 import { clearGraphSession } from './graph/session.js';
 import { scanRepositoryGraph } from './graph-scan.js';
@@ -51,13 +51,18 @@ export function appendGraphContext(
   ].join('\n');
 }
 
-/** Write selected skills under .agents/skills/<slug>/SKILL.md (hermes parity). */
+/**
+ * Write selected skills under .agents/skills/<slug>/SKILL.md (hermes parity)
+ * and return progressive-disclosure prompt section + skill objects (one-line
+ * summaries only — the agent calls load_skill(name) to read full instructions
+ * on demand, saving context vs. the old full-inline approach).
+ */
 export async function materializeTaskSkills(
   task: TaskWithRepo,
   workdir: string,
-): Promise<string> {
+): Promise<{ section: string; skills: LemcoreSkill[] }> {
   const skills = await loadTaskSkills(task);
-  if (skills.length === 0) return '';
+  if (skills.length === 0) return { section: '', skills: [] };
   for (const skill of skills) {
     const dir = path.join(workdir, '.agents', 'skills', skill.slug);
     await fs.mkdir(dir, { recursive: true });
@@ -69,7 +74,8 @@ export async function materializeTaskSkills(
     task.id,
     'note: lemcore does not invoke MCP servers; .mcp.json is written for parity only',
   );
-  return buildSkillsSection(skills);
+  const lemcoreSkills = toLemcoreSkills(skills);
+  return { section: buildSkillsPromptSection(lemcoreSkills), skills: lemcoreSkills };
 }
 
 export interface LemcoreTaskResult {
@@ -165,7 +171,7 @@ async function executeLemcoreTask(opts: {
     resume,
     promptOverride,
   );
-  const skillsSection = await materializeTaskSkills(task, workdir);
+  const { section: skillsSection, skills: lemcoreSkills } = await materializeTaskSkills(task, workdir);
   const resumeTranscript = loadResumeTranscript(workdir, resume, promptOverride);
   if (resumeTranscript) {
     await logEvent(taskId, `resumed from transcript (${resumeTranscript.length} messages)`);
@@ -180,6 +186,7 @@ async function executeLemcoreTask(opts: {
     secrets,
     resumeTranscript,
     skillsSection,
+    skills: lemcoreSkills,
   });
 
   const changed = await hasDirtyWorkdir(workdir);
