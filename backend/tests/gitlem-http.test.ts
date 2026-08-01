@@ -116,6 +116,45 @@ describe('git smart-HTTP transport', () => {
     expect(response.statusCode).toBe(403);
   });
 
+  it('serves repos whose name needs URL-encoding (the clone URL encodes it)', async () => {
+    mockRepo();
+    const app = buildApp();
+    const response = await app.inject({
+      method: 'GET',
+      url: '/alice/test%203.git/info/refs?service=git-upload-pack',
+      headers: { authorization: AUTH },
+    });
+    expect(mocks.repoFindUnique).toHaveBeenCalledWith({
+      where: { ownerId_name: { ownerId: 'gu-1', name: 'test 3' } },
+    });
+    expect(response.statusCode).toBe(200);
+    expect(response.body).toContain('refs/heads/main');
+    const gitDir = await materializeGitlemRepo('alice', 'test 3');
+    materialized.push(gitDir!);
+  });
+
+  it('answers 502 with the reason when materialization throws', async () => {
+    mocks.userFindUnique.mockResolvedValue({
+      id: 'gu-1',
+      username: 'alice',
+      email: 'alice@example.com',
+      apiToken: 'tok',
+    });
+    mocks.repoFindUnique.mockRejectedValue(new Error('db exploded'));
+
+    const app = buildApp();
+    const response = await app.inject({
+      method: 'GET',
+      url: '/alice/demo.git/info/refs?service=git-upload-pack',
+      headers: { authorization: AUTH },
+    });
+    // Without the handler's error boundary Fastify's default 500 surfaces as
+    // an opaque proxy 502; the explicit 502 makes the failure diagnosable
+    // (the detail goes to the request log, not the git client).
+    expect(response.statusCode).toBe(502);
+    expect(response.json().error).toContain('failed to materialize');
+  });
+
   it('fails with 502 instead of serving truncated http-backend output', async () => {
     mockRepo();
     const gitDir = await materializeGitlemRepo('alice', 'demo');

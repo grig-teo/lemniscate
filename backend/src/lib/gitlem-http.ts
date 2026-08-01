@@ -180,6 +180,18 @@ export async function runHttpBackend(
   });
 }
 
+// Materialization failure boundary (observability fix for the opaque 502
+// reported on `git clone .../test%203.git`). The clone URL decoding itself
+// is proven fine — the 'serves repos whose name needs URL-encoding' test
+// clones a repo named 'test 3' end-to-end through this route — so the root
+// cause of that incident is still unidentified and the clone may keep
+// failing. What this boundary changes: a throw here (doc parse, a failed
+// git subprocess while building the clone, a prisma error) previously fell
+// through to Fastify's default 500, which the reverse proxy reports to the
+// git client as an opaque 502 with no body and no log of the real error.
+// Now the underlying error lands in the request log and the client gets an
+// explicit 502, so the next occurrence is diagnosable from the backend
+// logs ('gitlem: repository materialization failed').
 async function gitHttpHandler(request: FastifyRequest, reply: FastifyReply) {
   const auth = await authenticateGitRequest(request.headers.authorization);
   if (!auth) return sendUnauthorized(reply);
@@ -188,7 +200,23 @@ async function gitHttpHandler(request: FastifyRequest, reply: FastifyReply) {
   if (params.username !== auth.username) {
     return reply.code(403).send({ error: 'gitlem: token does not own this namespace' });
   }
-  const gitDir = await materializeGitlemRepo(params.username, params.repo);
-  if (!gitDir) return reply.code(404).send({ error: 'gitlem: repository not found' });
+  const gitDir = await tryMaterialize(request, params);
+  if (gitDir === undefined) {
+    return reply.code(502).send({ error: 'gitlem: failed to materialize the repository' });
+  }
+  if (gitDir === null) return reply.code(404).send({ error: 'gitlem: repository not found' });
   return runHttpBackend(request, reply, params, gitDir);
+}
+
+/** undefined = materialization threw (already logged); null = repo missing. */
+async function tryMaterialize(
+  request: FastifyRequest,
+  params: GitParams,
+): Promise<string | null | undefined> {
+  try {
+    return await materializeGitlemRepo(params.username, params.repo);
+  } catch (err) {
+    request.log.error({ err }, 'gitlem: repository materialization failed');
+    return undefined;
+  }
 }
