@@ -1,6 +1,6 @@
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import { config } from '../config.js';
-import { getAgentTasksQueue, JOB_PRIORITY } from '../lib/proposal-scheduler.js';
+import { enqueueRunTask } from '../lib/proposal-scheduler.js';
 import { prisma } from '../lib/prisma.js';
 import { attachmentsData } from '../lib/task-attachments.js';
 import { parseSkillSlugs } from '../lib/task-skills.js';
@@ -24,7 +24,6 @@ import { createBodySchema, idParamsSchema, listQuerySchema } from './task-schema
 
 // Read/create task handlers: list, create (+ enqueue), and single-fetch.
 
-export const RUN_TASK_JOB = 'run-task';
 const TASK_LIST_LIMIT = 100;
 
 // Enabled configs of the user, fetched once per request to resolve each
@@ -157,15 +156,12 @@ export async function createTask(request: FastifyRequest, reply: FastifyReply) {
   // or slow LLM never blocks creation or the queue add below.
   void reviveGeneratedTitle(task.id, userId, data.prompt);
 
-  // Same queue/job name as the worker; route-local options (no jobId
-  // dedupe, immediate removal on completion) preserved as before. A
+  // Enqueue exclusively through the jobId-deduped helper (single enqueue
+  // path for run-task, AGENTS.md §6): a double-submit or client retry of
+  // this route cannot create a second live job for the same task. A
   // save-for-later task gets no job until POST /tasks/:id/start.
   if (!data.later) {
-    await getAgentTasksQueue().add(
-      RUN_TASK_JOB,
-      { taskId: task.id },
-      { removeOnComplete: true, priority: JOB_PRIORITY.userTask },
-    );
+    await enqueueRunTask(task.id);
   }
 
   const configs = await loadUsageConfigs(userId);

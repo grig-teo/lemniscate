@@ -7,6 +7,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
   taskFindMany: vi.fn(),
+  taskUpdate: vi.fn(),
   taskEventCount: vi.fn().mockResolvedValue(0),
   taskEventFindFirst: vi.fn().mockResolvedValue(null),
   taskEventFindMany: vi.fn().mockResolvedValue([]),
@@ -27,7 +28,7 @@ vi.mock('../src/config.js', () => ({
 }));
 vi.mock('../src/lib/prisma.js', () => ({
   prisma: {
-    task: { findMany: mocks.taskFindMany },
+    task: { findMany: mocks.taskFindMany, update: mocks.taskUpdate },
     taskEvent: {
       count: mocks.taskEventCount,
       findFirst: mocks.taskEventFindFirst,
@@ -105,6 +106,7 @@ beforeEach(() => {
   mocks.taskEventCount.mockResolvedValue(0);
   mocks.taskEventFindMany.mockResolvedValue([]);
   mocks.taskEventFindFirst.mockResolvedValue(null);
+  mocks.taskUpdate.mockResolvedValue({});
   mocks.enqueueReviewTask.mockResolvedValue(undefined);
 });
 
@@ -403,6 +405,13 @@ describe('recoverStuckReviews', () => {
 
     await recoverStuckReviews();
 
+    // The dead run's status is reset to 'queued' before re-enqueueing so the
+    // atomic claim in runTask can flip it back to 'running' — 'running' is
+    // deliberately not a claimable-from state (a live executor owns it).
+    expect(mocks.taskUpdate).toHaveBeenCalledWith({
+      where: { id: 't-run-dead' },
+      data: { status: 'queued' },
+    });
     expect(mocks.enqueueRunTask).toHaveBeenCalledWith('t-run-dead');
     expect(mocks.enqueueReviewTask).not.toHaveBeenCalled();
     expect(mocks.logEvent).toHaveBeenCalledWith(
@@ -419,6 +428,10 @@ describe('recoverStuckReviews', () => {
 
     await recoverStuckReviews();
 
+    expect(mocks.taskUpdate).toHaveBeenCalledWith({
+      where: { id: 't-run-no-review' },
+      data: { status: 'queued' },
+    });
     expect(mocks.enqueueRunTask).toHaveBeenCalledWith('t-run-no-review');
   });
 

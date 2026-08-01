@@ -15,6 +15,7 @@ const mocks = vi.hoisted(() => ({
   taskCount: vi.fn(),
   taskCreate: vi.fn(),
   queueAdd: vi.fn(),
+  enqueueRunTask: vi.fn(),
 }));
 
 vi.mock('../src/lib/prisma.js', () => ({
@@ -27,7 +28,7 @@ vi.mock('../src/lib/prisma.js', () => ({
 }));
 vi.mock('../src/lib/proposal-scheduler.js', () => ({
   getAgentTasksQueue: () => ({ add: mocks.queueAdd }),
-  enqueueRunTask: vi.fn(),
+  enqueueRunTask: mocks.enqueueRunTask,
   JOB_PRIORITY: { userTask: 1, review: 2, background: 10 },
 }));
 
@@ -57,6 +58,7 @@ beforeEach(() => {
   mocks.llmFindMany.mockResolvedValue([]);
   mocks.taskCreate.mockImplementation(async ({ data }: { data: object }) => ({ id: 't1', ...data }));
   mocks.queueAdd.mockResolvedValue({});
+  mocks.enqueueRunTask.mockResolvedValue(undefined);
 });
 
 describe('per-user active task cap', () => {
@@ -86,6 +88,23 @@ describe('per-user active task cap', () => {
     const response = await createTask(app);
     expect(response.statusCode).toBe(201);
     expect(mocks.taskCreate).toHaveBeenCalledOnce();
-    expect(mocks.queueAdd).toHaveBeenCalledOnce();
+    expect(mocks.enqueueRunTask).toHaveBeenCalledWith('t1');
+  });
+});
+
+// Idempotent enqueue: the create route must enqueue exclusively through the
+// jobId-deduped enqueueRunTask helper (never a raw queue.add), so a
+// double-submit or client retry cannot create two live run-task jobs.
+describe('create route enqueue dedupe', () => {
+  it('enqueues only via the jobId-deduped helper, one job per task', async () => {
+    mocks.taskCount.mockResolvedValue(0);
+    const app = await buildApp();
+    await createTask(app);
+    await createTask(app);
+
+    expect(mocks.enqueueRunTask).toHaveBeenCalledTimes(2);
+    expect(mocks.enqueueRunTask).toHaveBeenNthCalledWith(1, 't1');
+    expect(mocks.enqueueRunTask).toHaveBeenNthCalledWith(2, 't1');
+    expect(mocks.queueAdd).not.toHaveBeenCalled();
   });
 });
