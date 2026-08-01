@@ -70,6 +70,7 @@ async function runCiFixViaHermes(ctx: GateContext): Promise<void> {
     baseBranch: task.repository.defaultBranch,
     headBranch,
     systemPromptExtra: rt.cfg.systemPromptExtra,
+    failingChecks: ctx.failingChecks,
   });
   const executor = await resolveAgentExecutor(task.repository.connection.userId);
   if (executor === 'lemcore') {
@@ -327,6 +328,7 @@ export async function mergeGateTask(taskId: string, attempt = 0, ciFixes = 0): P
     const ctx: GateContext = {
       task, rt, headBranch, attempt, ciFixes, workdir,
       cloneUrl: prepared.cloneUrl, secrets, auth: prepared.gitAuth,
+      failingChecks: checks.failingChecks,
     };
     if (action === 'fix-ci') {
       await runCiFixAndRequeue(ctx);

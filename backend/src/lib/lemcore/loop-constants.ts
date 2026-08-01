@@ -49,6 +49,7 @@ export function lemcoreSystemPrompt(): string {
     '- read_file(path, offset?, limit?): read a file',
     '- write_file(path, content): overwrite a file',
     '- edit_file(path, search, replace): literal search/replace, exactly one match required',
+    '- multi_edit(path, edits): multiple search/replace pairs on one file in one call',
     '- bash(command): run a shell command (120s timeout)',
     '- grep(pattern, path?, glob?): search with ripgrep',
     '- glob(pattern): list files matching a pattern (max 200)',

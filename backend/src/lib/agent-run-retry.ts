@@ -18,11 +18,19 @@
 //      that actually produced something (or a merged PR).
 
 import { logEvent } from './agent-git.js';
+import { loadTaskWithRepo, type LlmRuntime, type TaskWithRepo } from './agent-runtime.js';
 import { TaskErrorCode } from './errors.js';
+import { logger } from './logger.js';
 import { enqueueRunTask } from './proposal-scheduler.js';
 import { prisma } from './prisma.js';
+import { claimTaskForRun } from './task-claim.js';
 import { setTaskStatus } from './task-events.js';
 import { sleep } from './utils.js';
+
+// Outcome of one executeRunTask pass: the pipeline ended in a final status,
+// or the run produced no changes and requeued itself for one more attempt
+// (the retried delivery runs executeRunTask again).
+export type RunOutcome = 'final' | 'retry';
 
 // One automatic retry per no-changes run (2 attempts total) — bounded so a
 // repo where the agent legitimately finds nothing to do cannot loop
@@ -75,6 +83,9 @@ export async function handleNoChangesProduced(taskId: string, attempt: number): 
     return 'retry';
   }
   await failNoChanges(taskId, attempt);
+  // Unreachable — failNoChanges throws — but tsc does not narrow a
+  // Promise<never> through an awaited call, so keep the ending explicit.
+  throw new NoChangesProducedError(attempt);
 }
 
 // Claim gate for a retry delivery: the requeued task must still be in a
@@ -88,4 +99,43 @@ export async function taskStillClaimable(taskId: string, claimable: readonly str
     select: { status: true },
   });
   return task !== null && claimable.includes(task.status);
+}
+
+// Result of one executeRunTask pass: the runtime (so the caller can persist
+// cumulative token usage) plus the outcome.
+export interface RunAttemptResult {
+  rt: LlmRuntime;
+  outcome: RunOutcome;
+}
+
+// One-attempt loop extracted from runTask. `runAttempt` performs one full
+// pass (clone/resume → implement → push → PR); a no-changes pass requeues
+// itself with a stronger prompt and returns 'retry', in which case the loop
+// reclaims the task and tries again — handleNoChangesProduced throws
+// NoChangesProducedError on the final attempt, so the loop cannot spin
+// forever. Returns null (with the runtime so far) when the run stood down:
+// the requeue was lost to a cancel or won by a duplicate executor, so the
+// task is NOT finished and the caller must skip the completion hook.
+export async function runWithNoChangeRetries(
+  taskId: string,
+  initialTask: TaskWithRepo,
+  claimable: readonly string[],
+  runAttempt: (task: TaskWithRepo, attempt: number) => Promise<RunAttemptResult>,
+): Promise<{ rt: LlmRuntime; stoodDown: boolean }> {
+  let task = initialTask;
+  for (let attempt = 1; ; attempt++) {
+    const { rt, outcome } = await runAttempt(task, attempt);
+    if (outcome === 'final') return { rt, stoodDown: false };
+    if (!(await taskStillClaimable(taskId, claimable))) {
+      logger.info(
+        { taskId },
+        'run-task: retry requeue lost (cancelled or claimed), standing down',
+      );
+      return { rt, stoodDown: true };
+    }
+    if (!(await claimTaskForRun(taskId))) return { rt, stoodDown: true };
+    // Refresh so the next attempt sees the current prompt/branch/prUrl.
+    const fresh = await loadTaskWithRepo(taskId);
+    if (fresh) task = fresh;
+  }
 }

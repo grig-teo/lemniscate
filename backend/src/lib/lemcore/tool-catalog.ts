@@ -32,6 +32,26 @@ export function getAvailableTools(): ChatCompletionTool[] {
       ['path', 'search', 'replace'],
     ),
     fnTool(
+      'multi_edit',
+      'Apply multiple search/replace pairs to one file in a single call. Each pair requires exactly one match. Use for multi-spot refactors.',
+      {
+        path: { type: 'string', description: 'Relative path to the file' },
+        edits: {
+          type: 'array',
+          description: 'Array of {search, replace} pairs, applied sequentially',
+          items: {
+            type: 'object',
+            properties: {
+              search: { type: 'string', description: 'Exact text to find' },
+              replace: { type: 'string', description: 'Replacement text' },
+            },
+            required: ['search', 'replace'],
+          },
+        },
+      },
+      ['path', 'edits'],
+    ),
+    fnTool(
       'bash',
       'Run a shell command. Captures stdout and stderr. 120s timeout.',
       {

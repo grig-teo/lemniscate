@@ -3,24 +3,16 @@ import fs from 'node:fs/promises';
 import { config } from '../config.js';
 import { logger } from './logger.js';
 import {
-  applyChanges,
   cleanupWorkdir,
   cloneRepository,
   commitAndPush,
   git,
-  hasDirtyWorkdir,
   logEvent,
   persistTokenUsage,
   recordJobFailure,
   type GitAuth,
 } from './agent-git.js';
-import {
-  buildPrBody,
-  buildSkillsSection,
-  generateBranchName,
-  requestChanges,
-  type LlmChangesResponse,
-} from './agent-prompts.js';
+import { buildPrBody, generateBranchName } from './agent-prompts.js';
 import {
   loadTaskWithRepo,
   prepareAgentRuntime,
@@ -28,30 +20,22 @@ import {
   type LlmRuntime,
   type TaskWithRepo,
 } from './agent-runtime.js';
-import { resolveAgentExecutor } from './agent-executor.js';
-import { runHermesForTask } from './agent-run-hermes.js';
+import { implementTask } from './agent-run-implement.js';
 import {
   NoChangesProducedError,
   handleNoChangesProduced,
-  taskStillClaimable,
+  runWithNoChangeRetries,
+  type RunOutcome,
 } from './agent-run-retry.js';
-import { runLemcoreTask } from './lemcore/run.js';
-import { classifyError, TaskErrorCode } from './errors.js';
+import { classifyError } from './errors.js';
 import { notify, notifyTaskCompleted } from './notifications.js';
 import { prisma } from './prisma.js';
 import { enqueueReviewTask } from './proposal-scheduler.js';
 import { openPullRequest } from './pull-requests.js';
-import { buildRepoContext } from './repo-context.js';
 import { buildTaskAttachmentFiles } from './repo-init.js';
-import { loadAgentsMdTemplate, loadTaskSkills } from './task-skills.js';
 import { setTaskStatus } from './task-events.js';
 import { claimTaskForRun, RUN_CLAIMABLE_STATUSES } from './task-claim.js';
 import { errorMessage } from './utils.js';
-
-// Outcome of one executeRunTask pass: the pipeline ended in a final status,
-// or the run produced no changes and requeued itself for one more attempt
-// (the retried delivery runs executeRunTask again).
-type RunOutcome = 'final' | 'retry';
 
 // Job: run-task — clone → LLM-proposed changes → branch → commit → push →
 // pull request. Extracted from agent-loop.ts.
@@ -104,49 +88,6 @@ async function createTaskBranch(
   await prisma.task.update({ where: { id: task.id }, data: { branchName } });
   await logEvent(task.id, `created branch ${branchName}`);
   return branchName;
-}
-
-async function logContextManifest(
-  taskId: string,
-  files: Array<{ path: string; chars: number }>,
-  totalChars: number,
-): Promise<void> {
-  for (const file of files) {
-    await logEvent(taskId, `read ${file.path} (${file.chars} chars)`);
-  }
-  await logEvent(
-    taskId,
-    `repository context ready: ${files.length} key file(s), ${totalChars} chars`,
-  );
-}
-
-// Resolves the task's skills to a system-prompt section; logs which skills
-// are active so the run console shows what was injected.
-async function taskSkillsSection(task: TaskWithRepo): Promise<string> {
-  const skills = await loadTaskSkills(task);
-  if (skills.length === 0) return '';
-  await logEvent(task.id, `active skills: ${skills.map((s) => s.slug).join(', ')}`);
-  return buildSkillsSection(skills);
-}
-
-async function proposeTaskChanges(
-  task: TaskWithRepo,
-  rt: LlmRuntime,
-  workdir: string,
-): Promise<LlmChangesResponse> {
-  await logEvent(task.id, 'building repository context');
-  const agentsMdTemplate = await loadAgentsMdTemplate(task.repository);
-  const { text: repoContext, files } = await buildRepoContext(
-    workdir,
-    rt.cfg.contextWindow,
-    agentsMdTemplate,
-  );
-  await logContextManifest(task.id, files, repoContext.length);
-  const skillsSection = await taskSkillsSection(task);
-  const result = await requestChanges(rt, task, repoContext, undefined, skillsSection);
-  await logEvent(task.id, `LLM proposed ${result.changes.length} change(s): ${result.summary}`);
-  await logEvent(task.id, `LLM usage so far: ~${rt.usedTokens} tokens`);
-  return result;
 }
 
 async function pushBranch(
@@ -234,46 +175,6 @@ async function recordChangedPaths(task: TaskWithRepo, workdir: string): Promise<
       () => {},
     );
   }
-}
-
-// Runs the configured task executor. Returns the change summary for the
-// commit/PR, or null when the workdir has nothing to commit.
-// Executor comes from Settings → Agent (per-user override) via
-// resolveAgentExecutor — never the bare AGENT_EXECUTOR env alone, or a
-// user who picked lemcore would still get hermes when the deployment
-// default is hermes.
-async function implementTask(
-  task: TaskWithRepo,
-  rt: LlmRuntime,
-  workdir: string,
-  secrets: string[],
-  resume: boolean,
-  attempt: number,
-): Promise<string | null> {
-  const userId = task.repository.connection.userId;
-  const executor = await resolveAgentExecutor(userId);
-  await logEvent(task.id, `executor: ${executor}`);
-  if (executor === 'hermes') {
-    await runHermesForTask(task, rt, workdir, secrets, resume, attempt);
-    return (await hasDirtyWorkdir(workdir)) ? task.title : null;
-  }
-  if (executor === 'lemcore') {
-    const result = await runLemcoreTask({
-      taskId: task.id,
-      task,
-      workdir,
-      rt,
-      secrets,
-      resume,
-      attempt,
-    });
-    return result.changed ? task.title : null;
-  }
-  const { summary, changes } = await proposeTaskChanges(task, rt, workdir);
-  const applied = await applyChanges(task.id, workdir, changes, secrets);
-  await logEvent(task.id, `applied ${applied} of ${changes.length} proposed change(s)`);
-  if (applied === 0 || !(await hasDirtyWorkdir(workdir))) return null;
-  return summary;
 }
 
 // A run interrupted mid-implementation (a redeploy killed the worker) leaves
@@ -390,22 +291,15 @@ export async function runTask(taskId: string): Promise<void> {
   let rt: LlmRuntime | null = null;
   try {
     // A run that produced no changes requeues itself (status 'queued') and
-    // enqueues one immediate retry with a stronger prompt; the loop below
-    // picks that delivery up. 'retry' skips the completion hook — the task
-    // is not finished yet.
-    for (let attempt = 1; ; attempt++) {
-      const result = await executeRunTask(task, workdir, secrets, attempt);
-      rt = result.rt;
-      if (result.outcome === 'final') break;
-      if (!(await taskStillClaimable(taskId, RUN_CLAIMABLE_STATUSES))) {
-        logger.info({ taskId }, 'run-task: retry requeue lost (cancelled or claimed), standing down');
-        return;
-      }
-      if (!(await claimTaskForRun(taskId))) return;
-      // Refresh so the next attempt sees the current prompt/branch/prUrl.
-      const fresh = await loadTaskWithRepo(taskId);
-      if (fresh) task = fresh;
-    }
+    // enqueues one immediate retry with a stronger prompt; the loop picks
+    // that delivery up and stands down when the requeue was lost (cancelled
+    // or claimed by a duplicate executor). 'retry' skips the completion
+    // hook — the task is not finished yet.
+    const result = await runWithNoChangeRetries(taskId, task, RUN_CLAIMABLE_STATUSES, (t, attempt) =>
+      executeRunTask(t, workdir, secrets, attempt),
+    );
+    rt = result.rt;
+    if (result.stoodDown) return;
     // Terminal 'done' runs (no auto-PR, empty repo) notify here;
     // the auto-PR path ends awaiting_review and already fired pr_opened.
     // A dispatch failure must not fail the run, but it is logged — silent
