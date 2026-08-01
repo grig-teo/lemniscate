@@ -1,4 +1,5 @@
 import { parseToolCallArguments, type ChatToolCall } from '../llm-client.js';
+import type { LlmRuntime } from '../agent-runtime.js';
 import {
   toolReadFile,
   toolWriteFile,
@@ -140,6 +141,7 @@ export async function runToolCalls(opts: {
   nextStepId: () => string;
   publishStepEvent: (taskId: string, step: LemcoreStep) => Promise<void>;
   skills?: LemcoreSkill[];
+  rt?: LlmRuntime;
 }): Promise<number> {
   let failures = opts.consecutiveToolFailures;
   for (const tc of opts.toolCalls) {

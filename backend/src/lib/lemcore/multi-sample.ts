@@ -1,0 +1,130 @@
+// Multi-sample edit verification: when the model's first edit attempt fails
+// lint, make ONE additional LLM call (different seed + nudge) and try the
+// alternative. The common path (first attempt is lint-clean) costs zero extra
+// — the fallback only fires on lint failure (SWE-bench pass@2 >> pass@1).
+import type { ChatToolCall } from '../llm-client.js';
+import { chatCompletion } from '../llm-dispatch.js';
+import { resolveLlmAccessToken } from '../llm-access-token.js';
+import { parseToolCallArguments } from '../llm-client.js';
+import { config } from '../../config.js';
+import { logEvent } from '../agent-git.js';
+import { lintAndMaybeRevert, checkpointEdit } from './edit-checkpoint.js';
+import { jailPath, truncate, type ToolResult, type ToolName } from './tools.js';
+import { redactSecrets } from '../utils.js';
+import type { LlmRuntime } from '../agent-runtime.js';
+import { promises as fs } from 'node:fs';
+
+interface MultiSampleOpts {
+  workdir: string;
+  rt: LlmRuntime;
+  taskId: string;
+  toolCall: ChatToolCall;
+  originalContent: string;
+  primaryNewContent: string;
+  secrets: string[];
+}
+
+export async function verifyEditWithFallback(opts: MultiSampleOpts): Promise<ToolResult> {
+  const { workdir, rt, taskId, toolCall, originalContent, primaryNewContent, secrets } = opts;
+  const relPath = parsePathFromArgs(toolCall);
+
+  const primary = await lintAndMaybeRevert(
+    workdir, relPath, originalContent, primaryNewContent, secrets, Date.now(),
+    toolCall.function.name as ToolName,
+  );
+  if (!primary.error) return primary;
+
+  if (!config.LEMCORE_MULTI_SAMPLE || !relPath) return primary;
+
+  const fallback = await tryFallbackEdit(opts, primary.error);
+  if (fallback) {
+    await logEvent(taskId, `multi-sample: fallback edit accepted for ${relPath}`);
+    return fallback;
+  }
+  return primary;
+}
+
+async function tryFallbackEdit(
+  opts: MultiSampleOpts,
+  primaryError: string,
+): Promise<ToolResult | null> {
+  const { workdir, rt, toolCall, originalContent, secrets } = opts;
+  const relPath = parsePathFromArgs(toolCall);
+  if (!relPath) return null;
+
+  try {
+    const apiKey = await resolveLlmAccessToken(rt.cfg);
+    const result = await chatCompletion({
+      baseUrl: rt.cfg.baseUrl,
+      apiKey,
+      model: rt.cfg.model,
+      apiPattern: rt.cfg.apiPattern,
+      messages: [{
+        role: 'user',
+        content: `Your previous edit to "${relPath}" introduced lint errors:\n${primaryError.slice(0, 800)}\n\nTry a DIFFERENT approach. Call ${toolCall.function.name} again with corrected content.`,
+      }],
+      temperature: 0.4,
+      maxTokens: 4096,
+      seed: Date.now() % 2147483647,
+      timeoutSeconds: rt.cfg.timeoutSeconds,
+      maxRetries: 1,
+      customHeaders: {},
+    });
+
+    const fallbackArgs = extractToolArgs(result.content);
+    if (!fallbackArgs) return null;
+
+    const fallbackContent = computeEditContent(
+      originalContent, fallbackArgs, toolCall.function.name,
+    );
+    if (!fallbackContent) return null;
+
+    await fs.writeFile(jailPath(workdir, relPath), originalContent, 'utf8');
+    checkpointEdit(workdir, relPath, originalContent);
+
+    return await lintAndMaybeRevert(
+      workdir, relPath, originalContent, fallbackContent, secrets,
+      Date.now(), toolCall.function.name as ToolName,
+    );
+  } catch {
+    return null;
+  }
+}
+
+function parsePathFromArgs(toolCall: ChatToolCall): string {
+  try {
+    const args = parseToolCallArguments(toolCall);
+    return args.path ? String(args.path) : '';
+  } catch {
+    return '';
+  }
+}
+
+function extractToolArgs(content: string): Record<string, unknown> | null {
+  const match = content.match(/\{[\s\S]*?"path"[\s\S]*?\}/);
+  if (!match) return null;
+  try { return JSON.parse(match[0]); } catch { return null; }
+}
+
+function computeEditContent(
+  original: string, args: Record<string, unknown>, toolName: string,
+): string | null {
+  if (toolName === 'edit_file') {
+    const search = String(args.search ?? '');
+    const replace = String(args.replace ?? '');
+    if (!search || !original.includes(search)) return null;
+    return original.replace(search, () => replace);
+  }
+  if (toolName === 'multi_edit' && Array.isArray(args.edits)) {
+    let content = original;
+    for (const edit of args.edits as Record<string, unknown>[]) {
+      const s = String(edit.search ?? '');
+      const r = String(edit.replace ?? '');
+      if (!s || !content.includes(s)) return null;
+      content = content.replace(s, () => r);
+    }
+    return content;
+  }
+  if (toolName === 'write_file') return String(args.content ?? '');
+  return null;
+}
