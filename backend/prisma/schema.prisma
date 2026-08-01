@@ -694,6 +694,7 @@ model GitlemRepository {
   owner         GitlemUser @relation(fields: [ownerId], references: [id], onDelete: Cascade)
 
   @@unique([ownerId, name])
+}
 
 // ─── lemcore phases 10–12 ────────────────────────────────────────────────
 
