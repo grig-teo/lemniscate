@@ -5,13 +5,17 @@ import {
   toolEditFile,
   toolMultiEdit,
   toolBash,
+  type ToolResult,
+  type ToolName,
+} from './tools.js';
+import { toolUndoEdit } from './edit-checkpoint.js';
+import { toolTodoWrite } from './todo-store.js';
+import {
   toolGrep,
   toolGlob,
   toolListDir,
   toolWebSearch,
-  type ToolResult,
-  type ToolName,
-} from './tools.js';
+} from './explore-tools.js';
 import {
   toolGraphImpact,
   toolGraphNeighbors,
@@ -92,6 +96,10 @@ export async function executeTool(
         durationMs: 0,
       };
     }
+    case 'undo_edit':
+      return toolUndoEdit(workdir, String(args.path ?? ''), secrets);
+    case 'todo_write':
+      return toolTodoWrite(workdir, String(args.content ?? ''), secrets);
     default:
       return {
         tool: name as ToolName,

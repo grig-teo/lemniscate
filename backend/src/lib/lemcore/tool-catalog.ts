@@ -146,6 +146,24 @@ export function getAvailableTools(): ChatCompletionTool[] {
       },
       ['name'],
     ),
+    fnTool(
+      'undo_edit',
+      'Revert the most recent edit to a file (restore the pre-edit checkpoint). Use when a lint or test fails after an edit.',
+      { path: { type: 'string', description: 'Relative path to the file' } },
+      ['path'],
+    ),
+    fnTool(
+      'todo_write',
+      'Write or update a TODO list for the current task. The list is re-injected as a reminder every turn. Use this to track multi-step work.',
+      {
+        content: {
+          type: 'string',
+          description:
+            'The full TODO list (markdown checkboxes or plain lines). Replaces the previous list.',
+        },
+      },
+      ['content'],
+    ),
   ];
 }
 

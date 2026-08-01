@@ -5,13 +5,13 @@ import { logger } from './logger.js';
 import {
   cleanupWorkdir,
   cloneRepository,
-  commitAndPush,
   git,
   logEvent,
   persistTokenUsage,
   recordJobFailure,
   type GitAuth,
 } from './agent-git.js';
+import { pushTaskBranch, recordChangedPaths } from './agent-publish.js';
 import { buildPrBody, generateBranchName } from './agent-prompts.js';
 import {
   loadTaskWithRepo,
@@ -90,27 +90,6 @@ async function createTaskBranch(
   return branchName;
 }
 
-async function pushBranch(
-  task: TaskWithRepo,
-  rt: LlmRuntime,
-  workdir: string,
-  branchName: string,
-  summary: string,
-  secrets: string[],
-  auth: GitAuth,
-): Promise<void> {
-  await commitAndPush(
-    task,
-    rt,
-    workdir,
-    summary,
-    ['push', '-u', 'origin', branchName],
-    secrets,
-    auth,
-  );
-  await logEvent(task.id, `pushed branch ${branchName}`);
-}
-
 async function openTaskPullRequest(
   task: TaskWithRepo,
   rt: LlmRuntime,
@@ -153,28 +132,6 @@ async function finalizeRunTask(
     return;
   }
   await openTaskPullRequest(task, rt, branchName, summary);
-}
-
-// Persists the repo-relative paths the task branch changed (feeds the
-// run-targets endpoint). Fail-soft: a failed diff is logged to the task
-// console and changedPaths stays null, so the endpoint falls back to the
-// repository platform.
-async function recordChangedPaths(task: TaskWithRepo, workdir: string): Promise<void> {
-  try {
-    const out = await git(
-      ['diff', '--name-only', `${task.repository.defaultBranch}...HEAD`],
-      { cwd: workdir, taskId: task.id },
-    );
-    const changedPaths = out
-      .split('\n')
-      .map((line) => line.trim())
-      .filter(Boolean);
-    await prisma.task.update({ where: { id: task.id }, data: { changedPaths } });
-  } catch (err) {
-    await logEvent(task.id, `could not record changed paths: ${(err as Error).message}`).catch(
-      () => {},
-    );
-  }
 }
 
 // A run interrupted mid-implementation (a redeploy killed the worker) leaves
@@ -257,7 +214,7 @@ async function executeRunTask(
     const outcome = await handleNoChangesProduced(task.id, attempt);
     return { rt, outcome };
   }
-  await pushBranch(task, rt, workdir, branchName, summary, secrets, gitAuth);
+  await pushTaskBranch(task, rt, workdir, branchName, summary, secrets, gitAuth);
   await recordChangedPaths(task, workdir);
   if (emptyRepo) {
     await logEvent(task.id, `empty repository bootstrapped on ${branchName}; no PR opened`);

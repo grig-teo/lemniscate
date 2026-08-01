@@ -8,6 +8,8 @@ import { buildLemcoreImplContext } from './graph-context.js';
 import { clearGraphSession } from './graph/session.js';
 import { scanRepositoryGraph } from './graph-scan.js';
 import { runLemcoreLoop, loadTranscript, scrubLegacyInCloneTranscript, type LemcoreMessage } from './loop.js';
+import { resetTodoList } from './todo-store.js';
+import { clearCheckpoints } from './edit-checkpoint.js';
 
 // Shared instructions used by both lemcore and hermes executors
 // for the base system section.
@@ -161,6 +163,11 @@ export async function runLemcoreTask(opts: {
   } finally {
     // Drop in-memory graph so long-lived workers do not retain multi-MB sessions.
     clearGraphSession(workdir);
+    // Clear per-workdir module state (TODO list + edit checkpoints) so a
+    // long-lived worker doesn't leak the previous run's state into the next
+    // (these are keyed by workdir to survive concurrency, not across runs).
+    resetTodoList(workdir);
+    clearCheckpoints(workdir);
   }
 }
 
@@ -184,7 +191,7 @@ async function executeLemcoreTask(opts: {
   // leftover so it cannot land in the task commit / PR.
   scrubLegacyInCloneTranscript(workdir);
 
-  const prompt = await prepareGraphBackedPrompt(
+  let prompt = await prepareGraphBackedPrompt(
     taskId,
     task,
     workdir,
@@ -193,6 +200,16 @@ async function executeLemcoreTask(opts: {
     attempt,
     promptOverride,
   );
+  // Cross-run learning memory: if a previous run on this repo recorded
+  // non-obvious facts (test command, flaky test, build trick) in LEARNED.md,
+  // surface them so the agent doesn't rediscover them. The file is written by
+  // the agent itself during the run (see loop-constants prompt instruction).
+  try {
+    const learned = await fs.readFile(path.join(workdir, 'LEARNED.md'), 'utf8');
+    if (learned.trim()) {
+      prompt = `${prompt}\n\n# Learned from previous runs\n${learned}`;
+    }
+  } catch { /* no LEARNED.md yet — fine */ }
   const { section: skillsSection, skills: lemcoreSkills } = await materializeTaskSkills(task, workdir);
   const resumeTranscript = loadResumeTranscript(workdir, resume, promptOverride);
   if (resumeTranscript) {
