@@ -203,7 +203,10 @@ export function ConsolePane() {
         branchName={selectedTask.branchName ?? null}
         summary={consoleState.changes}
       />
-      <TaskStepsRail status={status} />
+      {/* Keyed on the task so opening another task remounts the rail and the
+          auto-open effect treats an already-running status as a fresh
+          transition, re-showing the steps pane for each live task opened. */}
+      <TaskStepsRail key={taskId ?? 'none'} status={status} />
     </section>
   );
 }

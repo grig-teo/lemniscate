@@ -33,8 +33,10 @@ function useRailHidden(status: string): { hidden: boolean; toggle: () => void } 
   // Opening a live task (queued/running/reviewing code) always opens the
   // right-side steps pane: on the transition into a running status the pane
   // re-shows itself (and clears the persisted hidden preference) so the
-  // current step is visible next to the log.
-  const prevStatusRef = React.useRef(status);
+  // current step is visible next to the log. The ref starts at a non-running
+  // sentinel so that mounting directly into a running status (opening a task
+  // that is already in flight) counts as a transition and re-shows the pane.
+  const prevStatusRef = React.useRef('');
   React.useEffect(() => {
     const wasRunning = isRunningStatus(prevStatusRef.current);
     prevStatusRef.current = status;
@@ -93,7 +95,7 @@ function RailPanel({ status, onHide }: { status: string; onHide: () => void }) {
 }
 
 export function TaskStepsRail({ status }: { status: string }) {
-  const { hidden, toggle } = useRailHidden();
+  const { hidden, toggle } = useRailHidden(status);
   return (
     <div className="absolute right-0 top-1/2 z-10 -translate-y-1/2">
       {hidden ? (
