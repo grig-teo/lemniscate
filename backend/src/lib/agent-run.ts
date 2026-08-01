@@ -3,7 +3,6 @@ import fs from 'node:fs/promises';
 import { config } from '../config.js';
 import { logger } from './logger.js';
 import {
-  applyChanges,
   cleanupWorkdir,
   cloneRepository,
   git,
@@ -17,7 +16,6 @@ import { pushTaskBranch, recordChangedPaths } from './agent-publish.js';
 import {
   buildPrBody,
   buildSkillsSection,
-  generateBranchName,
   requestChanges,
   type LlmChangesResponse,
 } from './agent-prompts.js';
@@ -28,8 +26,8 @@ import {
   type LlmRuntime,
   type TaskWithRepo,
 } from './agent-runtime.js';
-import { resolveAgentExecutor } from './agent-executor.js';
-import { runHermesForTask } from './agent-run-hermes.js';
+import { defaultAgentExecutor, resolveAgentExecutor } from './agent-executor.js';
+import { generateBranchName } from './branch-name.js';
 import { runLemcoreTask } from './lemcore/run.js';
 import { classifyError } from './errors.js';
 import { notify, notifyTaskCompleted } from './notifications.js';

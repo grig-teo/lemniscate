@@ -3,42 +3,36 @@ import { logger } from './logger.js';
 import { prisma } from './prisma.js';
 
 // Core agent executor selection — the single home for "which agent runs
-// tasks" (AGENTS.md §6). 'hermes' shells out to the Hermes Agent CLI inside
-// the cloned repo; 'internal' is the built-in single-shot LLM
-// propose/apply loop (the in-house agent under development);
-// 'lemcore' uses the structured TypeScript agent loop with per-step events.
+// tasks" (AGENTS.md §6). 'lemcore' is the only executor: the structured
+// TypeScript agent loop with per-step events.
 //
-// Resolution order: the per-user override stored on User.agentExecutor
-// (Settings → Agent) wins; the AGENT_EXECUTOR env var is the deployment
-// default. A failed user lookup must never break a job — it falls back to
-// the env default (and warns), so task execution is never hostage to a
-// settings read.
+// Resolution order: the per-user override (User.agentExecutor, set in
+// Settings → Agent) wins when present; otherwise the deployment default
+// (AGENT_EXECUTOR env var) applies.
 
-export const AGENT_EXECUTORS = ['hermes', 'internal', 'lemcore'] as const;
+export const AGENT_EXECUTORS = ['lemcore'] as const;
 export type AgentExecutor = (typeof AGENT_EXECUTORS)[number];
 
-/** Narrows an untrusted stored value to a known executor, else null. */
 export function parseAgentExecutor(value: unknown): AgentExecutor | null {
-  return (AGENT_EXECUTORS as readonly unknown[]).includes(value)
+  return typeof value === 'string' && (AGENT_EXECUTORS as readonly string[]).includes(value)
     ? (value as AgentExecutor)
     : null;
 }
 
-/** Deployment default from the AGENT_EXECUTOR env var. */
 export function defaultAgentExecutor(): AgentExecutor {
-  return config.AGENT_EXECUTOR;
+  return parseAgentExecutor(config.AGENT_EXECUTOR) ?? 'lemcore';
 }
 
-/** Effective executor for a user: their override, else the env default. */
 export async function resolveAgentExecutor(userId: string): Promise<AgentExecutor> {
+  let stored: unknown = null;
   try {
     const user = await prisma.user.findUnique({
       where: { id: userId },
       select: { agentExecutor: true },
     });
-    return parseAgentExecutor(user?.agentExecutor) ?? defaultAgentExecutor();
+    stored = user?.agentExecutor ?? null;
   } catch (err) {
-    logger.warn({ err, userId }, 'agent-executor: user lookup failed; using the env default');
-    return defaultAgentExecutor();
+    logger.warn({ err, userId }, 'executor lookup failed; using the deployment default');
   }
+  return parseAgentExecutor(stored) ?? defaultAgentExecutor();
 }
