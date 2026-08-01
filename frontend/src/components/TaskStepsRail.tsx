@@ -9,6 +9,7 @@ import * as React from 'react';
 import { PanelRightClose, PanelRightOpen } from 'lucide-react';
 
 import { readPersisted, writePersisted } from '@/lib/persist';
+import { isRunningStatus } from '@/lib/running-tasks';
 import { TASK_STEPS, stepTone, type StepTone, type TaskStep } from '@/lib/task-steps';
 import { cn } from '@/lib/utils';
 
@@ -26,8 +27,22 @@ const TOGGLE_CLASSES =
   'px-0.5 py-2 text-muted-foreground backdrop-blur-sm transition-colors hover:text-foreground';
 
 /** Hide/show preference persisted to localStorage (best-effort). */
-function useRailHidden(): { hidden: boolean; toggle: () => void } {
+function useRailHidden(status: string): { hidden: boolean; toggle: () => void } {
   const [hidden, setHidden] = React.useState(() => readPersisted(HIDDEN_STORAGE_KEY, false));
+
+  // Opening a live task (queued/running/reviewing code) always opens the
+  // right-side steps pane: on the transition into a running status the pane
+  // re-shows itself (and clears the persisted hidden preference) so the
+  // current step is visible next to the log.
+  const prevStatusRef = React.useRef(status);
+  React.useEffect(() => {
+    const wasRunning = isRunningStatus(prevStatusRef.current);
+    prevStatusRef.current = status;
+    if (!isRunningStatus(status) || wasRunning) return;
+    writePersisted(HIDDEN_STORAGE_KEY, false);
+    setHidden(false);
+  }, [status]);
+
   const toggle = React.useCallback(() => {
     setHidden((prev) => {
       writePersisted(HIDDEN_STORAGE_KEY, !prev);

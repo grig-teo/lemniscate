@@ -174,4 +174,22 @@ describe('ConsoleLog auto-follow', () => {
 
     expect(jumpButton()).toBeNull();
   });
+
+  it('opens scrolled to the bottom when the task already has a full log history', () => {
+    const { container } = render(
+      <ConsoleLog
+        historyQuery={idleHistory}
+        historyLogs={lines('history', 200)}
+        liveLogs={[]}
+        streamError={false}
+      />,
+    );
+    const el = scrollContainer(container);
+    mockScrollMetrics(el, { scrollHeight: 5000, clientHeight: 200, scrollTop: 0 });
+
+    // First history paint must pin the view to the latest entry (the whole
+    // list is delivered in one batch, so the user lands at the newest log).
+    expect(el.scrollTop).toBe(el.scrollHeight);
+    expect(jumpButton()).toBeNull();
+  });
 });

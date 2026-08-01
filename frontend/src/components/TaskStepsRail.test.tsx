@@ -59,4 +59,25 @@ describe('TaskStepsRail', () => {
     expect(screen.queryByText('Running')).toBeNull();
     expect(screen.getByRole('button', { name: /show implementation steps/i })).toBeTruthy();
   });
+
+  it('auto-opens the right-side steps pane for a running task even after the user hid it', () => {
+    window.localStorage.setItem('lemniscate.task-steps-rail-hidden', 'true');
+    render(<TaskStepsRail status="running" />);
+    // A live (running/reviewing-code) task always opens with the pane shown.
+    expect(screen.getByText('Running')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /show implementation steps/i })).toBeNull();
+  });
+
+  it('auto-opens the right-side steps pane for a reviewing-code task', () => {
+    window.localStorage.setItem('lemniscate.task-steps-rail-hidden', 'true');
+    render(<TaskStepsRail status="reviewing_code" />);
+    expect(screen.getByText('Code review')).toBeTruthy();
+  });
+
+  it('keeps the pane hidden for non-running tasks when the user hid it', () => {
+    window.localStorage.setItem('lemniscate.task-steps-rail-hidden', 'true');
+    render(<TaskStepsRail status="done" />);
+    expect(screen.queryByText('Running')).toBeNull();
+    expect(screen.getByRole('button', { name: /show implementation steps/i })).toBeTruthy();
+  });
 });
