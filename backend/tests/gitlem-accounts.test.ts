@@ -15,6 +15,7 @@ const mocks = vi.hoisted(() => ({
   gitlemUserCreate: vi.fn(),
   gitlemUserUpdate: vi.fn(),
   connectionFindUnique: vi.fn(),
+  connectionFindFirst: vi.fn(),
   connectionCreate: vi.fn(),
   connectionUpdate: vi.fn(),
   settingFindFirst: vi.fn(),
@@ -38,6 +39,7 @@ vi.mock('../src/lib/prisma.js', () => ({
     },
     gitConnection: {
       findUnique: mocks.connectionFindUnique,
+      findFirst: mocks.connectionFindFirst,
       create: mocks.connectionCreate,
       update: mocks.connectionUpdate,
     },
@@ -95,6 +97,7 @@ beforeEach(() => {
   mocks.codeDeleteMany.mockResolvedValue({ count: 1 });
   mocks.settingFindFirst.mockResolvedValue(null);
   mocks.connectionFindUnique.mockResolvedValue(null);
+  mocks.connectionFindFirst.mockResolvedValue(null);
   mocks.connectionCreate.mockResolvedValue({ id: 'conn-1' });
   // Default happy path: email delivery succeeds. Tests that need a delivery
   // failure override this with mockRejectedValue (clearAllMocks only clears

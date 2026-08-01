@@ -170,13 +170,20 @@ describe('POST /api/gitlem/account/ensure', () => {
     expect(response.json().error).toMatch(/different gitlem account/);
   });
 
-  it('returns the existing account without provisioning again', async () => {
-    mocks.findGitlemAccountForUser.mockResolvedValue({ username: 'ann' });
+  it('returns the existing account and re-links its connection (repair a disconnect)', async () => {
+    mocks.findGitlemAccountForUser.mockResolvedValue({
+      id: 'gu-1',
+      username: 'ann',
+      apiToken: 'tok-1',
+    });
     const app = await buildApp();
     const response = await app.inject({ method: 'POST', url: '/api/gitlem/account/ensure' });
     expect(response.statusCode).toBe(200);
     expect(response.json()).toEqual({ created: false, username: 'ann', emailed: false });
     expect(mocks.ensureGitlemAccountForUser).not.toHaveBeenCalled();
+    // Bug fix: a soft-disconnected gitlem connection must be re-linked on
+    // ensure so repo create works after a disconnect → reconnect.
+    expect(mocks.linkGitlemConnection).toHaveBeenCalledWith('user-1', 'gu-1', 'ann', 'tok-1');
   });
 
   it('requires authentication', async () => {

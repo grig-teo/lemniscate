@@ -81,10 +81,17 @@ export function WorkspaceSelectionProvider({ children }: { children: React.React
     setSelectedTask(task);
     writePersisted(SELECTED_TASK_STORAGE_KEY, task);
     setLiveStatus(null);
+    // Selecting a task takes over the center pane: close any other center-pane
+    // view (PR review, task board, gitlem, archived, service) so the console
+    // syncs with the clicked task. Without this, the pane's early-return in
+    // ConsolePane would keep showing the stale PR/TaskBoard view.
     setArchivedRepoId(null);
     setArchivedTask(null);
     setSelectedServiceId(null);
     writePersisted(SELECTED_SERVICE_STORAGE_KEY, null);
+    setPrReviewRepoId(null);
+    setTaskBoardRepoId(null);
+    setGitlemView(null);
   }, []);
 
   const selectRepository = React.useCallback((id: string | null) => {
