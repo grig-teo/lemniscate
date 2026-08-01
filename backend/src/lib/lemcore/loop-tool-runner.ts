@@ -3,6 +3,7 @@ import {
   toolReadFile,
   toolWriteFile,
   toolEditFile,
+  toolMultiEdit,
   toolBash,
   toolGrep,
   toolGlob,
@@ -44,6 +45,13 @@ export async function executeTool(
         String(args.path ?? ''),
         String(args.search ?? ''),
         String(args.replace ?? ''),
+        secrets,
+      );
+    case 'multi_edit':
+      return toolMultiEdit(
+        workdir,
+        String(args.path ?? ''),
+        Array.isArray(args.edits) ? (args.edits as { search: string; replace: string }[]) : [],
         secrets,
       );
     case 'bash':

@@ -15,6 +15,7 @@ export type ToolName =
   | 'read_file'
   | 'write_file'
   | 'edit_file'
+  | 'multi_edit'
   | 'bash'
   | 'grep'
   | 'glob'
@@ -22,7 +23,8 @@ export type ToolName =
   | 'graph_query'
   | 'graph_impact'
   | 'graph_neighbors'
-  | 'graph_search';
+  | 'graph_search'
+  | 'load_skill';
 
 export interface ToolResult {
   tool: ToolName;
@@ -106,6 +108,37 @@ export async function toolEditFile(
     tool: 'edit_file',
     title: relPath,
     outputPreview: truncate(redactSecrets(`replaced 1 occurrence (${search.length} chars)`, secrets)),
+    durationMs: Date.now() - startMs,
+  };
+}
+
+export async function toolMultiEdit(
+  workdir: string,
+  relPath: string,
+  edits: { search: string; replace: string }[],
+  secrets: string[] = [],
+): Promise<ToolResult> {
+  const startMs = Date.now();
+  const absPath = jailPath(workdir, relPath);
+  let content = await fs.readFile(absPath, 'utf8');
+  let applied = 0;
+  for (const { search, replace } of edits) {
+    if (!content.includes(search)) {
+      throw new Error(`multi_edit: search string not found in ${relPath} (edit ${applied + 1})`);
+    }
+    const escaped = search.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const count = (content.match(new RegExp(escaped, 'g')) ?? []).length;
+    if (count !== 1) {
+      throw new Error(`multi_edit: expected exactly 1 match for edit ${applied + 1}, found ${count}`);
+    }
+    content = content.replace(search, replace);
+    applied += 1;
+  }
+  await fs.writeFile(absPath, content, 'utf8');
+  return {
+    tool: 'multi_edit',
+    title: relPath,
+    outputPreview: truncate(redactSecrets(`applied ${applied} edit(s)`, secrets)),
     durationMs: Date.now() - startMs,
   };
 }
