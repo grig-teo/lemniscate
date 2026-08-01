@@ -7,12 +7,12 @@ import {
   cleanupWorkdir,
   cloneRepository,
   git,
-  hasDirtyWorkdir,
   logEvent,
   persistTokenUsage,
   recordJobFailure,
   type GitAuth,
 } from './agent-git.js';
+import { hasMeaningfulChanges } from './workdir-changes.js';
 import { pushTaskBranch, recordChangedPaths } from './agent-publish.js';
 import {
   buildPrBody,
@@ -209,7 +209,9 @@ async function implementTask(
   await logEvent(task.id, `executor: ${executor}`);
   if (executor === 'hermes') {
     await runHermesForTask(task, rt, workdir, secrets, resume, attempt);
-    return (await hasDirtyWorkdir(workdir)) ? task.title : null;
+    // Attachments (.mcp.json/AGENTS.md) and agent scratch must not count as
+    // "changes": a run that only read files must NOT be treated as done.
+    return (await hasMeaningfulChanges(workdir)) ? task.title : null;
   }
   if (executor === 'lemcore') {
     const result = await runLemcoreTask({
@@ -225,7 +227,7 @@ async function implementTask(
   const { summary, changes } = await proposeTaskChanges(task, rt, workdir);
   const applied = await applyChanges(task.id, workdir, changes, secrets);
   await logEvent(task.id, `applied ${applied} of ${changes.length} proposed change(s)`);
-  if (applied === 0 || !(await hasDirtyWorkdir(workdir))) return null;
+  if (applied === 0 || !(await hasMeaningfulChanges(workdir))) return null;
   return summary;
 }
 

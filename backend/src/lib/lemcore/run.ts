@@ -1,6 +1,7 @@
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
-import { logEvent, hasDirtyWorkdir } from '../agent-git.js';
+import { logEvent } from '../agent-git.js';
+import { hasMeaningfulChanges } from '../workdir-changes.js';
 import { loadTaskSkills } from '../task-skills.js';
 import { toLemcoreSkills, buildSkillsPromptSection, type LemcoreSkill } from './skills.js';
 import type { LlmRuntime, TaskWithRepo } from '../agent-runtime.js';
@@ -206,7 +207,9 @@ async function executeLemcoreTask(opts: {
     skills: lemcoreSkills,
   });
 
-  const changed = await hasDirtyWorkdir(workdir);
+  // Attachments/skills and agent scratch must not count as a produced change:
+  // a run that only read files must NOT be treated as done.
+  const changed = await hasMeaningfulChanges(workdir);
   return {
     summary: changed ? finalContent || task.title : null,
     changed,

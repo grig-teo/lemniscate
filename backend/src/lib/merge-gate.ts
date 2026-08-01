@@ -1,11 +1,11 @@
 import path from 'node:path';
+import { hasMeaningfulChanges } from './workdir-changes.js';
 import { config } from '../config.js';
 import { logger } from './logger.js';
 import {
   checkoutTaskBranch,
   cleanupWorkdir,
   commitAndPush,
-  hasDirtyWorkdir,
   logEvent,
   persistTokenUsage,
   recordJobFailure,
@@ -94,7 +94,7 @@ async function runCiFixViaHermes(ctx: GateContext): Promise<void> {
       stallTimeoutMs: config.AGENT_HERMES_STALL_TIMEOUT_MINUTES * 60_000,
     });
   }
-  if (!(await hasDirtyWorkdir(workdir))) {
+  if (!(await hasMeaningfulChanges(workdir))) {
     await logEvent(task.id, 'agent produced no CI fix changes');
     return;
   }
