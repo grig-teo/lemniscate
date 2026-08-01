@@ -1,4 +1,5 @@
 import { useSetTaskFollows, useTasks, type Task } from '@/lib/hooks';
+import { followUpCandidates, followUpStatusLabel } from '@/lib/follow-up';
 import { pushToast } from '@/lib/toasts';
 import {
   Select,
@@ -7,11 +8,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-
-// Eligible follow-up successors: idle tasks in the same repo (the only
-// statuses triggerNextTask will actually auto-start). The predecessor itself
-// is excluded (a task cannot follow itself, enforced server-side too).
-const FOLLOWABLE_STATUSES = ['pending', 'queued'];
 
 /** Renders the follow-up dropdown as a controlled select (no own mutation). */
 export function FollowUpSelect({
@@ -34,7 +30,12 @@ export function FollowUpSelect({
         <SelectItem value="none">No follow-up</SelectItem>
         {candidates.map((task) => (
           <SelectItem key={task.id} value={task.id}>
-            <span className="truncate">{task.title}</span>
+            <span className="flex w-full items-center gap-2">
+              <span className="truncate">{task.title}</span>
+              <span className="ml-auto shrink-0 pl-2 text-xs capitalize text-muted-foreground">
+                {followUpStatusLabel(task.status)}
+              </span>
+            </span>
           </SelectItem>
         ))}
       </SelectContent>
@@ -43,16 +44,16 @@ export function FollowUpSelect({
 }
 
 /**
- * Self-contained follow-up dropdown for a pending proposal/prompt in the right
- * pane: shows the task's current follow-up and POSTs /tasks/:id/follows on
- * choose (mirrors PendingTaskModelSelect's PATCH-on-choose). Lists only idle
- * successors in the same repository, excluding the task itself.
+ * Self-contained follow-up dropdown for a proposal/prompt in the right pane:
+ * shows the task's current follow-up and POSTs /tasks/:id/follows on choose
+ * (mirrors PendingTaskModelSelect's PATCH-on-choose). Lists all non-archived
+ * tasks of the same repository — proposals, prompts running, in review, code
+ * review, done, … — excluding the task itself.
  */
 export function FollowUpTaskSelect({ task }: { task: Task }) {
   const tasks = useTasks(task.repositoryId);
   const setFollows = useSetTaskFollows();
-  const candidates = (tasks.data ?? [])
-    .filter((t) => t.id !== task.id && (FOLLOWABLE_STATUSES as readonly string[]).includes(t.status));
+  const candidates = followUpCandidates(tasks.data ?? [], task.id);
 
   function choose(nextTaskId: string | null) {
     if (nextTaskId === task.nextTaskId) return;

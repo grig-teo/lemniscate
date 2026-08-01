@@ -157,6 +157,24 @@ describe('POST /api/tasks/:id/follows', () => {
     expect(mocks.taskUpdate).not.toHaveBeenCalled();
   });
 
+  it('scopes the successor lookup to non-archived tasks', async () => {
+    // The dropdown lists every active status; archived tasks are excluded.
+    mocks.taskFindFirst
+      .mockResolvedValueOnce({ id: 'predecessor', repositoryId: 'repo-1' })
+      .mockResolvedValueOnce(null); // archived successor misses the lookup
+
+    const app = await buildApp();
+    const response = await follows(app, 'predecessor', { nextTaskId: 'archived-task' });
+
+    expect(response.statusCode).toBe(400);
+    expect(mocks.taskFindFirst).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ archivedAt: null }),
+      }),
+    );
+    expect(mocks.taskUpdate).not.toHaveBeenCalled();
+  });
+
   it('rejects a self-reference', async () => {
     mocks.taskFindFirst.mockResolvedValue({ id: 'me', repositoryId: 'repo-1' });
     const app = await buildApp();

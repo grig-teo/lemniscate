@@ -50,12 +50,15 @@ export async function setFollowsTask(request: FastifyRequest, reply: FastifyRepl
     return reply.code(400).send({ error: 'A task cannot follow itself' });
   }
 
-  // The successor must exist and live in the same repository as the
-  // predecessor, and be owned by the same user.
+  // The successor must exist, live in the same repository as the
+  // predecessor, be owned by the same user, and not be archived (the
+  // dropdown lists every active status, so an archived task is the only
+  // invalid pick).
   const successor = await prisma.task.findFirst({
     where: {
       ...ownedTaskWhere(userId, body.nextTaskId),
       repositoryId: predecessor.repositoryId,
+      archivedAt: null,
     },
     select: { id: true },
   });
