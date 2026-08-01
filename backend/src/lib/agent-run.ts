@@ -374,8 +374,7 @@ export async function runTask(taskId: string): Promise<void> {
     });
   } catch (err) {
     if (err instanceof TaskPausedError) {
-      // Status is already 'paused' (set by the pause route); the saved
-      // transcript + kept workdir let resume replay the run. Not a failure.
+      // Status is already 'paused' (pause route); transcript + kept workdir let resume replay.
       await logEvent(taskId, 'paused by user — resume continues from the saved transcript').catch(() => {});
       return;
     }
@@ -397,8 +396,7 @@ export async function runTask(taskId: string): Promise<void> {
       rt ? tokenSplit(rt) : undefined,
     );
     // The workdir outlives the run only while the PR awaits review/merge or
-    // the task is paused (resume replays the transcript from it); it is
-    // removed once the task is done (merged), failed, or cancelled.
+    // the task is paused; it is removed once done (merged), failed, or cancelled.
     const status = (await prisma.task.findUnique({ where: { id: taskId }, select: { status: true } }))
       ?.status;
     if (status === 'awaiting_review' || status === 'reviewing_code') {
