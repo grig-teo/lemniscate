@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { Settings } from 'lucide-react';
+import { FormattedMessage } from 'react-intl';
 
 import { Button } from '@/components/ui/button';
 import {
@@ -16,6 +17,7 @@ import { OPEN_SETTINGS_EVENT, type SettingsTab } from '@/lib/error-codes';
 import { AgentSection } from '@/components/settings/AgentSection';
 import { ConnectionsSection } from '@/components/settings/ConnectionsSection';
 import { EventTriggersSection } from '@/components/settings/EventTriggersSection';
+import { LanguageSelect } from '@/components/settings/LanguageSelect';
 import { LlmConfigsSection } from '@/components/settings/LlmConfigsSection';
 import { NotificationsSection } from '@/components/settings/NotificationsSection';
 import { RepoFlagsSection } from '@/components/settings/RepoFlagsSection';
@@ -51,33 +53,43 @@ export function SettingsDialog() {
       </DialogTrigger>
       <DialogContent className="max-w-2xl">
         <DialogHeader>
-          <DialogTitle>Settings</DialogTitle>
+          <div className="flex items-center justify-between gap-4">
+            <DialogTitle>
+              <FormattedMessage id="settings.title" defaultMessage="Settings" />
+            </DialogTitle>
+            <div className="pr-8">
+              <LanguageSelect />
+            </div>
+          </div>
           <DialogDescription>
-            Manage LLM configurations, git host connections, and repository automation.
+            <FormattedMessage
+              id="settings.description"
+              defaultMessage="Manage LLM configurations, git host connections, and repository automation."
+            />
           </DialogDescription>
         </DialogHeader>
 
         <div className="flex gap-1 border-b" role="tablist" aria-label="Settings sections">
           <TabButton active={tab === 'agent'} onClick={() => setTab('agent')}>
-            Agent
+            <FormattedMessage id="settings.tab.agent" defaultMessage="Agent" />
           </TabButton>
           <TabButton active={tab === 'llm'} onClick={() => setTab('llm')}>
-            LLM configs
+            <FormattedMessage id="settings.tab.llm" defaultMessage="LLM configs" />
           </TabButton>
           <TabButton active={tab === 'git'} onClick={() => setTab('git')}>
-            Git connections
+            <FormattedMessage id="settings.tab.git" defaultMessage="Git connections" />
           </TabButton>
           <TabButton active={tab === 'repos'} onClick={() => setTab('repos')}>
-            Repositories
+            <FormattedMessage id="settings.tab.repos" defaultMessage="Repositories" />
           </TabButton>
           <TabButton active={tab === 'notifications'} onClick={() => setTab('notifications')}>
-            Notifications
+            <FormattedMessage id="settings.tab.notifications" defaultMessage="Notifications" />
           </TabButton>
           <TabButton active={tab === 'usage'} onClick={() => setTab('usage')}>
-            Usage
+            <FormattedMessage id="settings.tab.usage" defaultMessage="Usage" />
           </TabButton>
           <TabButton active={tab === 'vps'} onClick={() => setTab('vps')}>
-            VPS targets
+            <FormattedMessage id="settings.tab.vps" defaultMessage="VPS targets" />
           </TabButton>
         </div>
 

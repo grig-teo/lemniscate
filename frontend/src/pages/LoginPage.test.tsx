@@ -42,7 +42,6 @@ describe('LoginPage i18n', () => {
     localStorage.setItem('lemniscate:locale', 'ru');
     vi.mocked(api.get).mockRejectedValue(new Error('unauthorized'));
     renderLogin();
-    screen.debug(undefined, 20000);
     expect(
       await screen.findByText('Подключите git-хостинг, чтобы начать работу.'),
     ).toBeTruthy();

@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { Infinity as InfinityIcon, Loader2 } from 'lucide-react';
+import { FormattedMessage, useIntl } from 'react-intl';
 import { Navigate, useNavigate } from 'react-router-dom';
 
 import { ConnectProviderButtons } from '@/components/ConnectProviderButtons';
@@ -13,7 +14,7 @@ function LoginCard({ onGitverse, onGitlem }: { onGitverse: () => void; onGitlem:
         <InfinityIcon className="h-10 w-10 text-foreground" aria-hidden />
         <h1 className="text-2xl font-semibold tracking-tight">Lemniscate</h1>
         <p className="text-center text-sm text-muted-foreground">
-          Connect a git host to get started.
+          <FormattedMessage id="login.tagline" defaultMessage="Connect a git host to get started." />
         </p>
       </div>
 
@@ -22,7 +23,10 @@ function LoginCard({ onGitverse, onGitlem }: { onGitverse: () => void; onGitlem:
       </div>
 
       <p className="text-xs text-muted-foreground/70">
-        GitVerse sign-in uses a personal access token instead of OAuth.
+        <FormattedMessage
+          id="login.gitversePatNote"
+          defaultMessage="GitVerse sign-in uses a personal access token instead of OAuth."
+        />
       </p>
     </div>
   );
@@ -36,12 +40,16 @@ function LoginCard({ onGitverse, onGitlem }: { onGitverse: () => void; onGitlem:
 export function LoginPage() {
   const me = useMe();
   const navigate = useNavigate();
+  const intl = useIntl();
   const [gitverseOpen, setGitverseOpen] = React.useState(false);
 
   if (me.isPending) {
     return (
       <div className="flex min-h-screen items-center justify-center">
-        <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" aria-label="Loading" />
+        <Loader2
+          className="h-6 w-6 animate-spin text-muted-foreground"
+          aria-label={intl.formatMessage({ id: 'common.loading', defaultMessage: 'Loading' })}
+        />
       </div>
     );
   }
