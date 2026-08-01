@@ -128,6 +128,10 @@ const envSchema = z.object({
   // Lemcore stall watchdog: aborts the run when a single LLM turn takes
   // longer than this (same stalled-provider failure mode as above).
   LEMCORE_STALLED_TURN_TIMEOUT_MINUTES: z.coerce.number().int().positive().default(15),
+  // Multi-sample edit verification: when an edit_file/multi_edit fails lint,
+  // make one additional LLM call (different seed + nudge) and try the
+  // alternative. Default on. Set LEMCORE_MULTI_SAMPLE=false to disable.
+  LEMCORE_MULTI_SAMPLE: z.coerce.boolean().default(true),
   // Lemcore-only: build a codebase graph (code-review-graph) on every repo
   // scan and prefer graph-derived implementation context to cut LLM tokens.
   // Default on. Set LEMCORE_CODE_GRAPH=false to disable.

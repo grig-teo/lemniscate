@@ -126,6 +126,7 @@ interface RequestState {
   /** Flipped off after an HTTP 400 so the retry drops temperature. */
   includeTemperature: boolean;
   tools?: ChatCompletionTool[];
+  seed?: number;
 }
 
 function makeRequestState(params: ChatCompletionsParams): RequestState {
@@ -148,6 +149,7 @@ function makeRequestState(params: ChatCompletionsParams): RequestState {
   if (params.customHeaders !== undefined) state.customHeaders = params.customHeaders;
   if (params.onRetry !== undefined) state.onRetry = params.onRetry;
   if (params.onResponseHeaders !== undefined) state.onResponseHeaders = params.onResponseHeaders;
+  if (params.seed !== undefined) state.seed = params.seed;
   return state;
 }
 
@@ -163,6 +165,7 @@ function buildRequestBody(state: RequestState): Record<string, unknown> {
   if (state.tools !== undefined && state.tools.length > 0) {
     body.tools = state.tools;
   }
+  if (state.seed !== undefined) body.seed = state.seed;
   return body;
 }
 

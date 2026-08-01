@@ -42,6 +42,8 @@ export interface ChatCompletionsParams {
   onResponseHeaders?: (headers: Headers) => void;
   allowTruncated?: boolean;
   tools?: ChatCompletionTool[];
+  /** Seed for deterministic-ish sampling (multi-sample verification). */
+  seed?: number;
 }
 
 export interface ChatUsage {
