@@ -195,10 +195,11 @@ model Repository {
   // classic static repo-context builder is used.
   semanticIndex   Boolean @default(false)
   // Phase 12: owning organization; null = user's personal repo. Org rows are
-  // auto-created for existing users ('personal' kind) by migration 0037.
+  // auto-created for existing users ('personal' kind) by migration 0039.
   orgId         String?
   org           Organization? @relation(fields: [orgId], references: [id], onDelete: SetNull)
   marketplaceInstalls MarketplaceInstall[]
+  webhooks             Webhook[]
   // Slugs of skills (Skill model) injected into the agent's system prompt
   // for tasks on this repository; string[] stored as JSON.
   skillSlugs    Json?
