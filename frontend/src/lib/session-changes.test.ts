@@ -4,6 +4,7 @@ import type { TaskEventItem } from '@/lib/task-types';
 import {
   countDiffHunkLines,
   deriveChangeAction,
+  fileChangeTotals,
   isCreatedDiff,
   mergeDiffEvent,
   parseDiffLines,
@@ -26,7 +27,9 @@ const SIMPLE_DIFF = [
   '+extra line',
 ].join('\n');
 
-const CREATED_DIFF = ['--- /dev/null', '+++ b/src/new.ts', '+first', '+second'].join('\n');
+// Real backend format (agent-git.ts publishWriteDiff): raw file content
+// appended after the /dev/null header, with NO '+' prefixes on content lines.
+const CREATED_DIFF = ['--- /dev/null', '+++ b/src/new.ts', 'first', 'second'].join('\n');
 
 describe('parseEventDiff', () => {
   it('reads the path and diff text from a { path, diff } payload', () => {
@@ -78,8 +81,18 @@ describe('countDiffHunkLines', () => {
     expect(countDiffHunkLines(SIMPLE_DIFF)).toEqual({ added: 2, removed: 1 });
   });
 
-  it('ignores the +++/--- file headers', () => {
+  it('counts the raw content lines of a /dev/null creation preview as additions', () => {
     expect(countDiffHunkLines(CREATED_DIFF)).toEqual({ added: 2, removed: 0 });
+  });
+
+  it('counts every content line of a creation preview, even diff-looking ones', () => {
+    const diff = ['--- /dev/null', '+++ b/x.md', '--- not a header', '@@ nope', '+plus'].join('\n');
+    expect(countDiffHunkLines(diff)).toEqual({ added: 3, removed: 0 });
+  });
+
+  it('does not count the trailing newline of a creation preview as an extra line', () => {
+    const diff = '--- /dev/null\n+++ b/x.ts\nonly line\n';
+    expect(countDiffHunkLines(diff)).toEqual({ added: 1, removed: 0 });
   });
 
   it('returns zeros when there is no diff text', () => {
@@ -87,15 +100,44 @@ describe('countDiffHunkLines', () => {
   });
 });
 
+describe('fileChangeTotals', () => {
+  it('sums the creation preview and the latest diff of one file', () => {
+    const change: FileChange = {
+      path: 'src/a.ts',
+      action: 'modified',
+      diff: SIMPLE_DIFF,
+      baseDiff: CREATED_DIFF,
+    };
+    expect(fileChangeTotals(change)).toEqual({ added: 4, removed: 1 });
+  });
+
+  it('counts a lone diff and no diff at all', () => {
+    expect(fileChangeTotals({ path: 'a', action: 'modified', diff: SIMPLE_DIFF })).toEqual({
+      added: 2,
+      removed: 1,
+    });
+    expect(fileChangeTotals({ path: 'a', action: 'deleted' })).toEqual({ added: 0, removed: 0 });
+  });
+});
+
 describe('mergeDiffEvent', () => {
-  it('stores a full diff and keeps the previous one as the base', () => {
+  it('replaces the previous cumulative diff instead of keeping it as the base', () => {
     const first: FileChange = { path: 'src/a.ts', action: 'created' };
     const merged = mergeDiffEvent(first, { path: 'src/a.ts', diff: SIMPLE_DIFF });
     expect(merged?.diff).toBe(SIMPLE_DIFF);
     expect(merged?.baseDiff).toBeUndefined();
+    // Modify events carry a cumulative `git diff -- <rel>`: the newest one
+    // fully replaces the old, nothing is double-counted as baseDiff.
     const again = mergeDiffEvent(merged ?? undefined, { path: 'src/a.ts', diff: 'second diff' });
     expect(again?.diff).toBe('second diff');
-    expect(again?.baseDiff).toBe(SIMPLE_DIFF);
+    expect(again?.baseDiff).toBeUndefined();
+  });
+
+  it('keeps the creation preview as the base when a created file is modified', () => {
+    const created: FileChange = { path: 'src/a.ts', action: 'created', diff: CREATED_DIFF };
+    const merged = mergeDiffEvent(created, { path: 'src/a.ts', diff: SIMPLE_DIFF });
+    expect(merged?.diff).toBe(SIMPLE_DIFF);
+    expect(merged?.baseDiff).toBe(CREATED_DIFF);
   });
 
   it('drops the file when it is deleted after being created in the same session', () => {
@@ -121,6 +163,15 @@ describe('mergeDiffEvent', () => {
     const merged = mergeDiffEvent(modified, { path: 'src/a.ts', action: 'conflict-resolved' });
     expect(merged?.action).toBe('conflict-resolved');
     expect(merged?.diff).toBe(SIMPLE_DIFF);
+    // No diff on the event: the previous diff must not be duplicated as base.
+    expect(merged?.baseDiff).toBeUndefined();
+  });
+
+  it('keeps the creation preview as the sole diff on a conflict-resolved event', () => {
+    const created: FileChange = { path: 'src/a.ts', action: 'created', diff: CREATED_DIFF };
+    const merged = mergeDiffEvent(created, { path: 'src/a.ts', action: 'conflict-resolved' });
+    expect(merged?.diff).toBe(CREATED_DIFF);
+    expect(merged?.baseDiff).toBeUndefined();
   });
 });
 
@@ -145,6 +196,20 @@ describe('parseDiffLines', () => {
       { kind: 'del', text: 'old line' },
       { kind: 'add', text: 'new line' },
       { kind: 'add', text: 'extra line' },
+    ]);
+  });
+
+  it('renders raw creation-preview content as additions, even diff-looking lines', () => {
+    const change: FileChange = {
+      path: 'x.md',
+      action: 'created',
+      diff: ['--- /dev/null', '+++ b/x.md', '# title', '--- looks like a header'].join('\n'),
+    };
+    expect(parseDiffLines(change)).toEqual([
+      { kind: 'meta', text: '--- /dev/null' },
+      { kind: 'meta', text: '+++ b/x.md' },
+      { kind: 'add', text: '# title' },
+      { kind: 'add', text: '--- looks like a header' },
     ]);
   });
 
@@ -186,6 +251,28 @@ describe('summarizeChanges', () => {
     expect(summary.additions).toBe(2 + 2 + 2);
     expect(summary.deletions).toBe(1 + 1);
     expect(summary.count).toBe(3);
+  });
+
+  it('counts a file once when a conflict-resolved event carries no diff', () => {
+    const events = [
+      event({ path: 'src/a.ts', diff: SIMPLE_DIFF }, 'e1'),
+      event({ path: 'src/a.ts', action: 'conflict-resolved' }, 'e2'),
+    ];
+    const summary = summarizeChanges(events);
+    expect(summary.count).toBe(1);
+    expect(summary.additions).toBe(2);
+    expect(summary.deletions).toBe(1);
+  });
+
+  it('counts only the latest cumulative diff of a file modified twice', () => {
+    const grown = SIMPLE_DIFF + '\n+third line';
+    const events = [
+      event({ path: 'src/a.ts', diff: SIMPLE_DIFF }, 'e1'),
+      event({ path: 'src/a.ts', diff: grown }, 'e2'),
+    ];
+    const summary = summarizeChanges(events);
+    expect(summary.additions).toBe(3);
+    expect(summary.deletions).toBe(1);
   });
 
   it('skips events without a path and preserves first-seen order', () => {

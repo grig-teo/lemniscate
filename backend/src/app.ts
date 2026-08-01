@@ -23,6 +23,7 @@ import devicesRoutes from './routes/devices.js';
 import servicesRoutes, { servicesInternalRoutes, appsIndexRoute } from './routes/services.js';
 import vpsTargetRoutes from './routes/vps-targets.js';
 import eventTriggersRoutes from './routes/event-triggers.js';
+import gitlemRoutes from './routes/gitlem.js';
 import webhookRoutes from './routes/webhooks.js';
 
 async function registerPlugins(app: FastifyInstance) {
@@ -62,6 +63,9 @@ async function registerRoutes(app: FastifyInstance) {
   await app.register(servicesInternalRoutes, { prefix: '/api' });
   // Inbound git-provider webhooks (HMAC/token verified, no session auth).
   await app.register(webhookRoutes, { prefix: '/api' });
+  // gitlem: the internal minimal git host (login/registration, repo detail
+  // endpoints, git-over-HTTP under /api/gitlem/git).
+  await app.register(gitlemRoutes, { prefix: '/api/gitlem' });
   // Public owner index for the apps domain (Traefik rewrites /<owner> here).
   await app.register(appsIndexRoute, { prefix: '/api' });
   // Liveness (/health) + readiness (/health/ready), unprefixed.

@@ -54,7 +54,7 @@ export interface GitProviderClient {
   listRootEntries(repoFullName: string): Promise<string[]>;
 }
 
-export type ProviderName = 'github' | 'gitverse' | 'gitlab' | 'gitee';
+export type ProviderName = 'github' | 'gitverse' | 'gitlab' | 'gitee' | 'gitlem';
 
 // How a stored token authenticates with the provider. Only GitLab differs:
 // OAuth access tokens need `Authorization: Bearer`, personal access tokens

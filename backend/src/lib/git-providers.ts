@@ -32,4 +32,5 @@ export * from './git-providers/github.js';
 export * from './git-providers/gitlab.js';
 export * from './git-providers/gitee.js';
 export * from './git-providers/gitverse.js';
+export * from './git-providers/gitlem.js';
 export * from './git-providers/registry.js';
