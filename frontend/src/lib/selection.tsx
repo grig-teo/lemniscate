@@ -43,6 +43,11 @@ interface WorkspaceSelectionValue {
   /** Service whose detail pane is open in the center pane. */
   selectedServiceId: string | null;
   selectService: (id: string | null) => void;
+  /** Gitlem view open in the center pane: null = closed, 'grid' = repos grid, a repo name = detail. */
+  gitlemView: null | 'grid' | string;
+  openGitlemGrid: () => void;
+  openGitlemRepo: (name: string) => void;
+  closeGitlemView: () => void;
   /** Live status from SSE `status` events; overrides selectedTask.status. */
   liveStatus: string | null;
   setLiveStatus: (status: string | null) => void;
@@ -65,6 +70,7 @@ export function WorkspaceSelectionProvider({ children }: { children: React.React
   const [selectedServiceId, setSelectedServiceId] = React.useState<string | null>(() =>
     readPersisted<string | null>(SELECTED_SERVICE_STORAGE_KEY, null),
   );
+  const [gitlemView, setGitlemView] = React.useState<null | 'grid' | string>(null);
 
   const selectTask = React.useCallback((task: SelectedTask | null) => {
     setSelectedTask(task);
@@ -127,6 +133,31 @@ export function WorkspaceSelectionProvider({ children }: { children: React.React
     }
   }, []);
 
+  // The gitlem grid/detail replaces the console — clear the other pane
+  // selections so only one center-pane view is active at a time.
+  const clearOtherPanes = React.useCallback(() => {
+    setSelectedTask(null);
+    writePersisted(SELECTED_TASK_STORAGE_KEY, null);
+    setArchivedRepoId(null);
+    setArchivedTask(null);
+    setLiveStatus(null);
+    setSelectedServiceId(null);
+    writePersisted(SELECTED_SERVICE_STORAGE_KEY, null);
+    setPrReviewRepoId(null);
+  }, []);
+  const openGitlemGrid = React.useCallback(() => {
+    clearOtherPanes();
+    setGitlemView('grid');
+  }, [clearOtherPanes]);
+  const openGitlemRepo = React.useCallback(
+    (name: string) => {
+      clearOtherPanes();
+      setGitlemView(name);
+    },
+    [clearOtherPanes],
+  );
+  const closeGitlemView = React.useCallback(() => setGitlemView(null), []);
+
   const value = React.useMemo<WorkspaceSelectionValue>(
     () => ({
       selectedTask,
@@ -144,6 +175,10 @@ export function WorkspaceSelectionProvider({ children }: { children: React.React
       closeArchivedTask,
       selectedServiceId,
       selectService,
+      gitlemView,
+      openGitlemGrid,
+      openGitlemRepo,
+      closeGitlemView,
       liveStatus,
       setLiveStatus,
     }),
@@ -163,6 +198,10 @@ export function WorkspaceSelectionProvider({ children }: { children: React.React
       closeArchivedTask,
       selectedServiceId,
       selectService,
+      gitlemView,
+      openGitlemGrid,
+      openGitlemRepo,
+      closeGitlemView,
       liveStatus,
       setLiveStatus,
     ],

@@ -9,6 +9,8 @@ export { API_BASE_URL } from '@/lib/api';
 export * from '@/lib/api-types';
 export * from '@/lib/queries/auth';
 export * from '@/lib/queries/connections';
+export * from '@/lib/queries/gitlem-auth';
+export * from '@/lib/queries/gitlem';
 export * from '@/lib/queries/llm-configs';
 export * from '@/lib/queries/notification-channels';
 export * from '@/lib/queries/repositories';

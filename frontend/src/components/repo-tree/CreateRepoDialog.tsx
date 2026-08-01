@@ -29,8 +29,12 @@ import { FormField } from '@/components/ui/form-field';
 import { Input } from '@/components/ui/input';
 
 /** Form state and the submit handler for the dialog. */
-function useCreateRepoForm(onOpenChange: (open: boolean) => void, connections: Connection[]) {
-  const [connectionId, setConnectionId] = React.useState('');
+function useCreateRepoForm(
+  onOpenChange: (open: boolean) => void,
+  connections: Connection[],
+  presetConnectionId?: string,
+) {
+  const [connectionId, setConnectionId] = React.useState(presetConnectionId ?? '');
   const [name, setName] = React.useState('');
   const [isPrivate, setIsPrivate] = React.useState(true);
   const [readme, setReadme] = React.useState(true);
@@ -40,12 +44,16 @@ function useCreateRepoForm(onOpenChange: (open: boolean) => void, connections: C
   const templates = useAgentsMdTemplates();
   const selection = useWorkspaceSelection();
 
-  // A single connection is preselected — nothing else to pick.
+  // A single connection, or a preset, is preselected — nothing else to pick.
   React.useEffect(() => {
+    if (presetConnectionId) {
+      setConnectionId(presetConnectionId);
+      return;
+    }
     if (connections.length === 1 && !connectionId) {
       setConnectionId(connections[0].id);
     }
-  }, [connections, connectionId]);
+  }, [connections, connectionId, presetConnectionId]);
 
   const defaultTemplateId = React.useMemo(() => {
     const all = templates.data ?? [];
@@ -128,12 +136,15 @@ function useCreateRepoForm(onOpenChange: (open: boolean) => void, connections: C
 export function CreateRepoDialog({
   open,
   onOpenChange,
+  presetConnectionId,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  /** Lock the dialog to this connection (e.g. the gitlem connection from the grid). */
+  presetConnectionId?: string;
 }) {
   const connections = useConnections();
-  const form = useCreateRepoForm(onOpenChange, connections.data ?? []);
+  const form = useCreateRepoForm(onOpenChange, connections.data ?? [], presetConnectionId);
   const canSubmit = Boolean(form.connectionId && form.name.trim()) && !form.createRepo.isPending;
 
   return (
@@ -157,7 +168,7 @@ export function CreateRepoDialog({
               <p className="text-sm text-muted-foreground">
                 Connect a git host in settings first.
               </p>
-            ) : (
+            ) : presetConnectionId ? null : (
               <ConnectionSelect
                 connections={connections.data ?? []}
                 value={form.connectionId}
