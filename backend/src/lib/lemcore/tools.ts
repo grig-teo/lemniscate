@@ -19,6 +19,7 @@ export type ToolName =
   | 'bash'
   | 'grep'
   | 'glob'
+  | 'list_dir'
   | 'web_search'
   | 'graph_query'
   | 'graph_impact'
@@ -96,13 +97,14 @@ export async function toolEditFile(
   const absPath = jailPath(workdir, relPath);
   const existing = await fs.readFile(absPath, 'utf8');
   if (!existing.includes(search)) {
-    throw new Error(`edit_file: search string not found in ${relPath}`);
+    const preview = existing.split('\n').filter(l => l.trim()).slice(0, 5).join('\n');
+    throw new Error(`edit_file: search string not found in ${relPath}. First lines:\n${preview}`);
   }
   const count = (existing.match(new RegExp(search.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g')) ?? []).length;
   if (count !== 1) {
     throw new Error(`edit_file: expected exactly 1 match, found ${count} in ${relPath}`);
   }
-  const updated = existing.replace(search, replace);
+  const updated = existing.replace(search, () => replace);
   await fs.writeFile(absPath, updated, 'utf8');
   return {
     tool: 'edit_file',
@@ -162,17 +164,22 @@ export async function toolBash(
 ): Promise<ToolResult> {
   const startMs = Date.now();
   return new Promise((resolve) => {
-    execFile('bash', ['-c', command], { cwd: workdir, timeout: BASH_TIMEOUT_MS }, (err, stdout, stderr) => {
-      const combined = [stdout ?? '', stderr ?? ''].join('');
-      const capped = truncate(redactSecrets(combined, secrets));
-      resolve({
-        tool: 'bash',
-        title: command.length > 80 ? `${command.slice(0, 80)}…` : command,
-        outputPreview: capped,
-        durationMs: Date.now() - startMs,
-        error: isRealBashError(err) ? err!.message : undefined,
-      });
-    });
+    execFile(
+      'bash',
+      ['-c', command],
+      { cwd: workdir, timeout: BASH_TIMEOUT_MS, maxBuffer: 16 * 1024 * 1024 },
+      (err, stdout, stderr) => {
+        const combined = [stdout ?? '', stderr ?? ''].join('');
+        const capped = truncate(redactSecrets(combined, secrets));
+        resolve({
+          tool: 'bash',
+          title: command.length > 80 ? `${command.slice(0, 80)}…` : command,
+          outputPreview: capped,
+          durationMs: Date.now() - startMs,
+          error: isRealBashError(err) ? err!.message : undefined,
+        });
+      },
+    );
   });
 }
 
@@ -223,6 +230,26 @@ export async function toolGlob(
       });
     });
   });
+}
+
+export async function toolListDir(
+  workdir: string,
+  relPath: string,
+  secrets: string[] = [],
+): Promise<ToolResult> {
+  const startMs = Date.now();
+  const absPath = relPath ? jailPath(workdir, relPath) : workdir;
+  const entries = await fs.readdir(absPath, { withFileTypes: true });
+  const lines = entries
+    .sort((a, b) => (a.isDirectory() === b.isDirectory() ? a.name.localeCompare(b.name) : a.isDirectory() ? -1 : 1))
+    .map((e) => `${e.isDirectory() ? '📁' : '📄'} ${e.name}`)
+    .slice(0, 200);
+  return {
+    tool: 'list_dir',
+    title: relPath || '.',
+    outputPreview: truncate(redactSecrets(lines.join('\n'), secrets)),
+    durationMs: Date.now() - startMs,
+  };
 }
 
 // DuckDuckGo HTML search — see web-search.ts.

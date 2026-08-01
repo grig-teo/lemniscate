@@ -169,6 +169,7 @@ beforeEach(() => {
   mocks.logEvent.mockResolvedValue(undefined);
   mocks.runHermesTask.mockResolvedValue(undefined);
   mocks.enqueueRunTask.mockResolvedValue(undefined);
+  mocks.notifyTaskCompleted.mockResolvedValue(undefined);
   // Post-run status read for the workdir-retention check: the happy-path
   // flows above end in awaiting_review.
   mocks.taskFindUnique.mockResolvedValue({ status: 'awaiting_review' });
@@ -237,7 +238,12 @@ describe('runTask with resolveAgentExecutor=hermes', () => {
     // Attempt 1 leaves the worktree clean → requeue; the retry (attempt 2)
     // gets the no-changes prompt, makes changes, and the PR flow proceeds.
     mocks.hasDirtyWorkdir.mockResolvedValueOnce(false).mockResolvedValue(true);
-    mocks.taskFindUnique.mockResolvedValue({ status: 'awaiting_review' });
+    // taskFindUnique serves two readers: the retry settle check (must see
+    // the requeued 'queued' status) and the final workdir-retention check
+    // (sees the terminal status).
+    mocks.taskFindUnique
+      .mockResolvedValueOnce({ status: 'queued' })
+      .mockResolvedValue({ status: 'awaiting_review' });
     await runTask('task-1');
 
     expect(mocks.runHermesTask).toHaveBeenCalledTimes(2);
@@ -258,7 +264,9 @@ describe('runTask with resolveAgentExecutor=hermes', () => {
     // 'failed' with a clear message — 'done' is reserved for runs that
     // actually produced something.
     mocks.hasDirtyWorkdir.mockResolvedValue(false);
-    mocks.taskFindUnique.mockResolvedValue({ status: 'failed' });
+    mocks.taskFindUnique
+      .mockResolvedValueOnce({ status: 'queued' })
+      .mockResolvedValue({ status: 'failed' });
     await runTask('task-1');
 
     expect(mocks.runHermesTask).toHaveBeenCalledTimes(2);

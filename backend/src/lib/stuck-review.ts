@@ -114,10 +114,18 @@ async function isReviewStuck(taskId: string, taskUpdatedAt: Date | null): Promis
 export async function recoverStuckReviews(): Promise<void> {
   const tasks = await prisma.task.findMany({
     where: {
-      status: { in: ['awaiting_review', 'reviewing_code', 'running'] },
       archivedAt: null,
-      branchName: { not: null },
       repository: { connection: { disconnectedAt: null } },
+      // Review statuses require a branch (the PR being reviewed); a 'running'
+      // task may legitimately have none yet (branch is created mid-run), so
+      // it is recovered regardless of branchName.
+      OR: [
+        { status: 'running' },
+        {
+          status: { in: ['awaiting_review', 'reviewing_code'] },
+          branchName: { not: null },
+        },
+      ],
     },
     select: {
       id: true,

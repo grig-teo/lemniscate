@@ -1,0 +1,1 @@
+ALTER TABLE "LlmConfig" ADD COLUMN "maxCostPerRunUsd" DOUBLE PRECISION;

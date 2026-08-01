@@ -317,7 +317,7 @@ describe('reviewTask on the internal executor', () => {
     await reviewTask('task-1');
     const messages = mocks.llmCall.mock.calls[0]?.[1] as { content: string }[];
     const sent = messages.map((m) => m.content).join('\n');
-    expect(sent).toContain('… [truncated]');
+    expect(sent).toMatch(/… \[truncated/);
     expect(sent).not.toContain('x'.repeat(40_000));
   });
 });

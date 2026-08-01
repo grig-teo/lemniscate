@@ -54,6 +54,13 @@ export async function runLemcoreReview(
     rt,
     prompt,
     secrets,
+    // The default lemcoreSystemPrompt says "Implement the task completely,
+    // including tests..." — contradictory during a review pass. Use a
+    // review-specific system prompt so the agent only examines and writes its
+    // verdict rather than implementing features.
+    systemPromptOverride:
+      'You are reviewing a pull request. Examine the changes, read affected files, ' +
+      'and write your verdict to .lemniscate-review.json. Do NOT implement new features.',
   });
 
   let review: PrReview | null = null;

@@ -121,6 +121,10 @@ const envSchema = z.object({
   // this long (typically a hung LLM provider) so the run fails fast instead
   // of pinning a worker slot. 0 disables the watchdog.
   AGENT_HERMES_STALL_TIMEOUT_MINUTES: z.coerce.number().int().nonnegative().default(15),
+  // Hard wall-clock cap for one lemcore run; the job then fails the task.
+  // Distinct from the hermes timeout above so the two executors can be tuned
+  // independently.
+  LEMCORE_TIMEOUT_MINUTES: z.coerce.number().int().positive().default(45),
   // Lemcore stall watchdog: aborts the run when a single LLM turn takes
   // longer than this (same stalled-provider failure mode as above).
   LEMCORE_STALLED_TURN_TIMEOUT_MINUTES: z.coerce.number().int().positive().default(15),
