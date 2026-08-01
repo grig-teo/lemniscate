@@ -180,6 +180,11 @@ export async function runHttpBackend(
   });
 }
 
+// Materialization failure boundary: a throw here (doc parse, a failed git
+// subprocess while building the clone) must not fall through to Fastify's
+// default 500 — the reverse proxy reports that to the git client as an
+// opaque 502 with no diagnosable body (observed on clones of repos with
+// URL-encoded names). Answer 502 with the reason instead.
 async function gitHttpHandler(request: FastifyRequest, reply: FastifyReply) {
   const auth = await authenticateGitRequest(request.headers.authorization);
   if (!auth) return sendUnauthorized(reply);
@@ -188,7 +193,23 @@ async function gitHttpHandler(request: FastifyRequest, reply: FastifyReply) {
   if (params.username !== auth.username) {
     return reply.code(403).send({ error: 'gitlem: token does not own this namespace' });
   }
-  const gitDir = await materializeGitlemRepo(params.username, params.repo);
-  if (!gitDir) return reply.code(404).send({ error: 'gitlem: repository not found' });
+  const gitDir = await tryMaterialize(request, params);
+  if (gitDir === undefined) {
+    return reply.code(502).send({ error: 'gitlem: failed to materialize the repository' });
+  }
+  if (gitDir === null) return reply.code(404).send({ error: 'gitlem: repository not found' });
   return runHttpBackend(request, reply, params, gitDir);
+}
+
+/** undefined = materialization threw (already logged); null = repo missing. */
+async function tryMaterialize(
+  request: FastifyRequest,
+  params: GitParams,
+): Promise<string | null | undefined> {
+  try {
+    return await materializeGitlemRepo(params.username, params.repo);
+  } catch (err) {
+    request.log.error({ err }, 'gitlem: repository materialization failed');
+    return undefined;
+  }
 }
