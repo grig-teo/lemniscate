@@ -65,8 +65,8 @@ describe('GET /api/settings', () => {
     });
     expect(response.statusCode).toBe(200);
     expect(response.json()).toEqual({
-      agentExecutor: 'hermes',
-      defaultAgentExecutor: 'hermes',
+      agentExecutor: 'lemcore',
+      defaultAgentExecutor: 'lemcore',
       override: null,
     });
   });
@@ -75,7 +75,7 @@ describe('GET /api/settings', () => {
     mocks.userFindUnique.mockResolvedValue({
       id: 'user-1',
       sessionVersion: 0,
-      agentExecutor: 'internal',
+      agentExecutor: 'lemcore',
     });
     const app = await buildApp();
     const response = await app.inject({
@@ -84,9 +84,28 @@ describe('GET /api/settings', () => {
       cookies: authCookies(),
     });
     expect(response.json()).toEqual({
-      agentExecutor: 'internal',
-      defaultAgentExecutor: 'hermes',
-      override: 'internal',
+      agentExecutor: 'lemcore',
+      defaultAgentExecutor: 'lemcore',
+      override: 'lemcore',
+    });
+  });
+
+  it('degrades a stale stored executor (hermes/internal removed) to the default', async () => {
+    mocks.userFindUnique.mockResolvedValue({
+      id: 'user-1',
+      sessionVersion: 0,
+      agentExecutor: 'hermes',
+    });
+    const app = await buildApp();
+    const response = await app.inject({
+      method: 'GET',
+      url: '/api/settings/',
+      cookies: authCookies(),
+    });
+    expect(response.json()).toEqual({
+      agentExecutor: 'lemcore',
+      defaultAgentExecutor: 'lemcore',
+      override: null,
     });
   });
 });
@@ -98,18 +117,18 @@ describe('PUT /api/settings/agent-executor', () => {
       method: 'PUT',
       url: '/api/settings/agent-executor',
       cookies: authCookies(),
-      payload: { agentExecutor: 'internal' },
+      payload: { agentExecutor: 'lemcore' },
     });
     expect(response.statusCode).toBe(200);
     expect(mocks.userUpdate).toHaveBeenCalledWith({
       where: { id: 'user-1' },
-      data: { agentExecutor: 'internal' },
+      data: { agentExecutor: 'lemcore' },
       select: { agentExecutor: true },
     });
     expect(response.json()).toEqual({
-      agentExecutor: 'internal',
-      defaultAgentExecutor: 'hermes',
-      override: 'internal',
+      agentExecutor: 'lemcore',
+      defaultAgentExecutor: 'lemcore',
+      override: 'lemcore',
     });
   });
 

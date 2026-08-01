@@ -113,7 +113,21 @@ const envSchema = z.object({
   AGENT_WORKER_CONCURRENCY: z.coerce.number().int().positive().default(4),
   // Task executor: 'lemcore' is the structured TypeScript agent loop with
   // per-step activity events (the only executor; hermes/internal removed).
-  AGENT_EXECUTOR: z.enum(['lemcore']).default('lemcore'),
+  // The legacy values 'hermes'/'internal' are still accepted so existing
+  // deployments boot, but coerce to 'lemcore' with a deprecation warning.
+  AGENT_EXECUTOR: z
+    .enum(['lemcore', 'hermes', 'internal'])
+    .default('lemcore')
+    .transform((value) => {
+      if (value !== 'lemcore') {
+        console.warn(
+          `[config] AGENT_EXECUTOR=${value} is deprecated and ignored — ` +
+            `the ${value} executor was removed; falling back to 'lemcore'. ` +
+            'Remove AGENT_EXECUTOR from your environment to silence this warning.',
+        );
+      }
+      return 'lemcore' as const;
+    }),
   // Hard wall-clock cap for one lemcore agent run; the job then fails the
   // task. (Keeps the historic AGENT_HERMES_* env names so existing
   // deployments keep their tuning.)

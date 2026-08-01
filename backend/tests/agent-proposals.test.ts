@@ -3,14 +3,15 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Repository, GitConnection } from '@prisma/client';
 
-// Tests for the 'generate-proposals' job: the LLM's proposals (up to 5)
-// become pending proposal tasks (click-to-run, not auto-enqueued), deduped
-// by title against pending/queued ones and topped up to at most 5 pending.
-// All I/O collaborators are mocked — no DB, Redis, git, or LLM is contacted.
+// Tests for the 'generate-proposals' job: the lemcore agent explores the
+// clone and writes .lemniscate-proposals.json; the parsed proposals (up to 5)
+// become pending proposal tasks (click-to-run, not auto-enqueued), deduped by
+// title against pending/queued/running ones and topped up to at most 5
+// pending. All I/O collaborators are mocked — no DB, Redis, git, or LLM is
+// contacted.
 
 const mocks = vi.hoisted(() => ({
   config: {
-    AGENT_EXECUTOR: 'internal' as string,
     AGENT_WORKDIR: '/tmp/test-workdirs',
     AGENT_HERMES_TIMEOUT_MINUTES: 45,
   },
@@ -19,13 +20,11 @@ const mocks = vi.hoisted(() => ({
   taskFindMany: vi.fn(),
   taskCreate: vi.fn(),
   skillFindMany: vi.fn(),
-  enqueueRunTask: vi.fn(),
-  requestProposals: vi.fn(),
   prepareAgentRuntime: vi.fn(),
   cloneRepository: vi.fn(),
   cleanupWorkdir: vi.fn(),
-  buildRepoContext: vi.fn(),
-  runHermesTask: vi.fn(),
+  resolveAgentExecutor: vi.fn(),
+  runLemcoreTask: vi.fn(),
 }));
 
 vi.mock('../src/config.js', () => ({ config: mocks.config }));
@@ -43,21 +42,15 @@ vi.mock('../src/lib/agent-git.js', () => ({
   cloneRepository: mocks.cloneRepository,
   cleanupWorkdir: mocks.cleanupWorkdir,
 }));
-vi.mock('../src/lib/repo-context.js', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('../src/lib/repo-context.js')>()),
-  buildRepoContext: mocks.buildRepoContext,
+vi.mock('../src/lib/agent-executor.js', () => ({
+  resolveAgentExecutor: mocks.resolveAgentExecutor,
 }));
+vi.mock('../src/lib/lemcore/run.js', () => ({ runLemcoreTask: mocks.runLemcoreTask }));
 // Keep the real prompt builders + proposals schema (the pure helpers under
-// test use them); only the network-bound requestProposals is stubbed.
-vi.mock('../src/lib/agent-prompts.js', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('../src/lib/agent-prompts.js')>()),
-  requestProposals: mocks.requestProposals,
-}));
-vi.mock('../src/lib/hermes-runner.js', () => ({ runHermesTask: mocks.runHermesTask }));
-vi.mock('../src/lib/proposal-scheduler.js', () => ({ enqueueRunTask: mocks.enqueueRunTask }));
+// test use them).
 
 import {
-  buildHermesProposalPrompt,
+  buildLemcoreProposalPrompt,
   generateProposals,
   parseProposalsFile,
   pendingProposalState,
@@ -67,6 +60,8 @@ import {
 } from '../src/lib/agent-proposals.js';
 
 type RepositoryWithConnection = Repository & { connection: GitConnection };
+
+const PROPOSALS_FILENAME = '.lemniscate-proposals.json';
 
 function proposal(index: number) {
   return { title: `Proposal ${index}`, prompt: `Do thing ${index}` };
@@ -79,7 +74,8 @@ function stubRepository(): RepositoryWithConnection {
     autoPropose: true,
     defaultBranch: 'main',
     llmConfigId: null,
-    connection: {},
+    skillSlugs: [],
+    connection: { userId: 'user-1' },
   } as unknown as RepositoryWithConnection;
 }
 
@@ -89,18 +85,27 @@ function stubHappyPath(
   mocks.repositoryFindUnique.mockResolvedValue(stubRepository());
   mocks.prepareAgentRuntime.mockResolvedValue({
     cloneUrl: 'https://example/repo.git',
+    gitAuth: { username: 'oauth', token: 'tok' },
     rt: { cfg: { contextWindow: 1000, systemPromptExtra: null } },
   });
-  mocks.buildRepoContext.mockResolvedValue({ text: 'CTX', files: [] });
-  mocks.requestProposals.mockResolvedValue(proposals);
+  mocks.skillFindMany.mockResolvedValue([]);
+  lemcoreWritesFile(JSON.stringify(proposals));
   mocks.taskCreate.mockImplementation((args: { data: { title: string } }) =>
     Promise.resolve({ id: `task-${args.data.title}` }),
   );
 }
 
+function lemcoreWritesFile(content: string): void {
+  mocks.runLemcoreTask.mockImplementation(async (opts: { workdir: string }) => {
+    await fs.mkdir(opts.workdir, { recursive: true });
+    await fs.writeFile(path.join(opts.workdir, PROPOSALS_FILENAME), content);
+    return { summary: null, changed: true };
+  });
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
-  mocks.config.AGENT_EXECUTOR = 'internal';
+  mocks.resolveAgentExecutor.mockResolvedValue('lemcore');
   mocks.taskFindMany.mockResolvedValue([]);
 });
 
@@ -109,12 +114,13 @@ afterEach(async () => {
 });
 
 describe('generateProposals', () => {
-  it('creates pending tasks for up to 5 proposals without enqueueing', async () => {
+  it('creates pending tasks for up to 5 proposals', async () => {
     stubHappyPath([1, 2, 3, 4, 5].map(proposal));
     await generateProposals('repo-1');
     expect(mocks.taskCreate).toHaveBeenCalledTimes(5);
-    expect(mocks.taskCreate.mock.calls[0]?.[0].data.status).toBe('pending');
-    expect(mocks.enqueueRunTask).not.toHaveBeenCalled();
+    for (const call of mocks.taskCreate.mock.calls) {
+      expect(call[0].data.status).toBe('pending');
+    }
   });
 
   it('persists the proposal category, priority, and effort on the created task', async () => {
@@ -123,24 +129,43 @@ describe('generateProposals', () => {
     ]);
     await generateProposals('repo-1');
     expect(mocks.taskCreate.mock.calls[0]?.[0].data).toMatchObject({
+      kind: 'proposal',
       category: 'security',
       priority: 'critical',
       effort: 'small',
     });
   });
 
-  it('persists a features proposal as a pending task with category features', async () => {
+  it('creates proposals sequentially, lowest priority first (critical gets the newest createdAt)', async () => {
     stubHappyPath([
-      { title: 'Add REST webhooks', prompt: 'Implement outbound webhooks', category: 'features', priority: 'high', effort: 'medium' },
+      { title: 'Low one', prompt: 'P', priority: 'low' },
+      { title: 'Critical one', prompt: 'P', priority: 'critical' },
+      { title: 'High one', prompt: 'P', priority: 'high' },
     ]);
     await generateProposals('repo-1');
-    expect(mocks.taskCreate.mock.calls[0]?.[0].data).toMatchObject({
-      kind: 'proposal',
-      category: 'features',
-      priority: 'high',
-      effort: 'medium',
-      status: 'pending',
+    expect(mocks.taskCreate).toHaveBeenCalledTimes(3);
+    const titles = mocks.taskCreate.mock.calls.map((call) => call[0].data.title);
+    expect(titles).toEqual(['Low one', 'High one', 'Critical one']);
+  });
+
+  it('inherits the repository LLM config and skill slugs on the proposal tasks', async () => {
+    stubHappyPath([proposal(1)]);
+    mocks.repositoryFindUnique.mockResolvedValue({
+      ...stubRepository(),
+      llmConfigId: 'llm-9',
+      skillSlugs: ['skill-a'],
     });
+    await generateProposals('repo-1');
+    expect(mocks.taskCreate.mock.calls[0]?.[0].data).toMatchObject({
+      llmConfigId: 'llm-9',
+      skills: ['skill-a'],
+    });
+  });
+
+  it('omits llmConfigId when the repository has none', async () => {
+    stubHappyPath([proposal(1)]);
+    await generateProposals('repo-1');
+    expect(mocks.taskCreate.mock.calls[0]?.[0].data.llmConfigId).toBeUndefined();
   });
 
   it('skips proposals whose title is already pending or queued', async () => {
@@ -162,7 +187,7 @@ describe('generateProposals', () => {
   });
 
   it('creates nothing when 5 proposals are already pending', async () => {
-    stubHappyPath([1, 2, 3].map(proposal));
+    mocks.repositoryFindUnique.mockResolvedValue(stubRepository());
     mocks.taskFindMany.mockResolvedValue(
       [1, 2, 3, 4, 5].map((i) => ({ title: `Old ${i}`, status: 'pending' })),
     );
@@ -170,16 +195,16 @@ describe('generateProposals', () => {
     expect(mocks.taskCreate).not.toHaveBeenCalled();
   });
 
-  it('propagates clone failures (empty-repo handling lives in cloneRepository)', async () => {
+  it('propagates clone failures', async () => {
     stubHappyPath([proposal(1)]);
     mocks.taskFindMany.mockResolvedValue([]);
     mocks.cloneRepository.mockRejectedValueOnce(new Error('git clone failed: boom'));
     await expect(generateProposals('repo-1')).rejects.toThrow('git clone failed: boom');
-    expect(mocks.requestProposals).not.toHaveBeenCalled();
+    expect(mocks.runLemcoreTask).not.toHaveBeenCalled();
     expect(mocks.taskCreate).not.toHaveBeenCalled();
   });
 
-  it('exits before cloning or calling the LLM when 5 proposals are pending', async () => {
+  it('exits before cloning or running the agent when 5 proposals are pending', async () => {
     mocks.repositoryFindUnique.mockResolvedValue(stubRepository());
     mocks.taskFindMany.mockResolvedValue(
       [1, 2, 3, 4, 5].map((i) => ({ title: `Old ${i}`, status: 'pending' })),
@@ -187,7 +212,7 @@ describe('generateProposals', () => {
     await generateProposals('repo-1');
     expect(mocks.prepareAgentRuntime).not.toHaveBeenCalled();
     expect(mocks.cloneRepository).not.toHaveBeenCalled();
-    expect(mocks.requestProposals).not.toHaveBeenCalled();
+    expect(mocks.runLemcoreTask).not.toHaveBeenCalled();
     expect(mocks.taskCreate).not.toHaveBeenCalled();
   });
 
@@ -196,7 +221,7 @@ describe('generateProposals', () => {
     mocks.repositoryFindUnique.mockResolvedValue({ ...stubRepository(), autoPropose: false });
     mocks.taskFindMany.mockResolvedValue([]);
     await generateProposals('repo-1');
-    expect(mocks.requestProposals).toHaveBeenCalled();
+    expect(mocks.runLemcoreTask).toHaveBeenCalled();
     expect(mocks.taskCreate).toHaveBeenCalledTimes(1);
   });
 
@@ -219,6 +244,41 @@ describe('generateProposals', () => {
     expect(mocks.prepareAgentRuntime).toHaveBeenCalled();
     expect(mocks.taskCreate).toHaveBeenCalledTimes(1);
   });
+
+  it('fails when lemcore writes no usable proposals file', async () => {
+    stubHappyPath([proposal(1)]);
+    mocks.runLemcoreTask.mockResolvedValue({ summary: null, changed: false });
+    await expect(generateProposals('repo-1')).rejects.toThrow('no usable proposals file');
+    expect(mocks.taskCreate).not.toHaveBeenCalled();
+  });
+
+  it('fails when the proposals file is invalid JSON', async () => {
+    stubHappyPath([proposal(1)]);
+    lemcoreWritesFile('the agent wrote prose instead');
+    await expect(generateProposals('repo-1')).rejects.toThrow('no usable proposals file');
+    expect(mocks.taskCreate).not.toHaveBeenCalled();
+  });
+
+  it('rejects a non-lemcore executor resolution', async () => {
+    stubHappyPath([proposal(1)]);
+    mocks.resolveAgentExecutor.mockResolvedValue('hermes');
+    await expect(generateProposals('repo-1')).rejects.toThrow('unsupported executor');
+    expect(mocks.taskCreate).not.toHaveBeenCalled();
+  });
+
+  it('passes the repository skills into the lemcore prompt', async () => {
+    stubHappyPath([proposal(1)]);
+    mocks.repositoryFindUnique.mockResolvedValue({
+      ...stubRepository(),
+      skillSlugs: ['skill-a'],
+    });
+    mocks.skillFindMany.mockResolvedValue([
+      { name: 'Skill A', slug: 'skill-a', content: 'Do things well' },
+    ]);
+    await generateProposals('repo-1');
+    const call = mocks.runLemcoreTask.mock.calls[0]?.[0];
+    expect(call.promptOverride).toContain('### Skill A (skill-a)');
+  });
 });
 
 // Archived pending proposals keep their title in the dedupe set (don't
@@ -240,112 +300,10 @@ describe('pendingProposalState', () => {
   });
 });
 
-// AGENT_EXECUTOR=hermes: the hermes agent explores the clone and writes
-// .lemniscate-proposals.json; a missing/invalid file falls back to the
-// direct LLM request so the top-up still works.
-describe('generateProposals with AGENT_EXECUTOR=hermes', () => {
-  function stubHermesPath(): void {
-    mocks.config.AGENT_EXECUTOR = 'hermes';
-    mocks.repositoryFindUnique.mockResolvedValue({
-      ...stubRepository(),
-      skillSlugs: ['skill-a'],
-    });
-    mocks.prepareAgentRuntime.mockResolvedValue({
-      cloneUrl: 'https://example/repo.git',
-      rt: {
-        apiKey: 'sk-test',
-        cfg: {
-          baseUrl: 'https://llm.example/v1',
-          model: 'model-x',
-          contextWindow: 128_000,
-          systemPromptExtra: 'Focus on tests.',
-        },
-      },
-    });
-    mocks.buildRepoContext.mockResolvedValue({ text: 'CTX', files: [] });
-    mocks.skillFindMany.mockResolvedValue([
-      { name: 'Skill A', slug: 'skill-a', content: 'Do things well' },
-    ]);
-    mocks.taskCreate.mockImplementation((args: { data: { title: string } }) =>
-      Promise.resolve({ id: `task-${args.data.title}` }),
-    );
-  }
-
-  function hermesWritesFile(content: string): void {
-    mocks.runHermesTask.mockImplementation(async (opts: { workdir: string }) => {
-      await fs.mkdir(opts.workdir, { recursive: true });
-      await fs.writeFile(path.join(opts.workdir, '.lemniscate-proposals.json'), content);
-    });
-  }
-
-  it('runs hermes without a taskId and creates proposals from the written file', async () => {
-    stubHermesPath();
-    hermesWritesFile(JSON.stringify([proposal(1), proposal(2)]));
-    await generateProposals('repo-1');
-
-    expect(mocks.runHermesTask).toHaveBeenCalledTimes(1);
-    const call = mocks.runHermesTask.mock.calls[0]?.[0];
-    expect(call.taskId).toBeUndefined();
-    expect(call.llm).toEqual({
-      baseUrl: 'https://llm.example/v1',
-      apiKey: 'sk-test',
-      model: 'model-x',
-      contextWindow: 128_000,
-    });
-    expect(call.timeoutMs).toBe(45 * 60_000);
-    expect(call.prompt).toContain('### Skill A (skill-a)');
-    expect(call.prompt).toContain('Focus on tests.');
-    expect(mocks.requestProposals).not.toHaveBeenCalled();
-    expect(mocks.taskCreate).toHaveBeenCalledTimes(2);
-  });
-
-  it('falls back to the direct LLM request when hermes writes no file', async () => {
-    stubHermesPath();
-    mocks.runHermesTask.mockResolvedValue(undefined);
-    mocks.requestProposals.mockResolvedValue([proposal(1)]);
-    await generateProposals('repo-1');
-
-    expect(mocks.requestProposals).toHaveBeenCalled();
-    expect(mocks.taskCreate).toHaveBeenCalledTimes(1);
-  });
-
-  it('falls back to the direct LLM request when the file is invalid', async () => {
-    stubHermesPath();
-    hermesWritesFile('the agent wrote prose instead of JSON');
-    mocks.requestProposals.mockResolvedValue([proposal(1)]);
-    await generateProposals('repo-1');
-
-    expect(mocks.requestProposals).toHaveBeenCalled();
-    expect(mocks.taskCreate).toHaveBeenCalledTimes(1);
-  });
-});
-
 describe('parseProposalsFile', () => {
-  it('parses a plain JSON array, defaulting missing category/priority/effort', () => {
+  it('parses a bare JSON array', () => {
     expect(parseProposalsFile('[{"title":"T","prompt":"P"}]')).toEqual([
       { title: 'T', prompt: 'P', category: 'code quality', priority: 'medium', effort: 'medium' },
-    ]);
-  });
-
-  it('keeps valid fields and falls back on unknown ones', () => {
-    const raw = '[{"title":"A","prompt":"P","category":"security","priority":"critical","effort":"small"},' +
-      '{"title":"B","prompt":"P","category":"nonsense","priority":"urgent","effort":"huge"}]';
-    expect(parseProposalsFile(raw)).toEqual([
-      { title: 'A', prompt: 'P', category: 'security', priority: 'critical', effort: 'small' },
-      { title: 'B', prompt: 'P', category: 'code quality', priority: 'medium', effort: 'medium' },
-    ]);
-  });
-
-  it('parses JSON wrapped in markdown fences', () => {
-    const raw = '```json\n[{"title":"T","prompt":"P","category":"testing"}]\n```';
-    expect(parseProposalsFile(raw)).toEqual([
-      { title: 'T', prompt: 'P', category: 'testing', priority: 'medium', effort: 'medium' },
-    ]);
-  });
-
-  it('keeps the features category from the hermes-written file', () => {
-    expect(parseProposalsFile('[{"title":"Add SSO","prompt":"P","category":"features"}]')).toEqual([
-      { title: 'Add SSO', prompt: 'P', category: 'features', priority: 'medium', effort: 'medium' },
     ]);
   });
 
@@ -376,15 +334,17 @@ describe('sortByPriority', () => {
   });
 });
 
-describe('buildHermesProposalPrompt', () => {
+describe('buildLemcoreProposalPrompt', () => {
   it('includes the skills section and owner instructions when provided', () => {
-    const prompt = buildHermesProposalPrompt({
-      maxProposals: 5,
-      skillsSection: '## Active skills\n\n### Skill A (skill-a)\nDo things well',
+    const prompt = buildLemcoreProposalPrompt({
+      fullName: 'owner/repo',
+      defaultBranch: 'main',
       systemPromptExtra: 'Focus on tests.',
+      repoContext: '',
+      skillsSection: '## Active skills\n\n### Skill A (skill-a)\nDo things well',
     });
     expect(prompt).toContain('.lemniscate-proposals.json');
-    expect(prompt).toContain('up to 5');
+    expect(prompt).toContain('owner/repo');
     expect(prompt).toContain('"priority": "critical"|"high"|"medium"|"low"');
     expect(prompt).toContain('### Skill A (skill-a)');
     expect(prompt).toContain('Focus on tests.');
@@ -392,24 +352,26 @@ describe('buildHermesProposalPrompt', () => {
   });
 
   it('omits empty extras', () => {
-    const prompt = buildHermesProposalPrompt({
-      maxProposals: 5,
-      skillsSection: '',
+    const prompt = buildLemcoreProposalPrompt({
+      fullName: 'owner/repo',
+      defaultBranch: 'main',
       systemPromptExtra: null,
+      repoContext: '',
+      skillsSection: '',
     });
     expect(prompt).not.toContain('Additional instructions');
     expect(prompt).not.toContain('Active skills');
   });
 
   it('requires features proposals for new implementations', () => {
-    const prompt = buildHermesProposalPrompt({
-      maxProposals: 5,
-      skillsSection: '',
+    const prompt = buildLemcoreProposalPrompt({
+      fullName: 'owner/repo',
+      defaultBranch: 'main',
       systemPromptExtra: null,
+      repoContext: '',
+      skillsSection: '',
     });
     expect(prompt).toContain('features');
-    expect(prompt).toContain('at least one `features` proposal');
-    expect(prompt).toContain('NEW implementations');
   });
 });
 

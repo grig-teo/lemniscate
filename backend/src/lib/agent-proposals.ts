@@ -12,15 +12,17 @@ import {
   type LlmProposals,
   type ProposalPriority,
 } from './proposals-contract.js';
-import { prepareAgentRuntime, type LlmRuntime } from './agent-runtime.js';
-import { defaultAgentExecutor, resolveAgentExecutor } from './agent-executor.js';
+import {
+  prepareAgentRuntime,
+  type LlmRuntime,
+  type TaskWithRepo,
+} from './agent-runtime.js';
+import { resolveAgentExecutor } from './agent-executor.js';
 import { runLemcoreTask } from './lemcore/run.js';
 import { buildSkillsSection } from './agent-prompts.js';
 import { extractJsonArray } from './llm-json.js';
 import { prisma } from './prisma.js';
-import { buildRepoContext } from './repo-context.js';
-import { loadAgentsMdTemplate } from './task-skills.js';
-import { publishTaskEvent } from './task-events.js';
+import { parseSkillSlugs } from './task-skills.js';
 
 // Job: generate-proposals — clone → lemcore analyzes the repo → proposal
 // tasks (dedupe by title, cap per repo). Extracted from agent-loop.ts.
@@ -70,16 +72,18 @@ export function parseProposalsFile(raw: string): LlmProposals | null {
 }
 
 export interface PendingProposalState {
-  active: number;
-  pendingTitles: Set<string>;
+  /** Non-archived pending proposals — these fill the top-up cap. */
+  pendingCount: number;
+  /** All matching titles (archived included) — never re-propose these. */
+  titles: Set<string>;
 }
 
 export function pendingProposalState(
-  rows: { title: string; status: string }[],
+  rows: { title: string; status: string; archivedAt?: Date | null }[],
 ): PendingProposalState {
   return {
-    active: rows.length,
-    pendingTitles: new Set(rows.map((row) => row.title.toLowerCase())),
+    pendingCount: rows.filter((row) => row.status === 'pending' && !row.archivedAt).length,
+    titles: new Set(rows.map((row) => row.title.trim().toLowerCase())),
   };
 }
 
@@ -87,10 +91,10 @@ async function loadPendingProposalState(repositoryId: string): Promise<PendingPr
   const rows = await prisma.task.findMany({
     where: {
       repositoryId,
-      proposal: true,
-      status: { in: ['pending', 'running', 'retrying', 'waiting_approval'] },
+      kind: 'proposal',
+      status: { in: ['pending', 'queued', 'running'] },
     },
-    select: { title: true, status: true },
+    select: { title: true, status: true, archivedAt: true },
   });
   return pendingProposalState(rows);
 }
@@ -106,14 +110,17 @@ export function sortByPriority(proposals: LlmProposals): LlmProposals {
 function proposalTaskData(repository: RepositoryWithConnection, proposal: LlmProposals[number]) {
   return {
     repositoryId: repository.id,
+    kind: 'proposal' as const,
     title: proposal.title.slice(0, 200),
     prompt: proposal.prompt,
-    proposal: true,
-    priority: proposal.priority,
     category: proposal.category,
+    priority: proposal.priority,
     effort: proposal.effort,
     status: 'pending' as const,
-    skills: loadAgentsMdTemplate(),
+    // Inherit the repository's LLM config and skill selection so running a
+    // proposal behaves like any task created from this repo's UI.
+    ...(repository.llmConfigId ? { llmConfigId: repository.llmConfigId } : {}),
+    skills: parseSkillSlugs(repository.skillSlugs),
   };
 }
 
@@ -121,15 +128,17 @@ async function createProposalTasks(
   repository: RepositoryWithConnection,
   proposals: LlmProposals,
 ): Promise<number> {
-  const { active, pendingTitles } = await loadPendingProposalState(repository.id);
-  const capacity = Math.max(0, MAX_PENDING_PROPOSALS - active);
+  const { pendingCount, titles } = await loadPendingProposalState(repository.id);
+  const capacity = Math.max(0, MAX_PENDING_PROPOSALS - pendingCount);
+  // Lowest priority first: sequential creation gives critical proposals the
+  // newest createdAt, topping the UI's newest-first proposal list.
   const fresh = sortByPriority(proposals)
-    .filter((p) => !pendingTitles.has(p.title.toLowerCase()))
-    .slice(0, capacity);
-  if (fresh.length === 0) return 0;
-  await prisma.task.createMany({
-    data: fresh.map((p) => proposalTaskData(repository, p)),
-  });
+    .filter((p) => !titles.has(p.title.trim().toLowerCase()))
+    .slice(0, capacity)
+    .reverse();
+  for (const proposal of fresh) {
+    await prisma.task.create({ data: proposalTaskData(repository, proposal) });
+  }
   return fresh.length;
 }
 
@@ -138,7 +147,7 @@ async function loadRepositorySkills(repository: RepositoryWithConnection): Promi
   if (slugs.length === 0) return [];
   const rows = await prisma.skill.findMany({ where: { slug: { in: slugs } } });
   const bySlug = new Map(rows.map((row) => [row.slug, row]));
-  return slugs.flatMap((slug) => bySlug.get(slug) ?? []);
+  return slugs.flatMap((slug: string) => bySlug.get(slug) ?? []);
 }
 
 async function readLemcoreProposalsFile(workdir: string): Promise<LlmProposals | null> {
@@ -148,6 +157,27 @@ async function readLemcoreProposalsFile(workdir: string): Promise<LlmProposals |
   return text === null ? null : parseProposalsFile(text);
 }
 
+// Synthetic task context for the task-less lemcore run below: the prompt
+// carries the full instructions (promptOverride), so the stub only feeds the
+// loop's system-prompt header / skills materialization / summary fallback.
+// The taskId is namespaced so log lines land on a dedicated channel instead
+// of colliding with a real task's event history.
+function proposalRunStub(
+  repository: RepositoryWithConnection,
+  skills: Skill[],
+): { taskId: string; task: TaskWithRepo } {
+  const taskId = `proposals-${repository.id}`;
+  const task = {
+    id: taskId,
+    repositoryId: repository.id,
+    kind: 'proposal',
+    title: `Generate proposals for ${repository.fullName}`,
+    prompt: null,
+    skills,
+  } as unknown as TaskWithRepo;
+  return { taskId, task };
+}
+
 async function requestProposalsViaLemcore(
   repository: RepositoryWithConnection,
   rt: LlmRuntime,
@@ -155,8 +185,9 @@ async function requestProposalsViaLemcore(
   secrets: string[],
 ): Promise<LlmProposals | null> {
   const skills = await loadRepositorySkills(repository);
+  const { taskId, task } = proposalRunStub(repository, skills);
   await runLemcoreTask({
-    taskId: null,
+    taskId,
     task,
     workdir,
     rt,
@@ -191,25 +222,24 @@ async function generateProposalList(
 async function executeGenerateProposals(
   repository: RepositoryWithConnection,
 ): Promise<{ proposals: LlmProposals; created: number }> {
+  // Cheap pre-check: when the cap is already full there is nothing to do, so
+  // skip the clone + LLM spend entirely.
+  const { pendingCount } = await loadPendingProposalState(repository.id);
+  if (pendingCount >= MAX_PENDING_PROPOSALS) return { proposals: [], created: 0 };
+
   const workdir = path.join(config.AGENT_WORKDIR, `proposals-${repository.id}-${Date.now()}`);
   const secrets: string[] = [];
-  let rt: LlmRuntime | null = null;
   try {
-    const { cloneUrl, auth } = await cloneRepository(repository, workdir, secrets);
-    await git(['checkout', repository.defaultBranch], { cwd: workdir, secrets, auth });
-    void cloneUrl;
-    rt = await prepareAgentRuntime(repository);
+    const { cloneUrl, gitAuth, rt } = await prepareAgentRuntime(null, repository, secrets);
+    await cloneRepository(workdir, cloneUrl, repository.defaultBranch, secrets, {
+      auth: gitAuth,
+    });
     const proposals = await generateProposalList(repository, rt, workdir, secrets);
     const created = await createProposalTasks(repository, proposals);
     return { proposals, created };
   } finally {
-    if (rt) await persistProposalTokens(repository.id, rt);
-    await cleanupWorkdir(workdir, secrets);
+    await cleanupWorkdir(workdir);
   }
-}
-
-async function persistProposalTokens(repositoryId: string, rt: LlmRuntime): Promise<void> {
-  await persistTokenUsage({} as never, rt);
 }
 
 export async function generateProposals(repositoryId: string): Promise<void> {
