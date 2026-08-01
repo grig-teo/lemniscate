@@ -18,12 +18,14 @@ import {
 } from './graph-tools.js';
 import { MAX_TOOL_FAILURES } from './loop-constants.js';
 import type { LemcoreMessage, LemcoreStep } from './loop-types.js';
+import { resolveSkillContent, type LemcoreSkill } from './skills.js';
 
 export async function executeTool(
   name: string,
   args: Record<string, unknown>,
   workdir: string,
   secrets: string[],
+  skills: LemcoreSkill[] = [],
 ): Promise<ToolResult> {
   switch (name) {
     case 'read_file':
@@ -70,6 +72,15 @@ export async function executeTool(
       );
     case 'graph_search':
       return toolGraphSearch(workdir, String(args.query ?? ''));
+    case 'load_skill': {
+      const content = resolveSkillContent(skills, String(args.name ?? ''));
+      return {
+        tool: 'load_skill' as ToolName,
+        title: `load_skill(${String(args.name ?? '')})`,
+        outputPreview: content,
+        durationMs: 0,
+      };
+    }
     default:
       return {
         tool: name as ToolName,
@@ -109,6 +120,7 @@ export async function runToolCalls(opts: {
   consecutiveToolFailures: number;
   nextStepId: () => string;
   publishStepEvent: (taskId: string, step: LemcoreStep) => Promise<void>;
+  skills?: LemcoreSkill[];
 }): Promise<number> {
   let failures = opts.consecutiveToolFailures;
   for (const tc of opts.toolCalls) {
@@ -140,7 +152,7 @@ export async function runToolCalls(opts: {
     await opts.publishStepEvent(opts.taskId, toolStep);
     const toolStart = Date.now();
     try {
-      const result = await executeTool(name, args, opts.workdir, opts.secrets);
+      const result = await executeTool(name, args, opts.workdir, opts.secrets, opts.skills ?? []);
       const durationMs = Date.now() - toolStart;
       if (result.error) {
         failures += 1;

@@ -31,6 +31,8 @@ export interface LemcoreRunOptions {
   resumeTranscript?: LemcoreMessage[];
   /** Optional skills section injected into the system prompt. */
   skillsSection?: string;
+  /** Skill objects for progressive disclosure (load_skill tool resolves these). */
+  skills?: import('./skills.js').LemcoreSkill[];
   /**
    * Hard cap on wall-clock time spent waiting for one LLM reply. When a
    * turn's chat call exceeds this (stalled provider, hung stream) the run

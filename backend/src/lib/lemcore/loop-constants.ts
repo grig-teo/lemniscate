@@ -57,6 +57,7 @@ export function lemcoreSystemPrompt(): string {
     '- graph_impact(files): blast radius for changed files via the graph',
     '- graph_neighbors(center, depth?): dependency neighborhood around a symbol/file',
     '- graph_search(query): search symbols/files in the codebase graph',
+    '- load_skill(name): load the full instructions of an attached skill on demand',
     '',
     'Use tools in a structured way. Prefer graph tools, then selective reads, then writes. After making changes, verify them.',
     '',
