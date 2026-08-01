@@ -105,8 +105,11 @@ async function isReviewStuck(taskId: string, taskUpdatedAt: Date | null): Promis
 
 // Re-enqueues tasks whose job died for good: reviews in
 // awaiting_review/reviewing_code re-enqueue 'review-pr', runs stuck in
-// 'running' re-enqueue 'run-task' (lemcore resumes from its saved
-// transcript). The BullMQ jobId dedupes against a job that is still
+// 'running' are first reset to 'queued' and then re-enqueue 'run-task'
+// (lemcore resumes from its saved transcript). The reset matters: the
+// atomic claim in runTask refuses 'running' as a claim-from state (a live
+// executor owns it), so without it a recovered task could never be claimed.
+// The BullMQ jobId dedupes against a job that is still
 // waiting/active/retrying.
 export async function recoverStuckReviews(): Promise<void> {
   const tasks = await prisma.task.findMany({
@@ -131,6 +134,7 @@ export async function recoverStuckReviews(): Promise<void> {
     if (!(await isReviewStuck(task.id, task.updatedAt))) continue;
     if (task.status === 'running') {
       await logEvent(task.id, RUN_RECOVERY_LOG);
+      await prisma.task.update({ where: { id: task.id }, data: { status: 'queued' } });
       await enqueueRunTask(task.id);
     } else {
       await logEvent(task.id, REVIEW_RECOVERY_LOG);

@@ -40,6 +40,7 @@ import { buildRepoContext } from './repo-context.js';
 import { buildTaskAttachmentFiles } from './repo-init.js';
 import { loadAgentsMdTemplate, loadTaskSkills } from './task-skills.js';
 import { setTaskStatus } from './task-events.js';
+import { claimTaskForRun } from './task-claim.js';
 import { errorMessage } from './utils.js';
 
 // Job: run-task — clone → LLM-proposed changes → branch → commit → push →
@@ -357,6 +358,13 @@ export async function runTask(taskId: string): Promise<void> {
   }
   // Nothing to do for terminal tasks (covers 'cancelled' defensively too).
   if (task.status === 'failed' || (task.status as string) === 'cancelled') {
+    return;
+  }
+  // Exactly-once claim: a duplicate delivery (double-enqueue past jobId
+  // dedupe, or a BullMQ stalled re-delivery while the original still runs)
+  // loses the atomic flip to 'running' and stands down here, before it can
+  // clobber the shared workdir or open a duplicate PR.
+  if (!(await claimTaskForRun(taskId))) {
     return;
   }
 

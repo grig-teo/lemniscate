@@ -250,6 +250,15 @@ describe('enqueueRunTask', () => {
       expect.objectContaining({ priority: 1 }),
     );
   });
+
+  it('dedupes concurrent enqueues of the same task via a stable jobId', async () => {
+    await enqueueRunTask('task-1');
+    expect(mocks.add).toHaveBeenCalledWith(
+      'run-task',
+      { taskId: 'task-1' },
+      expect.objectContaining({ jobId: 'run-task-task-1' }),
+    );
+  });
 });
 
 // proposals-autorun job: for repos with autoRunProposals on, start the oldest

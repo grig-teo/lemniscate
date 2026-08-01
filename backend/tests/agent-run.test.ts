@@ -24,6 +24,7 @@ const mocks = vi.hoisted(() => ({
   loadTaskWithRepo: vi.fn(),
   prepareAgentRuntime: vi.fn(),
   taskUpdate: vi.fn(),
+  taskUpdateMany: vi.fn(),
   taskFindUnique: vi.fn(),
   enqueueReviewTask: vi.fn(),
   openPullRequest: vi.fn(),
@@ -67,7 +68,13 @@ vi.mock('../src/lib/agent-runtime.js', () => ({
   }),
 }));
 vi.mock('../src/lib/prisma.js', () => ({
-  prisma: { task: { update: mocks.taskUpdate, findUnique: mocks.taskFindUnique } },
+  prisma: {
+    task: {
+      update: mocks.taskUpdate,
+      updateMany: mocks.taskUpdateMany,
+      findUnique: mocks.taskFindUnique,
+    },
+  },
 }));
 vi.mock('../src/lib/proposal-scheduler.js', () => ({ enqueueReviewTask: mocks.enqueueReviewTask }));
 vi.mock('../src/lib/pull-requests.js', () => ({ openPullRequest: mocks.openPullRequest }));
@@ -145,6 +152,8 @@ beforeEach(() => {
   mocks.recordJobFailure.mockResolvedValue('recorded failure');
   mocks.setTaskStatus.mockResolvedValue(undefined);
   mocks.taskUpdate.mockResolvedValue(undefined);
+  // The atomic claim succeeds by default; concurrency tests override this.
+  mocks.taskUpdateMany.mockResolvedValue({ count: 1 });
   mocks.persistTokenUsage.mockResolvedValue(undefined);
   mocks.cleanupWorkdir.mockResolvedValue(undefined);
   mocks.logEvent.mockResolvedValue(undefined);
@@ -359,6 +368,51 @@ describe('runTask resumption after an interrupted run', () => {
     expect(mocks.generateBranchName).toHaveBeenCalled();
     const opts = mocks.runHermesTask.mock.calls[0]?.[0];
     expect(opts.prompt).not.toContain('RESUMED RUN');
+  });
+});
+
+describe('runTask exactly-once claim', () => {
+  it('runs exactly once when two deliveries race for the same task', async () => {
+    // First invocation wins the conditional update; the second (BullMQ
+    // stalled re-delivery / double-enqueue) matches 0 rows and stands down.
+    mocks.taskUpdateMany
+      .mockResolvedValueOnce({ count: 1 })
+      .mockResolvedValueOnce({ count: 0 });
+
+    await Promise.all([runTask('task-1'), runTask('task-1')]);
+
+    expect(mocks.taskUpdateMany).toHaveBeenCalledTimes(2);
+    expect(mocks.runHermesTask).toHaveBeenCalledTimes(1);
+    expect(mocks.commitAndPush).toHaveBeenCalledTimes(1);
+    expect(mocks.openPullRequest).toHaveBeenCalledTimes(1);
+    expect(mocks.logger.info).toHaveBeenCalledWith(
+      expect.objectContaining({ taskId: 'task-1' }),
+      expect.stringContaining('already claimed'),
+    );
+  });
+
+  it('never touches the shared workdir when the claim is lost', async () => {
+    mocks.taskUpdateMany.mockResolvedValue({ count: 0 });
+
+    await runTask('task-1');
+
+    expect(mocks.cloneRepository).not.toHaveBeenCalled();
+    expect(mocks.runHermesTask).not.toHaveBeenCalled();
+    expect(mocks.commitAndPush).not.toHaveBeenCalled();
+    expect(mocks.cleanupWorkdir).not.toHaveBeenCalledWith(
+      path.join('/tmp/test-workdirs', 'task-1'),
+      'task-1',
+    );
+    expect(mocks.notifyTaskCompleted).not.toHaveBeenCalled();
+  });
+
+  it('claims before doing any work, flipping the task to running', async () => {
+    await runTask('task-1');
+
+    expect(mocks.taskUpdateMany).toHaveBeenCalledWith({
+      where: { id: 'task-1', status: { in: ['queued', 'pending'] } },
+      data: { status: 'running' },
+    });
   });
 });
 
