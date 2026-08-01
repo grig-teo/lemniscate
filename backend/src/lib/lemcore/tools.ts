@@ -8,10 +8,31 @@ import * as fsSync from 'node:fs';
 import path from 'node:path';
 import { redactSecrets } from '../utils.js';
 import { checkpointEdit, lintAndMaybeRevert } from './edit-checkpoint.js';
+import { enhanceErrorOutput } from './error-hints.js';
+
+export { enhanceErrorOutput } from './error-hints.js';
 
 export const TOOL_MAX_OUTPUT_CHARS = 8_000;
 export const BASH_TIMEOUT_MS = 120_000;
 export const GLOB_MAX_RESULTS = 200;
+
+// Circuit breaker: never run commands that would wipe the filesystem, the
+// home dir, or raw block devices. Module-level so the regex isn't rebuilt on
+// every call. Matches: rm -rf with any dangerous absolute path / ~ / $HOME,
+// `find / -delete`, mkfs, chmod -R 000 /, fork bombs, and force pushes.
+const CATASTROPHIC_RE = new RegExp(
+  '\\brm\\s+-rf?\\s+(/|\\$HOME|~|/etc|/usr|/var|/home|/boot|/sys|/proc)' +
+    '|\\bfind\\s+/\\s+.*-delete' +
+    '|\\bmkfs\\b' +
+    '|\\bchmod\\s+-R\\s+000\\s+/' +
+    '|:\\(\\)\\s*\\{\\s*:\\|:&\\s*\\}\\s*;:' +
+    '|\\bgit\\s+push\\s+(-f|--force|--force-with-lease)',
+  'i',
+);
+
+// Post-processes bash error output to append a one-line actionable hint for
+// common failure classes (lives in error-hints.ts to keep this file slim).
+
 
 export type ToolName =
   | 'read_file'
@@ -40,20 +61,51 @@ export interface ToolResult {
   error?: string;
 }
 
+// Cache the realpath of each workdir; realpathSync on every jail check would
+// dominate tool latency for hot loops, and the workdir doesn't move mid-run.
+const workdirRealpathCache = new Map<string, string>();
+function resolvedWorkdir(workdir: string): string {
+  let resolved = workdirRealpathCache.get(workdir);
+  if (!resolved) {
+    resolved = fsSync.realpathSync(workdir);
+    workdirRealpathCache.set(workdir, resolved);
+  }
+  return resolved;
+}
+
 // Returns the absolute path if it stays inside workdir; throws on escape.
 // Resolves symlinks so a symlink inside workdir pointing outside is rejected.
+// For not-yet-existing paths (write_file/edit creating a file/dir), walks up
+// to the nearest existing ancestor and re-appends the missing tail, so a new
+// file nested several dirs deep is still correctly jailed.
 export function jailPath(workdir: string, relPath: string): string {
   const target = path.resolve(workdir, relPath);
-  const resolvedWorkdir = fsSync.realpathSync(workdir);
+  const resolvedWork = resolvedWorkdir(workdir);
   let resolvedTarget: string;
   try {
     resolvedTarget = fsSync.realpathSync(target);
   } catch {
-    // File doesn't exist yet (write_file/edit creating a new file): resolve the
-    // parent dir and re-append the basename so new-file paths are still jailed.
-    resolvedTarget = fsSync.realpathSync(path.dirname(target)) + path.sep + path.basename(target);
+    // File doesn't exist yet — resolve the nearest existing ancestor, then
+    // re-append the missing tail relative to that ancestor.
+    let dir = path.dirname(target);
+    while (true) {
+      try {
+        const real = fsSync.realpathSync(dir);
+        resolvedTarget = path.join(real, path.relative(dir, target));
+        break;
+      } catch {
+        const parent = path.dirname(dir);
+        if (parent === dir) {
+          // Reached the filesystem root without resolving — fall back to the
+          // raw target (the contains check below will reject it if external).
+          resolvedTarget = target;
+          break;
+        }
+        dir = parent;
+      }
+    }
   }
-  if (!resolvedTarget.startsWith(resolvedWorkdir + path.sep) && resolvedTarget !== resolvedWorkdir) {
+  if (!resolvedTarget.startsWith(resolvedWork + path.sep) && resolvedTarget !== resolvedWork) {
     throw new Error(`path escapes workdir: ${relPath}`);
   }
   return resolvedTarget;
@@ -122,9 +174,10 @@ export async function toolEditFile(
     throw new Error(`edit_file: expected exactly 1 match, found ${count} in ${relPath}`);
   }
   const updated = originalContent.replace(search, () => replace);
-  // Checkpoint the pre-edit content so undo_edit can restore it.
-  checkpointEdit(relPath, originalContent);
-  await fs.writeFile(absPath, updated, 'utf8');
+  // Checkpoint the pre-edit content so undo_edit can restore it. The actual
+  // file write is owned by lintAndMaybeRevert (write → lint → maybe revert),
+  // so we must NOT pre-write here.
+  checkpointEdit(workdir, relPath, originalContent);
   return lintAndMaybeRevert(workdir, relPath, originalContent, updated, secrets, startMs, 'edit_file');
 }
 
@@ -148,12 +201,15 @@ export async function toolMultiEdit(
     if (count !== 1) {
       throw new Error(`multi_edit: expected exactly 1 match for edit ${applied + 1}, found ${count}`);
     }
-    content = content.replace(search, replace);
+    // Use a replacer function instead of a replacement string so $ patterns
+    // (e.g. `$&`, `$1`) in `replace` are treated literally, not interpreted.
+    content = content.replace(search, () => replace);
     applied += 1;
   }
-  // Checkpoint the pre-edit content so undo_edit can restore it.
-  checkpointEdit(relPath, originalContent);
-  await fs.writeFile(absPath, content, 'utf8');
+  // Checkpoint the pre-edit content so undo_edit can restore it. The actual
+  // file write is owned by lintAndMaybeRevert (write → lint → maybe revert),
+  // so we must NOT pre-write here.
+  checkpointEdit(workdir, relPath, originalContent);
   return lintAndMaybeRevert(workdir, relPath, originalContent, content, secrets, startMs, 'multi_edit');
 }
 
@@ -174,20 +230,15 @@ export async function toolBash(
   secrets: string[] = [],
 ): Promise<ToolResult> {
   const startMs = Date.now();
-  // Circuit breaker: never run commands that would wipe the filesystem, the
-  // home dir, or raw block devices. Reject before execFile so the model gets
-  // an immediate, actionable error and can pick a targeted command instead.
-  const CATASTROPHIC = new RegExp(
-    '\\brm\\s+-rf?\\s+/(\\s|$)|\\brm\\s+-rf?\\s+~/(\\s|$)|\\bdd\\s+if=.*of=/(dev|sd|nvme|hd)',
-    'i',
-  );
-  if (CATASTROPHIC.test(command)) {
+  // Circuit breaker: reject before execFile so the model gets an immediate,
+  // actionable error and can pick a targeted command instead.
+  if (CATASTROPHIC_RE.test(command)) {
     return {
       tool: 'bash',
       title: 'blocked',
       durationMs: 0,
       outputPreview:
-        'BLOCKED: this command matches a catastrophic pattern (rm -rf /, rm -rf ~, or dd to a device). Use a more targeted command.',
+        'BLOCKED: this command matches a catastrophic pattern (rm -rf /, rm -rf ~, mkfs, find / -delete, chmod -R 000 /, fork bomb, or git push --force). Use a more targeted command.',
       error: 'command blocked by circuit breaker',
     };
   }
@@ -198,8 +249,14 @@ export async function toolBash(
       { cwd: workdir, timeout: BASH_TIMEOUT_MS, maxBuffer: 16 * 1024 * 1024 },
       (err, stdout, stderr) => {
         const combined = stdout + (stderr ? `\n${stderr}` : '');
-        const output = combined.trim() || '(ran successfully, no output)';
-        const capped = truncate(redactSecrets(output, secrets));
+        const trimmed = combined.trim() || '(ran successfully, no output)';
+        const redacted = redactSecrets(trimmed, secrets);
+        // Append an actionable hint for known error classes when the command
+        // produced stderr/failed, so the model gets a nudge toward the fix.
+        const output = isRealBashError(err) || (err && (err as { code?: number }).code !== 0)
+          ? enhanceErrorOutput(redacted)
+          : redacted;
+        const capped = truncate(output);
         resolve({
           tool: 'bash',
           title: command.length > 80 ? `${command.slice(0, 80)}…` : command,
@@ -214,6 +271,8 @@ export async function toolBash(
 
 export function truncate(text: string, maxChars: number = TOOL_MAX_OUTPUT_CHARS): string {
   if (text.length <= maxChars) return text;
+  // Too small for a meaningful head + tail split — just slice.
+  if (maxChars < 50) return text.slice(0, maxChars);
   // Keep a head and a tail so both the start of a log and the final error
   // lines (which usually carry the actionable failure) survive truncation.
   const head = Math.floor(maxChars * 0.35);

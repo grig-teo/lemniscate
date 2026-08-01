@@ -42,21 +42,25 @@ export {
   scrubLegacyInCloneTranscript,
   loadTranscript,
 } from './loop-helpers.js';
-function toChatMessages(messages: LemcoreMessage[]): ChatMessage[] {
-  // The TODO list is module-level state (not in the transcript, so it survives
-  // compaction). Re-inject it into the system message every turn so the model
-  // always sees the current list. The stored system message stays stable for
-  // prompt caching; only the copy handed to the provider carries the TODO.
-  const todo = getTodoList();
-  const todoSuffix = todo ? `\n\n## TODO\n${todo}` : '';
+function toChatMessages(messages: LemcoreMessage[], workdir: string): ChatMessage[] {
+  // The TODO list is module-level state keyed by workdir (not in the
+  // transcript, so it survives compaction). Inject it as a system-reminder
+  // prefix on the FIRST user message so the model always sees the current
+  // list. Crucially the system message bytes never change across turns, so
+  // the provider's prefix cache stays valid.
+  const todo = getTodoList(workdir);
+  const todoReminder = todo ? `[system-reminder] ## TODO\n${todo}\n\n` : '';
+  let todoInjected = !todoReminder;
   const out: ChatMessage[] = [];
   for (const m of messages) {
     switch (m.role) {
       case 'system':
-        out.push({ role: 'system', content: m.content + todoSuffix });
+        out.push({ role: 'system', content: m.content });
         break;
       case 'user':
-        out.push({ role: 'user', content: m.content });
+        // Prepend the TODO reminder to the first user message only.
+        out.push({ role: 'user', content: (todoInjected ? '' : todoReminder) + m.content });
+        todoInjected = true;
         break;
       case 'assistant':
         out.push({
@@ -98,10 +102,11 @@ export async function runLemcoreLoop(opts: LemcoreRunOptions): Promise<string> {
     });
   }
   if (!messages.some((m) => m.role === 'user')) {
-    const todo = getTodoList();
-    const todoBlock = todo ? `\n\n## TODO\n${todo}` : '';
+    // The stored user message holds the task only; the live TODO is injected
+    // into the first user message by toChatMessages each turn (kept out of
+    // the stored system message so prompt caching isn't invalidated).
     const taskBlock = `${task.title}${task.prompt ? `\n${task.prompt}` : ''}`;
-    messages.push({ role: 'user', content: `${prompt}\n\n${taskBlock}${todoBlock}` });
+    messages.push({ role: 'user', content: `${prompt}\n\n${taskBlock}` });
   }
   saveTranscript(workdir, messages);
   if (resuming) {
@@ -166,7 +171,7 @@ export async function runLemcoreLoop(opts: LemcoreRunOptions): Promise<string> {
         apiKey: rt.apiKey,
         model: rt.cfg.model,
         apiPattern: rt.cfg.apiPattern,
-        messages: toChatMessages(messages),
+        messages: toChatMessages(messages, workdir),
         // Completion budget per turn: the config's maxTokens wins (default
         // 16k), floored at 16k so thinking models have room for reasoning +
         // a real reply, and capped at 64k so a misconfigured value (e.g.

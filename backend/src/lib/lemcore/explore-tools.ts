@@ -29,8 +29,10 @@ export async function toolGrep(
         title: `grep ${pattern}${pathArg ? ` in ${pathArg}` : ''}`,
         outputPreview: preview || '(no matches)',
         durationMs: Date.now() - startMs,
-        // exit 1 (no matches) is not an error; only timeout/spawn failures are
-        error: err && typeof err.code === 'string' && !stdout ? err.message : undefined,
+        // exit 1 (no matches) is not an error; only timeout/spawn failures are.
+        // ripgrep exits with numeric code 2 on real errors (bad flag/regex),
+        // so treat code 2 with no stdout as an error too.
+        error: err && ((typeof err.code === 'string') || (typeof err.code === 'number' && err.code === 2 && !stdout)) ? err.message : undefined,
       });
     });
   });
