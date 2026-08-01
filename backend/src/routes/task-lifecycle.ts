@@ -85,12 +85,19 @@ export function buildStartUpdate(body: StartBody) {
   };
 }
 
-// Rerun eligibility for POST /tasks/:id/rerun: failed tasks (including
-// user-cancelled ones, which are stored as failed) and closed tasks (PR
-// closed without merge) can be run again.
+// Rerun eligibility for POST /tasks/:id/rerun. Failed (incl. user-cancelled,
+// stored as failed) and closed (PR closed without merge) tasks can rerun.
+// queued/running are also accepted so an orphaned task — whose BullMQ job died
+// without flipping the status (e.g. a worker kill mid-run, leaving it stranded
+// with no live job) — can be recovered via the rerun button. enqueueRunTask
+// uses a stable jobId (run-task-<id>) so a duplicate enqueue while one is
+// already waiting/active is collapsed by BullMQ, and runTask no-ops on a task
+// whose status has already moved on (guard in agent-run.ts).
+const RERUNNABLE_STATUSES = ['failed', 'closed', 'queued', 'running'] as const;
+
 export function rerunBlocker(task: { status: string }): string | null {
-  if (task.status !== 'failed' && task.status !== 'closed') {
-    return `task is ${task.status}, not failed or closed`;
+  if (!(RERUNNABLE_STATUSES as readonly string[]).includes(task.status)) {
+    return `task is ${task.status}, not rerunnable`;
   }
   return null;
 }
