@@ -180,11 +180,18 @@ export async function runHttpBackend(
   });
 }
 
-// Materialization failure boundary: a throw here (doc parse, a failed git
-// subprocess while building the clone) must not fall through to Fastify's
-// default 500 — the reverse proxy reports that to the git client as an
-// opaque 502 with no diagnosable body (observed on clones of repos with
-// URL-encoded names). Answer 502 with the reason instead.
+// Materialization failure boundary (observability fix for the opaque 502
+// reported on `git clone .../test%203.git`). The clone URL decoding itself
+// is proven fine — the 'serves repos whose name needs URL-encoding' test
+// clones a repo named 'test 3' end-to-end through this route — so the root
+// cause of that incident is still unidentified and the clone may keep
+// failing. What this boundary changes: a throw here (doc parse, a failed
+// git subprocess while building the clone, a prisma error) previously fell
+// through to Fastify's default 500, which the reverse proxy reports to the
+// git client as an opaque 502 with no body and no log of the real error.
+// Now the underlying error lands in the request log and the client gets an
+// explicit 502, so the next occurrence is diagnosable from the backend
+// logs ('gitlem: repository materialization failed').
 async function gitHttpHandler(request: FastifyRequest, reply: FastifyReply) {
   const auth = await authenticateGitRequest(request.headers.authorization);
   if (!auth) return sendUnauthorized(reply);
