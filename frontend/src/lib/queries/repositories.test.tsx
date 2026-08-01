@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { waitFor } from '@testing-library/react';
 
 import {
+  useDeleteRepository,
   useProposalGenerationStatus,
   useRepositories,
   useUpdateAllRepositoryFlags,
@@ -99,6 +100,40 @@ describe('useUpdateRepositoryFlags', () => {
     await waitFor(() => expect(result.current.isError).toBe(true));
 
     expect(queryClient.getQueryData<Repository[]>(['repositories'])?.[0].autoCreatePr).toBe(false);
+  });
+});
+
+describe('useDeleteRepository', () => {
+  it('DELETEs the repo, optimistically drops it from the list cache, and invalidates on settled', async () => {
+    const other = { ...repo, id: 'r2' } as Repository;
+    const queryClient = createTestQueryClient();
+    queryClient.setQueryData(['repositories'], [repo, other]);
+    const invalidate = vi.spyOn(queryClient, 'invalidateQueries');
+    const { calls } = mockFetchSequence({ status: 204 });
+
+    const { result } = renderHookWithClient(() => useDeleteRepository(), queryClient);
+    result.current.mutate('r1');
+
+    // Optimistic removal lands before the server responds.
+    await waitFor(() =>
+      expect(queryClient.getQueryData<Repository[]>(['repositories'])).toEqual([other]),
+    );
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    expect(calls).toEqual([{ url: '/api/repositories/r1', method: 'DELETE', body: undefined }]);
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ['repositories'] });
+  });
+
+  it('rolls the cache back on error', async () => {
+    const queryClient = createTestQueryClient();
+    queryClient.setQueryData(['repositories'], [repo]);
+    mockFetchSequence({ status: 500, json: { message: 'boom' } });
+
+    const { result } = renderHookWithClient(() => useDeleteRepository(), queryClient);
+    result.current.mutate('r1');
+    await waitFor(() => expect(result.current.isError).toBe(true));
+
+    expect(queryClient.getQueryData<Repository[]>(['repositories'])).toEqual([repo]);
   });
 });
 

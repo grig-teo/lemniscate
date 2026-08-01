@@ -113,6 +113,28 @@ export function useGenerateProposals() {
   });
 }
 
+/** DELETE /api/repositories/:id — optimistically removes the repo from the list cache. */
+export function useDeleteRepository() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => api.del<undefined>(`/api/repositories/${id}`),
+    onMutate: async (id) => {
+      await queryClient.cancelQueries({ queryKey: ['repositories'] });
+      const previous = queryClient.getQueryData<Repository[]>(['repositories']);
+      queryClient.setQueryData<Repository[]>(['repositories'], (old) =>
+        old?.filter((repo) => repo.id !== id),
+      );
+      return { previous };
+    },
+    onError: (_error, _vars, context) => {
+      queryClient.setQueryData(['repositories'], context?.previous);
+    },
+    onSettled: () => {
+      void queryClient.invalidateQueries({ queryKey: ['repositories'] });
+    },
+  });
+}
+
 /** 201 response of POST /api/connections/:id/repositories. */
 interface CreateRepoResponse {
   repository: Repository;
