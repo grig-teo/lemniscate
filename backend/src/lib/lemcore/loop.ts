@@ -148,7 +148,7 @@ export async function runLemcoreLoop(opts: LemcoreRunOptions): Promise<string> {
   let consecutiveToolFailures = 0;
   let consecutiveEmptyReplies = 0;
   const startTime = Date.now();
-  const wallClockCapMs = config.AGENT_HERMES_TIMEOUT_MINUTES * 60_000;
+  const wallClockCapMs = config.LEMCORE_TIMEOUT_MINUTES * 60_000;
   // Stall watchdog: a hung provider aborts the run fast instead of pinning the slot.
   const perTurnTimeoutMs = turnTimeoutMs(opts);
 

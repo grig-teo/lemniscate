@@ -53,6 +53,7 @@ export function lemcoreSystemPrompt(): string {
     '- bash(command): run a shell command (120s timeout)',
     '- grep(pattern, path?, glob?): search with ripgrep',
     '- glob(pattern): list files matching a pattern (max 200)',
+    '- list_dir(path?): list directory contents (prefer over bash ls)',
     '- web_search(query): search the web',
     '- graph_query(pattern, target): query the scan-session codebase graph',
     '- graph_impact(files): blast radius for changed files via the graph',

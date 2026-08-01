@@ -19,6 +19,7 @@ export type ToolName =
   | 'bash'
   | 'grep'
   | 'glob'
+  | 'list_dir'
   | 'web_search'
   | 'graph_query'
   | 'graph_impact'
@@ -96,13 +97,14 @@ export async function toolEditFile(
   const absPath = jailPath(workdir, relPath);
   const existing = await fs.readFile(absPath, 'utf8');
   if (!existing.includes(search)) {
-    throw new Error(`edit_file: search string not found in ${relPath}`);
+    const preview = existing.split('\n').filter(l => l.trim()).slice(0, 5).join('\n');
+    throw new Error(`edit_file: search string not found in ${relPath}. First lines:\n${preview}`);
   }
   const count = (existing.match(new RegExp(search.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g')) ?? []).length;
   if (count !== 1) {
     throw new Error(`edit_file: expected exactly 1 match, found ${count} in ${relPath}`);
   }
-  const updated = existing.replace(search, replace);
+  const updated = existing.replace(search, () => replace);
   await fs.writeFile(absPath, updated, 'utf8');
   return {
     tool: 'edit_file',
@@ -131,7 +133,7 @@ export async function toolMultiEdit(
     if (count !== 1) {
       throw new Error(`multi_edit: expected exactly 1 match for edit ${applied + 1}, found ${count}`);
     }
-    content = content.replace(search, replace);
+    content = content.replace(search, () => replace);
     applied += 1;
   }
   await fs.writeFile(absPath, content, 'utf8');
@@ -223,6 +225,26 @@ export async function toolGlob(
       });
     });
   });
+}
+
+export async function toolListDir(
+  workdir: string,
+  relPath: string,
+  secrets: string[] = [],
+): Promise<ToolResult> {
+  const startMs = Date.now();
+  const absPath = relPath ? jailPath(workdir, relPath) : workdir;
+  const entries = await fs.readdir(absPath, { withFileTypes: true });
+  const lines = entries
+    .sort((a, b) => (a.isDirectory() === b.isDirectory() ? a.name.localeCompare(b.name) : a.isDirectory() ? -1 : 1))
+    .map((e) => `${e.isDirectory() ? '📁' : '📄'} ${e.name}`)
+    .slice(0, 200);
+  return {
+    tool: 'list_dir',
+    title: relPath || '.',
+    outputPreview: truncate(redactSecrets(lines.join('\n'), secrets)),
+    durationMs: Date.now() - startMs,
+  };
 }
 
 // DuckDuckGo HTML search — see web-search.ts.

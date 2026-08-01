@@ -78,6 +78,14 @@ export function getAvailableTools(): ChatCompletionTool[] {
       ['pattern'],
     ),
     fnTool(
+      'list_dir',
+      'List the contents of a directory (files and subdirectories). Prefer over bash ls.',
+      {
+        path: { type: 'string', description: 'Relative directory path (default: workdir root)' },
+      },
+      [],
+    ),
+    fnTool(
       'web_search',
       'Search the web for information.',
       {
