@@ -47,7 +47,19 @@ function isUniqueViolation(err: unknown): boolean {
 }
 
 export function gitlemCloneBase(): string {
-  return `${config.BACKEND_URL.replace(/\/$/, '')}/api/gitlem/git`;
+  return buildGitlemCloneBase(config.BACKEND_URL);
+}
+
+/**
+ * Pure builder for the gitlem git-over-HTTP clone base. Strips a trailing
+ * slash AND a trailing /api from the backend URL so the result is always
+ * <origin>/api/gitlem/git whether BACKEND_URL is a bare host ("https://host")
+ * or the API base ("https://host/api"). Without the /api strip a backend URL
+ * ending in /api produces a broken "/api/api/gitlem/git" clone path.
+ */
+export function buildGitlemCloneBase(backendUrl: string): string {
+  const origin = backendUrl.replace(/\/+$/, '').replace(/\/api$/i, '');
+  return `${origin}/api/gitlem/git`;
 }
 
 export function gitlemUsernameForEmail(email: string): string {
