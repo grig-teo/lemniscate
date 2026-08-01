@@ -29,12 +29,10 @@ import { prisma } from './prisma.js';
 import { withGitlabRefreshRetry } from './token-refresh.js';
 import { assertSafeCloneUrl, assertSafeLlmBaseUrl } from './agent-runtime-gates.js';
 import { sleep } from './utils.js';
-
 // LLM runtime for the agent loop: per-run state (token usage + throttle
 // timestamp) and the `llmCall` wrapper that enforces the configured
 // requestsPerMinute throttle and maxTokensPerRun budget.
 // Extracted from agent-loop.ts.
-
 export interface LlmRuntime {
   cfg: LlmConfig;
   apiKey: string;
@@ -54,32 +52,26 @@ export interface LlmRuntime {
   /** Config ids that already failed this run — never retried. */
   triedConfigIds?: string[];
 }
-
 /** Prompt/completion split of billed tokens — the currency of cost estimates. */
 export interface TokenSplit {
   promptTokens: number;
   completionTokens: number;
 }
-
 export class TokenBudgetExceededError extends Error {
-  constructor(used: number, limit: number) {
-    super(`LLM token budget exceeded (${used} > ${limit} tokens); aborting run`);
+  constructor(used: number, limit: number, message?: string) {
+    super(message ?? `LLM token budget exceeded (${used} > ${limit} tokens); aborting run`);
     this.name = 'TokenBudgetExceededError';
   }
 }
-
 export function makeLlmRuntime(cfg: LlmConfig, apiKey: string): LlmRuntime {
   return { cfg, apiKey, usedTokens: 0, usedPromptTokens: 0, usedCompletionTokens: 0, lastCallStartedAt: 0, triedConfigIds: [] };
 }
-
 // ---------------------------------------------------------------------------
 // Throttle (requestsPerMinute) — a minimum interval between call starts
 // ---------------------------------------------------------------------------
-
 export function minCallIntervalMs(requestsPerMinute: number): number {
   return Math.ceil(60_000 / Math.max(1, requestsPerMinute));
 }
-
 export function throttleDelayMs(
   lastCallStartedAt: number,
   minIntervalMs: number,
@@ -89,7 +81,6 @@ export function throttleDelayMs(
   const elapsed = now - lastCallStartedAt;
   return elapsed < minIntervalMs ? minIntervalMs - elapsed : 0;
 }
-
 async function throttle(rt: LlmRuntime): Promise<void> {
   const delay = throttleDelayMs(
     rt.lastCallStartedAt,
@@ -155,6 +146,15 @@ export function assertWithinBudget(usedTokens: number, maxTokensPerRun: number |
   }
 }
 
+/** USD cost ceiling: throws when cumulative cost exceeds the config's cap. */
+function assertWithinCost(rt: LlmRuntime): void {
+  const cap = rt.cfg.maxCostPerRunUsd;
+  if (cap == null) return;
+  const cost = (rt.usedPromptTokens / 1e6) * (rt.cfg.inputPricePerMillion ?? 0)
+    + (rt.usedCompletionTokens / 1e6) * (rt.cfg.outputPricePerMillion ?? 0);
+  if (cost > cap) throw new TokenBudgetExceededError(0, 0, `Cost ceiling: $${cost.toFixed(4)} > $${cap}`);
+}
+
 function contentChars(content: string | ContentPart[] | null | undefined): number {
   if (content == null) return 0;
   if (typeof content === 'string') return content.length;
@@ -196,6 +196,7 @@ async function attemptLlmCall(rt: LlmRuntime, messages: ChatMessage[]): Promise<
   rt.usedCompletionTokens += split.completionTokens;
   await logLlmDone(rt, result.latencyMs, billed);
   assertWithinBudget(rt.usedTokens, rt.cfg.maxTokensPerRun);
+  assertWithinCost(rt);
   // An empty completion (no content, no tool calls) is a broken reply, not
   // an answer — some providers (z.ai GLM) return finish_reason 'stop' with
   // an empty message once the reasoning budget is consumed. Routing it into

@@ -151,6 +151,9 @@ model LlmConfig {
   // for the API/UI to show estimated costs (absent, never guessed).
   inputPricePerMillion  Float?
   outputPricePerMillion Float?
+  // Optional hard per-run USD cost ceiling; when set and prices are present,
+  // the runtime aborts a run once cumulative cost exceeds it.
+  maxCostPerRunUsd      Float?
   customHeaders     Json          @default("{}")
   isDefault         Boolean       @default(false)
   enabled           Boolean       @default(true)

@@ -84,6 +84,8 @@ export async function git(args: string[], options: GitOptions = {}): Promise<str
   }
 }
 
+import { withGitRetry } from './git-retry.js';
+
 export function sanitizeRelativePath(rawPath: string): string {
   const normalized = path.posix.normalize(rawPath.replace(/\\/g, '/'));
   if (
@@ -142,11 +144,13 @@ export async function cloneRepository(
   await fs.mkdir(path.dirname(workdir), { recursive: true });
   const depthArgs = options.shallow === false ? [] : ['--depth', '1'];
   try {
-    await git(['clone', ...depthArgs, '--branch', defaultBranch, cloneUrl, workdir], {
-      secrets,
-      taskId: options.taskId,
-      ...(options.auth ? { auth: options.auth } : {}),
-    });
+    await withGitRetry(() =>
+      git(['clone', ...depthArgs, '--branch', defaultBranch, cloneUrl, workdir], {
+        secrets,
+        taskId: options.taskId,
+        ...(options.auth ? { auth: options.auth } : {}),
+      }),
+    );
   } catch (err) {
     if (!isEmptyRepoCloneError(err)) throw err;
     await initEmptyRepository(workdir, cloneUrl, defaultBranch, secrets, options.taskId);
@@ -178,7 +182,9 @@ export async function checkoutTaskBranch(
   auth: GitAuth,
 ): Promise<void> {
   await cloneRepository(workdir, cloneUrl, defaultBranch, secrets, { auth });
-  await git(['fetch', '--depth', '1', 'origin', headBranch], { cwd: workdir, secrets, auth });
+  await withGitRetry(() =>
+    git(['fetch', '--depth', '1', 'origin', headBranch], { cwd: workdir, secrets, auth }),
+  );
   await git(['checkout', '-b', headBranch, 'FETCH_HEAD'], { cwd: workdir });
 }
 

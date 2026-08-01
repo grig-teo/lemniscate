@@ -7,6 +7,7 @@ import {
   toolBash,
   toolGrep,
   toolGlob,
+  toolListDir,
   toolWebSearch,
   type ToolResult,
   type ToolName,
@@ -66,6 +67,8 @@ export async function executeTool(
       );
     case 'glob':
       return toolGlob(workdir, String(args.pattern ?? ''), secrets);
+    case 'list_dir':
+      return toolListDir(workdir, String(args.path ?? ''), secrets);
     case 'web_search':
       return toolWebSearch(String(args.query ?? ''), secrets);
     case 'graph_query':
@@ -163,7 +166,10 @@ export async function runToolCalls(opts: {
       const result = await executeTool(name, args, opts.workdir, opts.secrets, opts.skills ?? []);
       const durationMs = Date.now() - toolStart;
       if (result.error) {
-        failures += 1;
+        // web_search is best-effort: a flaky DDG page should never count
+        // toward MAX_TOOL_FAILURES and abort a coding task. The model still
+        // receives the error message and can retry or proceed.
+        if (name !== 'web_search') failures += 1;
         toolStep.status = 'error';
         toolStep.outputPreview = result.outputPreview || result.error;
         toolStep.detail = result.detail;

@@ -64,9 +64,11 @@ export async function fetchReviewDiff(task: TaskWithRepo, headBranch: string): P
     headBranch,
     baseBranch: repository.defaultBranch,
   });
-  return rawDiff.length > MAX_REVIEW_DIFF_CHARS
-    ? `${rawDiff.slice(0, MAX_REVIEW_DIFF_CHARS)}\n… [truncated]`
-    : rawDiff;
+  if (rawDiff.length <= MAX_REVIEW_DIFF_CHARS) return rawDiff;
+  const truncated = rawDiff.slice(0, MAX_REVIEW_DIFF_CHARS);
+  const totalFiles = (rawDiff.match(/^diff --git a\//gm) ?? []).length;
+  const shownFiles = (truncated.match(/^diff --git a\//gm) ?? []).length;
+  return `${truncated}\n… [truncated; ~${shownFiles} of ${totalFiles} files shown]`;
 }
 
 async function logReview(taskId: string, review: PrReview, usedTokens: number): Promise<void> {
