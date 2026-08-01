@@ -4,6 +4,7 @@ import { ChevronDown, ChevronRight, GitMerge, Kanban, Settings } from 'lucide-re
 import { type Repository } from '@/lib/hooks';
 import { repoDisplayName } from '@/lib/repo-display';
 import { useWorkspaceSelection } from '@/lib/selection';
+import { cn, hoverReveal } from '@/lib/utils';
 import { RepoFlagsDropdown } from '@/components/repo-tree/RepoFlagsDropdown';
 import { RepoTasks } from '@/components/repo-tree/RepoTasks';
 import { Button } from '@/components/ui/button';
@@ -23,12 +24,12 @@ export function RepoRow({
   const boardActive = taskBoardRepoId === repo.id;
   return (
     <div className="px-2 pb-2">
-      <div className="relative flex items-center gap-1.5 rounded-md px-1.5 py-1 hover:bg-accent">
+      <div className="group relative flex items-center gap-1.5 rounded-md px-1.5 py-1 hover:bg-accent">
         <RepoToggle repo={repo} expanded={expanded} onToggle={onToggle} />
         <Button
           variant={boardActive ? 'secondary' : 'ghost'}
           size="icon"
-          className="h-6 w-6 shrink-0"
+          className={cn('h-6 w-6 shrink-0', hoverReveal)}
           aria-label={`Task board for ${repo.fullName}`}
           title="Task board"
           onClick={() => openTaskBoard(repo.id)}
@@ -38,7 +39,7 @@ export function RepoRow({
         <Button
           variant="ghost"
           size="icon"
-          className="h-6 w-6 shrink-0"
+          className={cn('h-6 w-6 shrink-0', hoverReveal)}
           aria-label={`Pull requests for ${repo.fullName}`}
           title="Pull requests"
           onClick={() => openPrReview(repo.id)}
@@ -48,7 +49,7 @@ export function RepoRow({
         <Button
           variant="ghost"
           size="icon"
-          className="h-6 w-6 shrink-0"
+          className={cn('h-6 w-6 shrink-0', hoverReveal)}
           aria-label={`Settings for ${repo.fullName}`}
           aria-expanded={settingsOpen}
           onClick={() => setSettingsOpen((prev) => !prev)}
