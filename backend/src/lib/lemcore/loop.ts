@@ -1,23 +1,17 @@
 // Structured agent loop: emits `agent_step` events, persists a resume transcript.
-import fs from 'node:fs';
-import path from 'node:path';
 import { config } from '../../config.js';
-import { publishTaskEvent } from '../task-events.js';
 import { chatCompletion } from '../llm-dispatch.js';
 import type { ChatMessage } from '../llm-client.js';
 import {
   MAX_TURNS,
   MAX_EMPTY_ASSISTANT_REPLIES,
-  TRANSCRIPT_FILE,
-  REVIEW_FILENAME,
-  DEFAULT_GOAL_PATTERN,
   lemcoreSystemPrompt,
-  transcriptPath,
 } from './loop-constants.js';
 import type { LemcoreMessage, LemcoreRunOptions, LemcoreStep } from './loop-types.js';
 import { chatWithTurnTimeout, repairOrphanedToolCalls, turnTimeoutMs } from './loop-types.js';
 import { getAvailableTools } from './tool-catalog.js';
 import { runToolCalls } from './loop-tool-runner.js';
+import { getTodoList } from './todo-store.js';
 import type { LemcoreSkill } from './skills.js';
 import {
   compactTranscript,
@@ -35,75 +29,35 @@ export {
   transcriptPath,
 } from './loop-constants.js';
 export type { LemcoreMessage, LemcoreRunOptions, LemcoreStep } from './loop-types.js';
-export { LemcoreStalledError } from './loop-types.js';
-let stepCounter = 0;
-function nextStepId(): string {
-  return `step-${++stepCounter}`;
-}
-async function publishStepEvent(taskId: string, step: LemcoreStep): Promise<void> {
-  await publishTaskEvent(taskId, 'agent_step', {
-    stepId: step.stepId,
-    status: step.status,
-    kind: step.kind,
-    tool: step.tool,
-    title: step.title,
-    detail: step.detail,
-    outputPreview: step.outputPreview ? step.outputPreview.slice(0, 2_000) : undefined,
-    durationMs: step.durationMs,
-    tokensUsed: step.tokensUsed,
-  });
-}
-/** Drop a legacy in-clone transcript left by older builds so it cannot be committed. */
-export function scrubLegacyInCloneTranscript(workdir: string): void {
-  const legacy = path.join(workdir, TRANSCRIPT_FILE);
-  try {
-    fs.unlinkSync(legacy);
-  } catch {
-    // absent is fine
-  }
-}
-export function loadTranscript(workdir: string): LemcoreMessage[] | null {
-  const file = transcriptPath(workdir);
-  try {
-    const raw = fs.readFileSync(file, 'utf8');
-    const parsed = JSON.parse(raw);
-    if (Array.isArray(parsed)) return parsed as LemcoreMessage[];
-  } catch {
-    // no transcript or malformed
-  }
-  return null;
-}
-function saveTranscript(workdir: string, messages: LemcoreMessage[]): void {
-  // The transcript is bookkeeping, not critical to the run: a disk-full or FS
-  // error here should never abort an otherwise-healthy turn. Log and swallow.
-  try {
-    const file = transcriptPath(workdir);
-    const tmp = `${file}.tmp`;
-    fs.writeFileSync(tmp, JSON.stringify(messages, null, 2));
-    fs.renameSync(tmp, file);
-  } catch (err) {
-    console.warn(
-      `[lemcore] saveTranscript failed (non-fatal): ${err instanceof Error ? err.message : String(err)}`,
-    );
-  }
-}
-export async function checkReviewFile(workdir: string): Promise<boolean> {
-  const file = path.join(workdir, REVIEW_FILENAME);
-  try {
-    const raw = fs.readFileSync(file, 'utf8');
-    const parsed = JSON.parse(raw) as { verdict?: unknown };
-    return typeof parsed.verdict === 'string';
-  } catch {
-    return false;
-  }
-}
+export { LemcoreStalledError, LemcorePausedError } from './loop-types.js';
+import { LemcorePausedError } from './loop-types.js';
+import {
+  nextStepId,
+  publishStepEvent,
+  scrubLegacyInCloneTranscript,
+  loadTranscript,
+  saveTranscript,
+  checkReviewFile,
+} from './loop-helpers.js';
+export {
+  scrubLegacyInCloneTranscript,
+  loadTranscript,
+} from './loop-helpers.js';
 function toChatMessages(messages: LemcoreMessage[]): ChatMessage[] {
+  // The TODO list is module-level state (not in the transcript, so it survives
+  // compaction). Re-inject it into the system message every turn so the model
+  // always sees the current list. The stored system message stays stable for
+  // prompt caching; only the copy handed to the provider carries the TODO.
+  const todo = getTodoList();
+  const todoSuffix = todo ? `\n\n## TODO\n${todo}` : '';
   const out: ChatMessage[] = [];
   for (const m of messages) {
     switch (m.role) {
       case 'system':
+        out.push({ role: 'system', content: m.content + todoSuffix });
+        break;
       case 'user':
-        out.push({ role: m.role, content: m.content });
+        out.push({ role: 'user', content: m.content });
         break;
       case 'assistant':
         out.push({
@@ -135,13 +89,20 @@ export async function runLemcoreLoop(opts: LemcoreRunOptions): Promise<string> {
   if (!messages.some((m) => m.role === 'system')) {
     const skillsBlock = skillsSection?.trim() ? `\n\n${skillsSection.trim()}` : '';
     const baseSystem = opts.systemPromptOverride ?? lemcoreSystemPrompt();
+    // The system message is kept STABLE across turns (system prompt + skills
+    // only) so the provider can cache it. All volatile content — the task
+    // title, the task prompt, and the live TODO list — lives in the user
+    // message below, where changing it doesn't invalidate the cached prefix.
     messages.push({
       role: 'system',
-      content: `${baseSystem}${skillsBlock}\n\n${task.title}${task.prompt ? `\n${task.prompt}` : ''}`,
+      content: `${baseSystem}${skillsBlock}`,
     });
   }
   if (!messages.some((m) => m.role === 'user')) {
-    messages.push({ role: 'user', content: prompt });
+    const todo = getTodoList();
+    const todoBlock = todo ? `\n\n## TODO\n${todo}` : '';
+    const taskBlock = `${task.title}${task.prompt ? `\n${task.prompt}` : ''}`;
+    messages.push({ role: 'user', content: `${prompt}\n\n${taskBlock}${todoBlock}` });
   }
   saveTranscript(workdir, messages);
   if (resuming) {
@@ -165,6 +126,19 @@ export async function runLemcoreLoop(opts: LemcoreRunOptions): Promise<string> {
   for (let turn = 0; turn < MAX_TURNS; turn++) {
     if (Date.now() - startTime > wallClockCapMs) {
       throw new Error(`lemcore agent timed out after ${Math.round(wallClockCapMs / 1000)}s`);
+    }
+    // User pause: persist the transcript and unwind — the run resumes from
+    // here when the user clicks resume (worker re-enqueues the task).
+    if (opts.shouldPause && (await opts.shouldPause())) {
+      saveTranscript(workdir, messages);
+      await publishStepEvent(taskId, {
+        stepId: nextStepId(),
+        status: 'done',
+        kind: 'assistant',
+        title: 'Paused by user',
+        detail: 'The run parks here; resume continues from the saved transcript.',
+      });
+      throw new LemcorePausedError();
     }
     if (shouldCompactTranscript(messages, rt.cfg.contextWindow)) {
       const before = messages.length;

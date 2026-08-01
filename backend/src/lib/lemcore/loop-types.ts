@@ -55,6 +55,20 @@ export interface LemcoreRunOptions {
    * is used.
    */
   systemPromptOverride?: string;
+  /**
+   * User-pause hook: polled between turns. When it resolves true the loop
+   * throws LemcorePausedError so the worker stands down mid-run — the saved
+   * transcript and workdir let a later resume continue where it left off.
+   */
+  shouldPause?: () => Promise<boolean>;
+}
+
+/** Thrown when the user paused the run; the loop unwinds without failing. */
+export class LemcorePausedError extends Error {
+  constructor() {
+    super('paused by user');
+    this.name = 'LemcorePausedError';
+  }
 }
 
 /** Persistable transcript entries (JSON-safe). */

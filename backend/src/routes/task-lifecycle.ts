@@ -121,6 +121,60 @@ export function backlogBlocker(task: { status: string }): string | null {
   return null;
 }
 
+// Pause/resume eligibility for POST /tasks/:id/pause and /resume. Every
+// running process can be put on hold: queued (job not yet claimed), running
+// (lemcore loop parks at the next turn), or reviewing_code (review loop
+// parks after the current LLM turn). Paused tasks keep their workdir,
+// branch, and lemcore transcript, so resume continues mid-implementation.
+const PAUSABLE_STATUSES = ['queued', 'running', 'reviewing_code'] as const;
+
+export function pauseBlocker(task: { status: string }): string | null {
+  if (!(PAUSABLE_STATUSES as readonly string[]).includes(task.status)) {
+    return `task is ${task.status}, not pausable`;
+  }
+  return null;
+}
+
+export function resumeBlocker(task: { status: string }): string | null {
+  if (task.status !== 'paused') {
+    return `task is ${task.status}, not paused`;
+  }
+  return null;
+}
+
+// Atomic pause transitions. Returns true when this caller won the flip —
+// concurrent pause/resume clicks and a racing worker all lose the updateMany
+// and must stand down (same exactly-once discipline as claimTaskForRun).
+
+// queued → paused: the waiting BullMQ job stays in the queue but claimTaskForRun
+// does not claim 'paused' tasks, so the worker stands down when it pops.
+export async function flipQueuedToPaused(taskId: string): Promise<boolean> {
+  const flipped = await prisma.task.updateMany({
+    where: { id: taskId, status: 'queued' },
+    data: { status: 'paused' },
+  });
+  return flipped.count === 1;
+}
+
+// running/reviewing_code → paused: the executor polls this state between
+// turns (shouldPause in the lemcore loop) and stands down mid-run.
+export async function flipInFlightToPaused(taskId: string): Promise<boolean> {
+  const flipped = await prisma.task.updateMany({
+    where: { id: taskId, status: { in: ['running', 'reviewing_code'] } },
+    data: { status: 'paused' },
+  });
+  return flipped.count === 1;
+}
+
+// paused → queued: only a real resume may requeue; a duplicate resume loses.
+export async function flipPausedToQueued(taskId: string): Promise<boolean> {
+  const flipped = await prisma.task.updateMany({
+    where: { id: taskId, status: 'paused' },
+    data: { status: 'queued', error: null, errorCode: null },
+  });
+  return flipped.count === 1;
+}
+
 // Mid-run model-switch eligibility for POST /tasks/:id/model: a queued run
 // resolves the new config id at start; a running / reviewing_code run picks
 // it up between LLM calls (applyPendingModelSwitch in agent-runtime.ts).
