@@ -383,11 +383,11 @@ describe('recoverStuckReviews', () => {
     expect(mocks.enqueueReviewTask).not.toHaveBeenCalled();
   });
 
-  it('recovers when the error line is newer than a queued re-review marker', async () => {
+  it('recovers when the error line is newer than a concluded-review marker', async () => {
     mocks.taskFindMany.mockResolvedValue([{ id: 't-rereview-died' }]);
     mocks.taskEventFindMany.mockResolvedValue([
       { payload: { line: 'error: Request timed out' } },
-      { payload: { line: 'queued re-review of the updated pull request' } },
+      { payload: { line: 'queued the merge gate — auto-merge once CI is green' } },
     ]);
 
     await recoverStuckReviews();

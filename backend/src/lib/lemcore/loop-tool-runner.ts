@@ -101,6 +101,36 @@ export async function executeTool(
       return toolUndoEdit(workdir, String(args.path ?? ''), secrets);
     case 'todo_write':
       return toolTodoWrite(workdir, String(args.content ?? ''), secrets);
+    case 'spawn_subagent': {
+      if (!multiSampleCtx) {
+        return {
+          tool: 'spawn_subagent' as ToolName, title: 'spawn_subagent', durationMs: 0,
+          outputPreview: 'Subagent unavailable (no runtime context).',
+          error: 'spawn_subagent requires runtime context',
+        };
+      }
+      const { runSubagent } = await import('./subagent.js');
+      const startMs = Date.now();
+      try {
+        const summary = await runSubagent({
+          rt: multiSampleCtx.rt, workdir, secrets, taskId: multiSampleCtx.taskId,
+          prompt: String(args.prompt ?? ''),
+        });
+        // Roll child tokens into parent budget.
+        return {
+          tool: 'spawn_subagent' as ToolName,
+          title: `spawn_subagent(${String(args.prompt ?? '').slice(0, 40)})`,
+          outputPreview: summary, durationMs: Date.now() - startMs,
+        };
+      } catch (err) {
+        return {
+          tool: 'spawn_subagent' as ToolName,
+          title: `spawn_subagent`, durationMs: Date.now() - startMs,
+          outputPreview: `Subagent failed: ${(err as Error).message}`,
+          error: `subagent error: ${(err as Error).message}`,
+        };
+      }
+    }
     default:
       return {
         tool: name as ToolName,
@@ -188,7 +218,8 @@ export async function runToolCalls(opts: {
           'graph_neighbors',
           'graph_search',
         ]);
-        if (name !== 'web_search' && !graphTools.has(name)) failures += 1;
+        // spawn_subagent is also soft: a child failure shouldn't burn the parent's budget.
+        if (name !== 'web_search' && !graphTools.has(name) && name !== 'spawn_subagent') failures += 1;
         toolStep.status = 'error';
         toolStep.outputPreview = result.outputPreview || result.error;
         toolStep.detail = result.detail;

@@ -50,7 +50,8 @@ export type ToolName =
   | 'graph_neighbors'
   | 'graph_search'
   | 'load_skill'
-  | 'todo_write';
+  | 'todo_write'
+  | 'spawn_subagent';
 
 export interface ToolResult {
   tool: ToolName;

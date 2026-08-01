@@ -232,15 +232,16 @@ describe('reviewTask on the internal executor', () => {
     expect(mocks.enqueueMergeGate).toHaveBeenCalledWith('task-1', 0, 0);
   });
 
-  it('keeps reviewing_code when re-enqueuing a fix iteration (no awaiting_review flip)', async () => {
+  it('on changes_requested: applies ONE fix, finishes, and never re-reviews', async () => {
     mocks.llmCall.mockResolvedValue(
       reviewJson('changes_requested', [{ path: 'src/a.ts', comment: 'fix' }]),
     );
     await reviewTask('task-1', 0);
     expect(mocks.setTaskStatus).toHaveBeenCalledWith('task-1', 'reviewing_code');
-    // finishReview was NOT called (re-enqueue path), so awaiting_review was never set.
-    expect(mocks.setTaskStatus).not.toHaveBeenCalledWith('task-1', 'awaiting_review');
-    expect(mocks.enqueueReviewTask).toHaveBeenCalledWith('task-1', 1);
+    // Single review pass always finishes — awaiting_review is restored.
+    expect(mocks.setTaskStatus).toHaveBeenCalledWith('task-1', 'awaiting_review');
+    expect(mocks.enqueueReviewTask).not.toHaveBeenCalled();
+    expect(mocks.enqueueMergeGate).toHaveBeenCalledWith('task-1', 0, 0);
   });
 
   it('hands an approved PR on an auto-merge repo to the merge gate', async () => {
@@ -263,7 +264,7 @@ describe('reviewTask on the internal executor', () => {
     );
   });
 
-  it('applies fixes on the SAME branch and re-enqueues the review on changes_requested', async () => {
+  it('applies fixes on the SAME branch once, then hands the PR to the merge gate', async () => {
     mocks.llmCall.mockResolvedValue(
       reviewJson('changes_requested', [{ path: 'src/a.ts', comment: 'null check missing' }]),
     );
@@ -287,28 +288,17 @@ describe('reviewTask on the internal executor', () => {
       [],
       { headers: {} },
     );
-    // Fix iteration chains attempt+1 — never the merge gate mid-loop.
-    expect(mocks.enqueueReviewTask).toHaveBeenCalledWith('task-1', 2);
-    expect(mocks.enqueueMergeGate).not.toHaveBeenCalled();
+    // One fix, then finish — no re-review, straight to the merge gate.
+    expect(mocks.enqueueReviewTask).not.toHaveBeenCalled();
+    expect(mocks.enqueueMergeGate).toHaveBeenCalledWith('task-1', 0, 0);
   });
 
-  it('skips the push when the LLM produces no fix changes, but still re-reviews', async () => {
+  it('skips the push when the LLM produces no fix changes, but still finishes', async () => {
     mocks.llmCall.mockResolvedValue(reviewJson('changes_requested'));
     mocks.applyChanges.mockResolvedValue(0);
     await reviewTask('task-1');
     expect(mocks.commitAndPush).not.toHaveBeenCalled();
-    expect(mocks.enqueueReviewTask).toHaveBeenCalledWith('task-1', 1);
-  });
-
-  it('stops re-enqueueing at the fix-attempt cap and hands the PR to the merge gate', async () => {
-    mocks.llmCall.mockResolvedValue(reviewJson('changes_requested'));
-    await reviewTask('task-1', 3); // MAX_REVIEW_FIX_ATTEMPTS
-    expect(mocks.requestChanges).not.toHaveBeenCalled();
     expect(mocks.enqueueReviewTask).not.toHaveBeenCalled();
-    expect(mocks.logEvent).toHaveBeenCalledWith(
-      'task-1',
-      expect.stringContaining('review fix limit reached'),
-    );
     expect(mocks.enqueueMergeGate).toHaveBeenCalledWith('task-1', 0, 0);
   });
 
@@ -468,7 +458,7 @@ describe('reviewTask on the hermes executor', () => {
     expect(mocks.enqueueMergeGate).toHaveBeenCalledWith('task-1', 0, 0);
   });
 
-  it('runs the hermes fix iteration on the same checkout and re-enqueues the review', async () => {
+  it('runs ONE hermes fix iteration on the same checkout, then hands off to the merge gate', async () => {
     mocks.runHermesTask
       .mockImplementationOnce(
         hermesWritesReviewFile(
@@ -491,26 +481,18 @@ describe('reviewTask on the hermes executor', () => {
       [],
       { headers: {} },
     );
-    expect(mocks.enqueueReviewTask).toHaveBeenCalledWith('task-1', 1);
-    expect(mocks.enqueueMergeGate).not.toHaveBeenCalled();
+    // One fix, then finish — no re-review, straight to the merge gate.
+    expect(mocks.enqueueReviewTask).not.toHaveBeenCalled();
+    expect(mocks.enqueueMergeGate).toHaveBeenCalledWith('task-1', 0, 0);
   });
 
-  it('skips the push when hermes leaves a clean workdir, but still re-reviews', async () => {
+  it('skips the push when hermes leaves a clean workdir, but still finishes', async () => {
     mocks.runHermesTask
       .mockImplementationOnce(hermesWritesReviewFile(reviewJson('changes_requested')))
       .mockImplementationOnce(async () => {});
     mocks.hasDirtyWorkdir.mockResolvedValue(false);
     await reviewTask('task-1');
     expect(mocks.commitAndPush).not.toHaveBeenCalled();
-    expect(mocks.enqueueReviewTask).toHaveBeenCalledWith('task-1', 1);
-  });
-
-  it('stops fix iterations at the attempt cap on the hermes path too', async () => {
-    mocks.runHermesTask.mockImplementation(
-      hermesWritesReviewFile(reviewJson('changes_requested')),
-    );
-    await reviewTask('task-1', 3);
-    expect(mocks.runHermesTask).toHaveBeenCalledTimes(1); // review only, no fix run
     expect(mocks.enqueueReviewTask).not.toHaveBeenCalled();
     expect(mocks.enqueueMergeGate).toHaveBeenCalledWith('task-1', 0, 0);
   });

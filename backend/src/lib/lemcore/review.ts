@@ -78,10 +78,10 @@ export async function runLemcoreReview(
   }
 
   await logReview(task.id, review, rt.usedTokens);
-  // Shared finish path with hermes/internal (review-finish.ts): must actually
-  // enqueueReviewTask on changes_requested — the previous lemcore-only copy
-  // only logged "queued re-review" and left the task stuck in reviewing_code.
-  await continueOrFinishReview(task, rt, review, attempt, () =>
+  // Shared finish path with hermes/internal (review-finish.ts): single review
+  // pass — on changes_requested the fix is applied once, then the PR is handed
+  // to the merge gate / manual review (no re-review loop).
+  await continueOrFinishReview(task, rt, review, () =>
     runLemcoreFixIteration(task, rt, review, headBranch, workdir, secrets, auth),
   );
   return rt;
