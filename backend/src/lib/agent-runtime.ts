@@ -3,7 +3,7 @@ import { logEvent, type GitAuth } from './agent-git.js';
 import { resolveLlmAccessToken } from './llm-access-token.js';
 import {
   assertRepoPushAccess,
-  GIT_HTTP_AUTH_USERNAME,
+  gitHttpAuthUsername,
   tokenlessCloneUrl,
   type ProviderName,
 } from './git-providers.js';
@@ -217,10 +217,7 @@ export async function llmCall(rt: LlmRuntime, messages: ChatMessage[]): Promise<
   return llmCallWithFailover(rt, messages, attemptLlmCall);
 }
 
-// ---------------------------------------------------------------------------
 // Shared job context: task loading + credential/runtime preparation
-// ---------------------------------------------------------------------------
-
 // Re-exported so existing consumers (routes, tests) keep importing the
 // resolution surface from agent-runtime; implementation lives in
 // llm-config-resolution.ts (split to keep this module under the line guard).
@@ -276,7 +273,8 @@ export async function prepareAgentRuntime(
   });
   secrets.push(token);
   const cloneUrl = tokenlessCloneUrl(repository.cloneUrl);
-  const gitAuth: GitAuth = { username: GIT_HTTP_AUTH_USERNAME, token };
+  const username = gitHttpAuthUsername(connection.provider, connection.username);
+  const gitAuth: GitAuth = { username, token };
   const llmConfig = await resolveLlmConfig(
     { llmConfigId: llmConfigIdOverride ?? task?.llmConfigId ?? null },
     repository,
@@ -295,5 +293,5 @@ export async function prepareAgentRuntime(
   rt.secrets = secrets;
   const thinkingLevelOverride = parseTaskThinkingLevel(task?.thinkingLevel);
   if (thinkingLevelOverride) rt.thinkingLevelOverride = thinkingLevelOverride;
-  return { cloneUrl, gitAuth, rt };
+  return { cloneUrl, gitAuth, rt } as const;
 }
