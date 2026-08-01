@@ -140,9 +140,14 @@ export async function ensureAccountHandler(request: FastifyRequest, reply: Fasti
   const userId = request.userId;
   if (!userId) return reply.code(401).send({ error: 'Authentication required' });
   // A connected user never needs the email channel — check first so a user
-  // without one can still open the repos pane / create-repo modal.
+  // without one can still open the repos pane / create-repo modal. When the
+  // account already exists, still re-link the GitConnection: a user who
+  // disconnected gitlem in Settings has a soft-disconnected connection (token
+  // scrubbed, disconnectedAt set), and reconnecting via the repos pane "+" or
+  // Settings must restore it so repo create works again.
   const existing = await findGitlemAccountForUser(userId);
   if (existing) {
+    await linkGitlemConnection(userId, existing.id, existing.username, existing.apiToken);
     return reply.code(200).send({ created: false, username: existing.username, emailed: false });
   }
   const email = await resolveUserEmail(userId);

@@ -105,9 +105,14 @@ export async function linkGitlemConnection(
   apiToken: string,
 ): Promise<string> {
   await prisma.gitlemUser.update({ where: { id: gitlemUserId }, data: { userId } });
-  const baseUrl = gitlemCloneBase();
-  const existing = await prisma.gitConnection.findUnique({
-    where: { provider_username_baseUrl: { provider: 'gitlem', username, baseUrl } },
+  // gitlem has no external base URL — the host IS this backend — so baseUrl is
+  // null (clone URLs are built from gitlemCloneBase() at read time, never from
+  // this column). Storing the clone path here previously surfaced a junk
+  // "…/api/api/gitlem/git" string in the Settings connections list. The lookup
+  // uses findFirst on (provider, username) because the compound unique key
+  // does not accept a null baseUrl in Prisma's where input type.
+  const existing = await prisma.gitConnection.findFirst({
+    where: { provider: 'gitlem', username },
   });
   if (existing) {
     await prisma.gitConnection.update({
@@ -121,7 +126,7 @@ export async function linkGitlemConnection(
       userId,
       provider: 'gitlem',
       username,
-      baseUrl,
+      baseUrl: null,
       accessTokenEnc: encrypt(apiToken),
       tokenType: 'pat',
     },
