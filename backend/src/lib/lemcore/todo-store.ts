@@ -1,25 +1,30 @@
 // Module-level TODO list store for the lemcore agent.
-// The list is never written into the transcript, so it survives compaction;
-// loop.ts re-injects it into the system message every turn.
+// The list is keyed by workdir so concurrent runs don't share state. It is
+// never written into the transcript (survives compaction); loop.ts re-injects
+// it into the user message every turn.
 import { redactSecrets } from '../utils.js';
 import { truncate, type ToolResult } from './tools.js';
 
-let todoList = '';
+const todoStore = new Map<string, string>();
 
-export function getTodoList(): string {
-  return todoList;
+export function getTodoList(workdir: string): string {
+  return todoStore.get(workdir) ?? '';
 }
 
-export function setTodoList(list: string): void {
-  todoList = list;
+export function setTodoList(workdir: string, list: string): void {
+  todoStore.set(workdir, list);
 }
 
-export function resetTodoList(): void {
-  todoList = '';
+export function resetTodoList(workdir: string): void {
+  todoStore.delete(workdir);
 }
 
-export function toolTodoWrite(content: string, secrets: string[] = []): ToolResult {
-  setTodoList(content);
+export function toolTodoWrite(
+  workdir: string,
+  content: string,
+  secrets: string[] = [],
+): ToolResult {
+  setTodoList(workdir, content);
   return {
     tool: 'todo_write' as ToolResult['tool'],
     title: 'todo',

@@ -157,6 +157,9 @@ beforeEach(() => {
   mocks.persistTokenUsage.mockResolvedValue(undefined);
   mocks.cleanupWorkdir.mockResolvedValue(undefined);
   mocks.logEvent.mockResolvedValue(undefined);
+  // The real git() returns stdout (a string); default to '' so callers that
+  // chain .catch on the result (pushBranch's best-effort fetch) work.
+  mocks.git.mockResolvedValue('');
   mocks.runHermesTask.mockResolvedValue(undefined);
   // Post-run status read for the workdir-retention check: the happy-path
   // flows above end in awaiting_review.
@@ -413,6 +416,58 @@ describe('runTask exactly-once claim', () => {
       where: { id: 'task-1', status: { in: ['queued', 'pending'] } },
       data: { status: 'running' },
     });
+  });
+});
+
+describe('runTask push over a same-named remote branch (rerun)', () => {
+  // A rerun regenerates the same branch name (slug derived from the task
+  // title), so the remote usually still holds the previous run's commits.
+  // A plain push is rejected as non-fast-forward; the run-task push must
+  // fetch the remote ref and push with --force-with-lease instead — the
+  // same pattern as merge-gate-rebase's force-push.
+  const workdir = path.join('/tmp/test-workdirs', 'task-1');
+
+  it('fetches the task branch and force-pushes-with-lease', async () => {
+    await runTask('task-1');
+
+    // Lease has to reflect the remote's current tip, so fetch the branch
+    // into a tracking ref before the push (a fresh shallow clone has none).
+    expect(mocks.git).toHaveBeenCalledWith(
+      ['fetch', 'origin', '+refs/heads/lemniscate/add-feature-x:refs/remotes/origin/lemniscate/add-feature-x'],
+      expect.objectContaining({ cwd: workdir }),
+    );
+
+    // The push carries --force-with-lease so a diverged remote branch from a
+    // prior run is overwritten cleanly instead of being rejected.
+    const pushCall = mocks.commitAndPush.mock.calls.at(-1)!;
+    expect(pushCall[2]).toBe(workdir); // workdir
+    expect(pushCall[4]).toEqual([
+      'push',
+      '-u',
+      '--force-with-lease',
+      'origin',
+      'lemniscate/add-feature-x',
+    ]);
+  });
+
+  it('still pushes (first run) when the fetch finds no remote branch yet', async () => {
+    // The fetch is best-effort: a brand-new branch has no remote ref, so the
+    // fetch exits non-zero. The push must still happen — --force-with-lease
+    // creates a new branch when no remote ref exists to lease against.
+    mocks.git.mockImplementation(async (args: string[]) => {
+      if (args[0] === 'fetch') throw new Error('fetch failed');
+      return '';
+    });
+    await runTask('task-1');
+
+    const pushCall = mocks.commitAndPush.mock.calls.at(-1)!;
+    expect(pushCall[4]).toEqual([
+      'push',
+      '-u',
+      '--force-with-lease',
+      'origin',
+      'lemniscate/add-feature-x',
+    ]);
   });
 });
 
