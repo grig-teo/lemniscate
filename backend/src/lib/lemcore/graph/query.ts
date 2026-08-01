@@ -133,7 +133,9 @@ export function neighborsOf(
   center: string,
   maxDepth = 2,
 ): GraphNeighborhood {
-  return localNeighborhood(graph, center, maxDepth);
+  // Cap depth at 5 regardless of what the caller passes. Deep traversals
+  // against a whole-repo graph blow up edge sets and prompt tokens fast.
+  return localNeighborhood(graph, center, Math.min(maxDepth, 5));
 }
 
 function localQuery(
@@ -182,14 +184,14 @@ function localNeighborhood(
     const next: string[] = [];
     for (const id of frontier) {
       for (const e of graph.edges) {
-        if (e.from === id || e.from.includes(id) || id.includes(e.from)) {
+        if (edgeMatchesId(e.from, id, graph.edges)) {
           edgeSet.push(e);
           if (!seen.has(e.to)) {
             seen.add(e.to);
             next.push(e.to);
           }
         }
-        if (e.to === id || e.to.includes(id) || id.includes(e.to)) {
+        if (edgeMatchesId(e.to, id, graph.edges)) {
           edgeSet.push(e);
           if (!seen.has(e.from)) {
             seen.add(e.from);
@@ -211,6 +213,27 @@ function localNeighborhood(
     ),
   ]);
   return { center, nodes, edges: dedupeEdges(edgeSet), files };
+}
+
+/**
+ * Decide whether a graph edge endpoint (e.from / e.to) matches a frontier id.
+ * Primary match is exact equality. Fallback to a prefix match (e.from/to
+ * STARTS WITH id) ONLY when no edge has an exact endpoint match for this id
+ * AND the id is at least 4 characters — this avoids the old bidirectional
+ * `includes` matching, which exploded neighborhoods for common short names
+ * like "main", "api", "index" by matching them inside every long path.
+ */
+function edgeMatchesId(
+  endpoint: string,
+  id: string,
+  edges: GraphEdge[],
+): boolean {
+  if (endpoint === id) return true;
+  if (id.length < 4) return false;
+  // Only fall back to prefix matching if no edge has an exact endpoint for id.
+  const hasExact = edges.some((e) => e.from === id || e.to === id);
+  if (hasExact) return false;
+  return endpoint.startsWith(id);
 }
 
 function matchIds(graph: LemcoreCodebaseGraph, target: string): Set<string> {

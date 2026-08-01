@@ -164,17 +164,22 @@ export async function toolBash(
 ): Promise<ToolResult> {
   const startMs = Date.now();
   return new Promise((resolve) => {
-    execFile('bash', ['-c', command], { cwd: workdir, timeout: BASH_TIMEOUT_MS }, (err, stdout, stderr) => {
-      const combined = [stdout ?? '', stderr ?? ''].join('');
-      const capped = truncate(redactSecrets(combined, secrets));
-      resolve({
-        tool: 'bash',
-        title: command.length > 80 ? `${command.slice(0, 80)}…` : command,
-        outputPreview: capped,
-        durationMs: Date.now() - startMs,
-        error: isRealBashError(err) ? err!.message : undefined,
-      });
-    });
+    execFile(
+      'bash',
+      ['-c', command],
+      { cwd: workdir, timeout: BASH_TIMEOUT_MS, maxBuffer: 16 * 1024 * 1024 },
+      (err, stdout, stderr) => {
+        const combined = [stdout ?? '', stderr ?? ''].join('');
+        const capped = truncate(redactSecrets(combined, secrets));
+        resolve({
+          tool: 'bash',
+          title: command.length > 80 ? `${command.slice(0, 80)}…` : command,
+          outputPreview: capped,
+          durationMs: Date.now() - startMs,
+          error: isRealBashError(err) ? err!.message : undefined,
+        });
+      },
+    );
   });
 }
 

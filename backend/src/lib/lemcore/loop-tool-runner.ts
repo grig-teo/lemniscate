@@ -168,8 +168,17 @@ export async function runToolCalls(opts: {
       if (result.error) {
         // web_search is best-effort: a flaky DDG page should never count
         // toward MAX_TOOL_FAILURES and abort a coding task. The model still
-        // receives the error message and can retry or proceed.
-        if (name !== 'web_search') failures += 1;
+        // receives the error message and can retry or proceed. Graph tools are
+        // likewise soft failures: a repo with no built graph (the common case)
+        // would otherwise exhaust MAX_TOOL_FAILURES in two calls even though
+        // the system prompt actively says to "Prefer graph_query...".
+        const graphTools = new Set([
+          'graph_query',
+          'graph_impact',
+          'graph_neighbors',
+          'graph_search',
+        ]);
+        if (name !== 'web_search' && !graphTools.has(name)) failures += 1;
         toolStep.status = 'error';
         toolStep.outputPreview = result.outputPreview || result.error;
         toolStep.detail = result.detail;

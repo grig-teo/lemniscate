@@ -41,18 +41,75 @@ export function compactTranscript(
   const rest = messages.filter((m) => m.role !== 'system');
   if (rest.length <= keepRecent) return messages;
 
-  const older = rest.slice(0, rest.length - keepRecent).map(compactOne);
-  const recent = rest.slice(rest.length - keepRecent);
-  return [...system, ...goalReminders(system), ...older, ...recent];
+  const splitIdx = rest.length - keepRecent;
+  let older = rest.slice(0, splitIdx);
+  let recent = rest.slice(splitIdx);
+
+  // The raw message-count slice can split an assistant message that carries
+  // tool_calls from its matching `tool` result messages. The OpenAI API
+  // rejects (HTTP 400) any assistant tool_calls that aren't followed by their
+  // tool results. Tool results are always contiguous and follow the assistant
+  // that produced them, so if `recent` now starts with a `tool` message, that
+  // message (and every leading tool result in `recent`) belongs to the last
+  // assistant in `older`. Pull that assistant — plus any of its tool results
+  // still sitting in `older` — forward into `recent` so the group stays intact.
+  const firstRecent = recent[0];
+  if (firstRecent && firstRecent.role === 'tool') {
+    const orphanedToolCallId = firstRecent.toolCallId;
+    let assistantIdx = -1;
+    for (let i = older.length - 1; i >= 0; i--) {
+      const m = older[i];
+      if (m && m.role === 'assistant' && m.toolCalls?.some((tc) => tc.id === orphanedToolCallId)) {
+        assistantIdx = i;
+        break;
+      }
+    }
+    if (assistantIdx >= 0) {
+      const assistant = older[assistantIdx];
+      const movedIds = new Set(
+        assistant && assistant.role === 'assistant'
+          ? (assistant.toolCalls?.map((tc) => tc.id) ?? [])
+          : [],
+      );
+      const moved: LemcoreMessage[] = [];
+      const remaining: LemcoreMessage[] = [];
+      for (let i = 0; i < older.length; i++) {
+        const m = older[i];
+        if (!m) continue;
+        if (i === assistantIdx) {
+          moved.push(m);
+        } else if (m.role === 'tool' && movedIds.has(m.toolCallId)) {
+          moved.push(m);
+        } else {
+          remaining.push(m);
+        }
+      }
+      older = remaining;
+      recent = [...moved, ...recent];
+    }
+  }
+
+  const olderCompacted = older.map(compactOne);
+  return [...system, ...goalReminders(messages), ...olderCompacted, ...recent];
 }
 
 /**
- * Goal-pattern anchor: if the model declared an "Objective:" line (see
- * lemcoreSystemPrompt), re-inject it right after the system prompt so
- * compaction never drops the one objective the run tracks to completion.
+ * Goal-pattern anchor: if the model declared an "Objective:" line in one of its
+ * assistant replies (see lemcoreSystemPrompt — "Restate the objective ... in
+ * your first reply, prefixed with Objective:"), re-inject the most recent
+ * restatement right after the system prompt so compaction never drops the one
+ * objective the run tracks to completion. We search ASSISTANT messages rather
+ * than the system prompt because the system prompt itself contains the word
+ * "Objective:" as part of its instruction example.
  */
-function goalReminders(system: LemcoreMessage[]): LemcoreMessage[] {
-  const goal = latestGoalLine(system[0]?.content ?? '');
+function goalReminders(messages: LemcoreMessage[]): LemcoreMessage[] {
+  let goal: string | null = null;
+  for (const m of messages) {
+    if (m.role === 'assistant') {
+      const line = latestGoalLine(m.content);
+      if (line) goal = line;
+    }
+  }
   return goal ? [{ role: 'system', content: goal }] : [];
 }
 
