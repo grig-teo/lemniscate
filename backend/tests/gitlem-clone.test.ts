@@ -1,7 +1,7 @@
 import { execFileSync } from 'node:child_process';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { access, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 // Locking test for the clone materialization: a gitlem document (branches +
@@ -40,11 +40,15 @@ function mockRepo(doc: string = DOC) {
 
 describe('materializeGitlemRepo', () => {
   let cloneTarget: string | null = null;
+  const materialized: string[] = [];
 
   afterEach(async () => {
     resetGitlemCloneCache();
     if (cloneTarget) await rm(cloneTarget, { recursive: true, force: true });
     cloneTarget = null;
+    for (const dir of materialized.splice(0)) {
+      await rm(dirname(dir), { recursive: true, force: true });
+    }
   });
 
   it('returns null for unknown repos and users', async () => {
@@ -76,5 +80,36 @@ describe('materializeGitlemRepo', () => {
     const gitDir = await materializeGitlemRepo('alice', 'demo');
     cloneTarget = await mkdtemp(join(tmpdir(), 'gitlem-checkout-'));
     execFileSync('git', ['clone', '--quiet', gitDir!, join(cloneTarget, 'demo')]);
+  });
+
+  it('skips file paths escaping the work dir via sibling prefixes', async () => {
+    mockRepo(JSON.stringify({
+      branches: [{ name: 'main', files: [{ path: '../work-evil/pwned.txt', content: 'x' }] }],
+      prs: [],
+      ciRuns: [],
+      nextPrNumber: 1,
+      nextRunId: 1,
+    }));
+    const gitDir = await materializeGitlemRepo('alice', 'demo');
+    materialized.push(gitDir!);
+    await expect(access(join(gitDir!, '..', 'work-evil', 'pwned.txt'))).rejects.toThrow();
+  });
+
+  it('rebuilds on doc change and removes the superseded clone dir', async () => {
+    mockRepo();
+    const first = await materializeGitlemRepo('alice', 'demo');
+    mockRepo(DOC.replace('# demo', '# demo v2'));
+    const second = await materializeGitlemRepo('alice', 'demo');
+    materialized.push(first!, second!);
+    expect(second).not.toBe(first);
+    await expect(access(dirname(first!))).rejects.toThrow();
+  });
+
+  it('serves the cached clone while the doc is unchanged', async () => {
+    mockRepo();
+    const first = await materializeGitlemRepo('alice', 'demo');
+    const second = await materializeGitlemRepo('alice', 'demo');
+    materialized.push(first!);
+    expect(second).toBe(first);
   });
 });

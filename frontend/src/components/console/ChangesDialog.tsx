@@ -2,7 +2,7 @@ import * as React from 'react';
 import { ChevronDown, ChevronRight, FileDiff } from 'lucide-react';
 
 import {
-  countDiffHunkLines,
+  fileChangeTotals,
   parseDiffLines,
   type ChangeSummary,
   type DiffLine,
@@ -16,13 +16,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-
-/** Totals of one file across the diffs the dialog renders for it. */
-function changeTotals(change: FileChange): { added: number; removed: number } {
-  const base = countDiffHunkLines(change.baseDiff);
-  const head = countDiffHunkLines(change.diff);
-  return { added: base.added + head.added, removed: base.removed + head.removed };
-}
 
 const ACTION_LABEL: Record<string, string> = {
   created: 'A',
@@ -76,7 +69,7 @@ function DiffLineRow({ line }: { line: DiffLine }) {
 
 export function FileChangeRow({ change }: { change: FileChange }) {
   const [open, setOpen] = React.useState(false);
-  const totals = changeTotals(change);
+  const totals = fileChangeTotals(change);
   const lines = React.useMemo(() => (open ? parseDiffLines(change) : []), [open, change]);
   const Chevron = open ? ChevronDown : ChevronRight;
   return (

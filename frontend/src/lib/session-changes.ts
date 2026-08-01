@@ -15,9 +15,10 @@ export interface FileChange {
   /** Latest textual diff for the file, when the backend produced one. */
   diff?: string;
   /**
-   * First textual diff seen for the file. When a file was created earlier in
-   * the same session, the per-event diffs are incremental; the dialog renders
-   * baseDiff first so the file shows its full contents instead of a fragment.
+   * Creation preview of a file created earlier in the same session. Later
+   * modify events carry a cumulative `git diff -- <rel>` that fully replaces
+   * `diff`; only the creation preview is retained here so the dialog renders
+   * the file's full contents instead of a fragment.
    */
   baseDiff?: string;
 }
@@ -63,6 +64,7 @@ export function countDiffHunkLines(diff: string | undefined): {
   added: number;
   removed: number;
 } {
+  if (diff !== undefined && isCreatedDiff(diff)) return countCreationPreview(diff);
   let added = 0;
   let removed = 0;
   for (const line of (diff ?? '').split('\n')) {
@@ -71,6 +73,22 @@ export function countDiffHunkLines(diff: string | undefined): {
     else if (line.startsWith('-')) removed += 1;
   }
   return { added, removed };
+}
+
+/**
+ * The backend's creation preview is '--- /dev/null\n+++ b/<rel>\n<raw
+ * content>' with NO '+' prefixes: every line after the two headers is an
+ * addition, even content that looks like diff markup.
+ */
+function creationContentLines(diff: string): string[] {
+  const content = diff.split('\n').slice(2);
+  // A trailing newline ends the last content line; it is not an extra line.
+  if (content.at(-1) === '') content.pop();
+  return content;
+}
+
+function countCreationPreview(diff: string): { added: number; removed: number } {
+  return { added: creationContentLines(diff).length, removed: 0 };
 }
 
 /**
@@ -90,7 +108,11 @@ export function mergeDiffEvent(
     if (prev?.action === 'created') return null;
     return { path, action: 'deleted' };
   }
-  const baseDiff = prev?.baseDiff ?? (prev?.diff !== diff ? prev?.diff : undefined);
+  // Retain a base only for the creation preview: modify events carry a
+  // cumulative diff that replaces `diff`, and diff-less events (e.g.
+  // conflict-resolved) must not duplicate the previous diff as the base.
+  const keepsBase = prev?.action === 'created' && diff !== null;
+  const baseDiff = prev?.baseDiff ?? (keepsBase ? prev?.diff : undefined);
   return { path, action, diff: diff ?? prev?.diff, baseDiff };
 }
 
@@ -102,19 +124,23 @@ function toDiffLine(line: string, insideHunk: boolean): DiffLine {
   return { kind: 'ctx', text: line.startsWith(' ') ? line.slice(1) : line };
 }
 
+function creationPreviewLines(text: string): DiffLine[] {
+  const [oldHeader, newHeader] = text.split('\n');
+  const lines: DiffLine[] = [{ kind: 'meta', text: oldHeader }];
+  if (newHeader !== undefined) lines.push({ kind: 'meta', text: newHeader });
+  for (const content of creationContentLines(text)) lines.push({ kind: 'add', text: content });
+  return lines;
+}
+
 function diffTextToLines(text: string): DiffLine[] {
+  if (isCreatedDiff(text)) return creationPreviewLines(text);
   const lines: DiffLine[] = [];
-  let sawFileHeader = false;
   let insideHunk = false;
   for (const raw of text.split('\n')) {
     const header = raw.startsWith('---') || raw.startsWith('+++') || raw.startsWith('diff ');
-    if (header) sawFileHeader = true;
     if (raw.startsWith('@@')) insideHunk = true;
-    // Creation previews carry no @@ hunks ('--- /dev/null' followed by '+line'
-    // rows): treat +/- rows after the file headers as content even pre-hunk.
-    const preHunkContent = sawFileHeader && (raw.startsWith('+') || raw.startsWith('-'));
     if (header) lines.push({ kind: 'meta', text: raw });
-    else lines.push(toDiffLine(raw, insideHunk || preHunkContent));
+    else lines.push(toDiffLine(raw, insideHunk));
   }
   return lines;
 }
@@ -137,6 +163,13 @@ export function parseDiffLines(change: FileChange): DiffLine[] {
   return diffTextToLines(change.diff);
 }
 
+/** Per-file +/− totals across the diffs the dialog renders (base + latest). */
+export function fileChangeTotals(change: FileChange): { added: number; removed: number } {
+  const base = countDiffHunkLines(change.baseDiff);
+  const head = countDiffHunkLines(change.diff);
+  return { added: base.added + head.added, removed: base.removed + head.removed };
+}
+
 /** Reduce the ordered event history to per-file changes plus +/- totals. */
 export function summarizeChanges(events: TaskEventItem[]): ChangeSummary {
   const byPath = new Map<string, FileChange>();
@@ -149,16 +182,12 @@ export function summarizeChanges(events: TaskEventItem[]): ChangeSummary {
     else byPath.set(path, merged);
   }
   const changes = [...byPath.values()];
-  // Totals count the creation diff (baseDiff) plus the latest diff: for a file
-  // created then modified in one session the final diff is incremental, so the
-  // pair approximates the file's full size — the same lines the dialog renders.
   let additions = 0;
   let deletions = 0;
   for (const change of changes) {
-    const base = countDiffHunkLines(change.baseDiff);
-    const head = countDiffHunkLines(change.diff);
-    additions += base.added + head.added;
-    deletions += base.removed + head.removed;
+    const totals = fileChangeTotals(change);
+    additions += totals.added;
+    deletions += totals.removed;
   }
   return { changes, count: changes.length, additions, deletions };
 }

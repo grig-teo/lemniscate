@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process';
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { dirname, join, normalize } from 'node:path';
+import { dirname, isAbsolute, join, normalize, relative } from 'node:path';
 import { promisify } from 'node:util';
 import { parseGitlemDoc, type GitlemRepoDoc } from './gitlem-store.js';
 import { prisma } from './prisma.js';
@@ -11,7 +11,7 @@ import { prisma } from './prisma.js';
 // to a temp work dir and committed, then `git clone` builds the advertised
 // repo on disk and `git http-backend` serves the smart-HTTP protocol from
 // it. Materialized clones are cached for TTL_MS and rebuilt when the doc
-// changes (the routes compare the stored doc hash).
+// changes (the cache compares the stored doc string).
 
 const execFileAsync = promisify(execFile);
 const TTL_MS = 10 * 60 * 1000;
@@ -52,8 +52,13 @@ function hashDoc(doc: string): string {
 
 async function writeTree(workDir: string, files: { path: string; content: string }[]): Promise<void> {
   for (const file of files) {
-    const target = join(workDir, normalize(file.path));
-    if (!target.startsWith(workDir)) continue; // path traversal guard
+    const target = normalize(join(workDir, file.path));
+    // Path traversal guard: resolve relative to the work dir, then require the
+    // resolved target to stay inside it. A bare startsWith(workDir) check is
+    // unsound — '/tmp/x/work-evil' starts with '/tmp/x/work' — so compare via
+    // path.relative(), which yields '..' for anything escaping the work dir.
+    const rel = relative(workDir, target);
+    if (isAbsolute(rel) || rel.startsWith('..')) continue;
     await mkdir(dirname(target), { recursive: true });
     await writeFile(target, file.content);
   }
@@ -79,6 +84,9 @@ async function materializeDoc(workDir: string, doc: GitlemRepoDoc, defaultBranch
   if (target) {
     await git(['checkout', `doc-${target}`], workDir);
     await git(['checkout', '-B', defaultBranch], workDir);
+    // checkout -B copied the snapshot onto the real name; drop the scaffold
+    // so the clone does not advertise a stray doc-<target> branch.
+    await git(['branch', '-D', `doc-${target}`], workDir);
   }
   // Rename the remaining doc-<name> branches so the clone advertises the
   // real gitlem branch names (doc-main becomes main above).
@@ -95,7 +103,10 @@ async function buildClone(repoId: string, doc: string, defaultBranch: string): P
   await mkdir(workDir);
   await materializeDoc(workDir, parseGitlemDoc(doc), defaultBranch);
   const bareDir = join(base, 'repo.git');
-  await git(['clone', '--quiet', workDir, bareDir]);
+  // --bare: a plain clone lands branch refs under refs/remotes/origin/* and
+  // downstream clones (and git http-backend) would only see the default
+  // branch; --bare promotes every branch to refs/heads/*.
+  await git(['clone', '--quiet', '--bare', workDir, bareDir]);
   await git(['config', 'http.receivepack', 'false'], bareDir);
   return { dir: bareDir, docHash: hashDoc(doc), expiresAt: Date.now() + TTL_MS };
 }
@@ -107,7 +118,14 @@ async function cachedClone(repoId: string, doc: string, defaultBranch: string): 
   }
   const fresh = await buildClone(repoId, doc, defaultBranch);
   cache.set(repoId, fresh);
+  // Drop the just-built work dir (only the bare repo.git is served) and, when
+  // this rebuild supersedes an older entry, its whole base dir so stale clones
+  // don't accumulate on disk across doc changes. The superseded entry's base
+  // is awaited so callers can rely on the old clone being gone.
   void rm(join(fresh.dir, '..', 'work'), { recursive: true, force: true }).catch(() => undefined);
+  if (entry) {
+    await rm(dirname(entry.dir), { recursive: true, force: true }).catch(() => undefined);
+  }
   return fresh.dir;
 }
 

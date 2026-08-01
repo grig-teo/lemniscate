@@ -63,13 +63,14 @@ describe('FileChangeRow', () => {
   });
 
   it('sums the creation diff of a file created-then-modified in one session', () => {
+    // Real backend creation preview: raw content, no '+' prefixes.
     const html = renderToStaticMarkup(
       <FileChangeRow
         change={{
           path: 'src/a.ts',
           action: 'modified',
           diff: DIFF,
-          baseDiff: '--- /dev/null\n+++ b/src/a.ts\n+first',
+          baseDiff: '--- /dev/null\n+++ b/src/a.ts\nfirst',
         }}
       />,
     );

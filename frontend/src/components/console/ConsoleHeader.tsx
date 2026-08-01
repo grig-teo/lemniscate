@@ -6,6 +6,7 @@ import type { ChangeSummary } from '@/lib/session-changes';
 import { isSafeHttpUrl } from '@/lib/url';
 import { StatusBadge } from '@/components/StatusBadge';
 import { TokensBadge } from '@/components/TokensBadge';
+import { DiffStat } from '@/components/console/ChangesDialog';
 import { Button } from '@/components/ui/button';
 
 const CANCELLABLE = new Set(['queued', 'running']);
@@ -38,8 +39,7 @@ export function ChangesBadge({
       <span className="text-muted-foreground">
         {summary.count} {summary.count === 1 ? 'change' : 'changes'}
       </span>{' '}
-      <span className="text-green-600 dark:text-green-400">+{summary.additions}</span>{' '}
-      <span className="text-red-600 dark:text-red-400">−{summary.deletions}</span>
+      <DiffStat added={summary.additions} removed={summary.deletions} />
     </button>
   );
 }

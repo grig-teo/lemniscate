@@ -3,7 +3,7 @@ import { config } from '../config.js';
 import { encrypt } from './crypto.js';
 import { DeliveryError, sendEmail } from './notification-email.js';
 import { NOTIFICATION_KINDS, notify } from './notifications.js';
-import { hashPassword, verifyPassword } from './passwords.js';
+import { dummyPasswordHash, hashPassword, verifyPassword } from './passwords.js';
 import { prisma } from './prisma.js';
 
 // gitlem account lifecycle: registration codes, account creation, and the
@@ -13,6 +13,39 @@ import { prisma } from './prisma.js';
 // gitlem account to a user funnels through linkGitlemConnection().
 
 export const GITLEM_CODE_TTL_MS = 10 * 60 * 1000;
+export const GITLEM_CODE_MAX_ATTEMPTS = 5;
+
+// Failed code-verification attempts per email; the code is invalidated
+// after GITLEM_CODE_MAX_ATTEMPTS misses (brute-force guard). The code row
+// has no counter column, so this is process-local — sufficient alongside
+// the per-route rate limit, and a restart only resets the counter.
+const failedCodeAttempts = new Map<string, number>();
+
+/** The email already owns a gitlem account (unique-constraint race). */
+export class GitlemEmailTakenError extends Error {
+  constructor(email: string) {
+    super(`a gitlem account already exists for ${email}`);
+    this.name = 'GitlemEmailTakenError';
+  }
+}
+
+/** The email owns a gitlem account linked to a DIFFERENT lemniscate user. */
+export class GitlemAccountConflictError extends Error {
+  constructor(email: string) {
+    super(`gitlem account for ${email} belongs to a different user`);
+    this.name = 'GitlemAccountConflictError';
+  }
+}
+
+// Prisma unique-constraint errors carry code P2002.
+function isUniqueViolation(err: unknown): boolean {
+  return (
+    typeof err === 'object' &&
+    err !== null &&
+    'code' in err &&
+    (err as { code: string }).code === 'P2002'
+  );
+}
 
 export function gitlemCloneBase(): string {
   return `${config.BACKEND_URL.replace(/\/$/, '')}/api/gitlem/git`;
@@ -53,12 +86,30 @@ export async function consumeRegistrationCode(email: string, code: string): Prom
   });
   if (!row) return false;
   if (row.expiresAt.getTime() < Date.now()) {
-    await prisma.gitlemRegistrationCode.delete({ where: { id: row.id } });
+    await prisma.gitlemRegistrationCode.deleteMany({ where: { id: row.id } });
     return false;
   }
-  if (row.codeHash !== codeDigest(code)) return false;
-  await prisma.gitlemRegistrationCode.delete({ where: { id: row.id } });
+  if (row.codeHash !== codeDigest(code)) return recordFailedCodeAttempt(email, row.id);
+  // Atomic consume: only the first of two concurrent registrations with the
+  // same code deletes the row — the loser sees count 0 instead of a 500.
+  const { count } = await prisma.gitlemRegistrationCode.deleteMany({
+    where: { id: row.id, codeHash: row.codeHash },
+  });
+  if (count === 0) return false;
+  failedCodeAttempts.delete(email);
   return true;
+}
+
+/** Count a wrong code; invalidate (delete) the row at the attempt limit. */
+async function recordFailedCodeAttempt(email: string, rowId: string): Promise<boolean> {
+  const attempts = (failedCodeAttempts.get(email) ?? 0) + 1;
+  if (attempts < GITLEM_CODE_MAX_ATTEMPTS) {
+    failedCodeAttempts.set(email, attempts);
+    return false;
+  }
+  failedCodeAttempts.delete(email);
+  await prisma.gitlemRegistrationCode.deleteMany({ where: { id: rowId } });
+  return false;
 }
 
 async function uniqueUsername(base: string): Promise<string> {
@@ -81,15 +132,21 @@ export interface GitlemAccountResult {
 /** Create the gitlem account row (caller checked the email is free). */
 export async function createGitlemAccount(email: string, password: string): Promise<GitlemAccountResult> {
   const apiToken = `gitlem_${randomBytes(24).toString('hex')}`;
-  const gitlemUser = await prisma.gitlemUser.create({
-    data: {
-      email,
-      username: await uniqueUsername(gitlemUsernameForEmail(email)),
-      passwordHash: hashPassword(password),
-      apiToken,
-    },
-  });
-  return { gitlemUserId: gitlemUser.id, username: gitlemUser.username, apiToken, password };
+  try {
+    const gitlemUser = await prisma.gitlemUser.create({
+      data: {
+        email,
+        username: await uniqueUsername(gitlemUsernameForEmail(email)),
+        passwordHash: hashPassword(password),
+        apiToken,
+      },
+    });
+    return { gitlemUserId: gitlemUser.id, username: gitlemUser.username, apiToken, password };
+  } catch (err) {
+    // Concurrent registration with the same email loses the unique race.
+    if (isUniqueViolation(err)) throw new GitlemEmailTakenError(email);
+    throw err;
+  }
 }
 
 /**
@@ -139,7 +196,12 @@ export async function authenticateGitlem(
   password: string,
 ): Promise<{ id: string; username: string; userId: string | null } | null> {
   const account = await prisma.gitlemUser.findUnique({ where: { email } });
-  if (!account) return null;
+  if (!account) {
+    // Run a full dummy scrypt so response time does not reveal whether the
+    // account exists.
+    verifyPassword(password, dummyPasswordHash());
+    return null;
+  }
   if (!verifyPassword(password, account.passwordHash)) return null;
   return { id: account.id, username: account.username, userId: account.userId };
 }
@@ -186,6 +248,28 @@ async function emailCredentials(email: string, password: string): Promise<void> 
 }
 
 /**
+ * Registration without a chosen password emails the generated credentials
+ * (the "send password to their email" flow) and notes it in the internal
+ * bell. Best effort: unconfigured SMTP never fails the registration.
+ */
+export async function emailGeneratedCredentials(
+  userId: string,
+  email: string,
+  password: string,
+): Promise<void> {
+  try {
+    await emailCredentials(email, password);
+  } catch (err) {
+    if (!(err instanceof DeliveryError)) throw err;
+    return;
+  }
+  await notify(userId, 'gitlem_account_created', {
+    title: 'gitlem account created',
+    body: `Your gitlem account was created and the credentials were sent to ${email}.`,
+  });
+}
+
+/**
  * Lazily provision a gitlem account for a logged-in lemniscate user who has
  * none: generates a password, emails the credentials (best effort — an
  * unconfigured SMTP never blocks account creation) and posts an internal
@@ -198,11 +282,13 @@ export async function ensureGitlemAccountForUser(
   const existing = await findGitlemAccountForUser(userId);
   if (existing) return { created: false, username: existing.username, emailed: false };
 
-  // The email may already own a standalone gitlem account (registered via
-  // the emailed code before ever logging into lemniscate) — link it instead
-  // of failing on the unique email constraint.
+  // The lemniscate-side email is self-declared and UNVERIFIED, so it is not
+  // proof of mailbox ownership: only reuse the by-email account when it is
+  // already linked to this very user. Linking someone else's account here
+  // would hand their gitlem identity (and apiToken) to the caller.
   const byEmail = await prisma.gitlemUser.findUnique({ where: { email } });
   if (byEmail) {
+    if (byEmail.userId !== userId) throw new GitlemAccountConflictError(email);
     await linkGitlemConnection(userId, byEmail.id, byEmail.username, byEmail.apiToken);
     return { created: false, username: byEmail.username, emailed: false };
   }

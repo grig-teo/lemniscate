@@ -4,14 +4,17 @@ import {
   authenticateGitlem,
   consumeRegistrationCode,
   createGitlemAccount,
+  emailGeneratedCredentials,
   ensureEmailChannel,
   ensureGitlemAccountForUser,
   findGitlemAccountForUser,
   generateGitlemPassword,
+  GitlemAccountConflictError,
+  GitlemEmailTakenError,
   issueRegistrationCode,
   linkGitlemConnection,
 } from '../lib/gitlem-accounts.js';
-import { DeliveryError, sendEmail } from '../lib/notification-email.js';
+import { DeliveryError } from '../lib/notification-email.js';
 import { syncConnectionByIdBestEffort } from '../lib/repo-sync.js';
 import { prisma } from '../lib/prisma.js';
 import { setAuthCookie } from '../plugins/auth.js';
@@ -93,18 +96,20 @@ async function requestCodeHandler(request: FastifyRequest, reply: FastifyReply) 
   return reply.code(200).send({ ok: true });
 }
 
+// One uniform answer for a bad code AND an already-registered email, and
+// the code is always checked first: without a valid code the endpoint
+// reveals nothing about which emails have accounts (no enumeration).
+const REGISTER_ERROR = 'Invalid registration code or email already registered';
+
 async function registerHandler(request: FastifyRequest, reply: FastifyReply) {
   const body = parseOrReply(registerBodySchema, request.body, reply, 'Invalid registration payload');
   if (!body) return;
-  const taken = await prisma.gitlemUser.findUnique({ where: { email: body.email } });
-  if (taken) {
-    return reply.code(409).send({ error: 'A gitlem account with this email already exists' });
-  }
   if (!(await consumeRegistrationCode(body.email, body.code))) {
-    return reply.code(400).send({ error: 'Invalid or expired registration code' });
+    return reply.code(400).send({ error: REGISTER_ERROR });
   }
   const password = body.password ?? generateGitlemPassword();
-  const account = await createGitlemAccount(body.email, password);
+  const account = await createAccountOrConflict(body.email, password, reply);
+  if (!account) return;
   const userId = await userForGitlemAccount({ userId: null });
   await ensureEmailChannel(userId, body.email);
   const connectionId = await linkGitlemConnection(
@@ -113,31 +118,21 @@ async function registerHandler(request: FastifyRequest, reply: FastifyReply) {
     account.username,
     account.apiToken,
   );
-  await notifyCredentialsEmail(userId, body.email, password, body.password === undefined);
+  if (body.password === undefined) {
+    await emailGeneratedCredentials(userId, body.email, password);
+  }
   return finishGitlemLogin(userId, connectionId, request, reply);
 }
 
-// Registration without a chosen password emails the generated one (the
-// "send password to his email" flow) and notes it in the internal bell.
-async function notifyCredentialsEmail(
-  userId: string,
-  email: string,
-  password: string,
-  generated: boolean,
-): Promise<void> {
-  if (!generated) return;
-  const { notify } = await import('../lib/notifications.js');
+// A concurrent registration with the same email loses the unique race on
+// create (P2002 → GitlemEmailTakenError); answer with the uniform error.
+async function createAccountOrConflict(email: string, password: string, reply: FastifyReply) {
   try {
-    await sendEmail(email, {
-      title: 'Your gitlem account credentials',
-      body: `Your gitlem account was created.\n\nEmail: ${email}\nPassword: ${password}`,
-    });
-    await notify(userId, 'gitlem_account_created', {
-      title: 'gitlem account created',
-      body: `Your gitlem account was created and the credentials were sent to ${email}.`,
-    });
+    return await createGitlemAccount(email, password);
   } catch (err) {
-    if (!(err instanceof DeliveryError)) throw err;
+    if (!(err instanceof GitlemEmailTakenError)) throw err;
+    await reply.code(409).send({ error: REGISTER_ERROR });
+    return null;
   }
 }
 
@@ -156,8 +151,17 @@ export async function ensureAccountHandler(request: FastifyRequest, reply: Fasti
       error: 'Set up an email notification channel first so gitlem can send your credentials',
     });
   }
-  const result = await ensureGitlemAccountForUser(userId, email);
-  return reply.code(200).send(result);
+  try {
+    const result = await ensureGitlemAccountForUser(userId, email);
+    return reply.code(200).send(result);
+  } catch (err) {
+    // Never link by email alone: the address belongs to another user's
+    // gitlem account, so provisioning must conflict instead of taking over.
+    if (!(err instanceof GitlemAccountConflictError)) throw err;
+    return reply.code(409).send({
+      error: 'This email already belongs to a different gitlem account',
+    });
+  }
 }
 
 // The lemniscate account itself has no email column — the user's enabled

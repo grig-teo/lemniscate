@@ -29,12 +29,8 @@ import { FormField } from '@/components/ui/form-field';
 import { Input } from '@/components/ui/input';
 
 /** Form state and the submit handler for the dialog. */
-function useCreateRepoForm(
-  onOpenChange: (open: boolean) => void,
-  connections: Connection[],
-  preferredConnectionId?: string,
-) {
-  const [connectionId, setConnectionId] = React.useState(preferredConnectionId ?? '');
+function useCreateRepoForm(onOpenChange: (open: boolean) => void, connections: Connection[]) {
+  const [connectionId, setConnectionId] = React.useState('');
   const [name, setName] = React.useState('');
   const [isPrivate, setIsPrivate] = React.useState(true);
   const [readme, setReadme] = React.useState(true);
@@ -44,19 +40,12 @@ function useCreateRepoForm(
   const templates = useAgentsMdTemplates();
   const selection = useWorkspaceSelection();
 
-  // A single connection is preselected — nothing else to pick. A caller
-  // preference (e.g. the gitlem pane passing its own connection) wins and is
-  // re-applied once the connection exists in the loaded list.
+  // A single connection is preselected — nothing else to pick.
   React.useEffect(() => {
-    const preferred = connections.find((c) => c.id === preferredConnectionId);
-    if (preferred && connectionId !== preferred.id) {
-      setConnectionId(preferred.id);
-      return;
-    }
     if (connections.length === 1 && !connectionId) {
       setConnectionId(connections[0].id);
     }
-  }, [connections, connectionId, preferredConnectionId]);
+  }, [connections, connectionId]);
 
   const defaultTemplateId = React.useMemo(() => {
     const all = templates.data ?? [];

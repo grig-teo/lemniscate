@@ -47,16 +47,44 @@ function sendUnauthorized(reply: FastifyReply): FastifyReply {
 
 // Content-type parser for git's upload-pack request stream; registered on
 // the /api/gitlem/git scope so the app's JSON parser stays the global
-// default. Buffers the raw body for http-backend's stdin.
+// default. Buffers the raw body for http-backend's stdin. Fastify's
+// bodyLimit does not apply to custom content parsers, so the cap is
+// enforced here: past MAX_BODY_BYTES the request is aborted with 413.
+const MAX_BODY_BYTES = 25 * 1024 * 1024;
+
 export function gitPassthroughParser(
   _request: FastifyRequest,
   payload: NodeJS.ReadableStream,
   done: (err: Error | null, body?: Buffer) => void,
 ): void {
   const chunks: Buffer[] = [];
-  payload.on('data', (chunk: Buffer) => chunks.push(chunk));
-  payload.on('end', () => done(null, Buffer.concat(chunks)));
-  payload.on('error', done);
+  let size = 0;
+  let settled = false;
+  const fail = (err: Error) => {
+    if (settled) return;
+    settled = true;
+    done(err);
+    (payload as NodeJS.ReadableStream & { destroy?: () => void }).destroy?.();
+  };
+  payload.on('data', (chunk: Buffer) => {
+    if (settled) return;
+    size += chunk.length;
+    if (size > MAX_BODY_BYTES) {
+      const err = new Error('gitlem: git request body exceeds the 25MB limit') as Error & {
+        statusCode?: number;
+      };
+      err.statusCode = 413;
+      fail(err);
+      return;
+    }
+    chunks.push(chunk);
+  });
+  payload.on('end', () => {
+    if (settled) return;
+    settled = true;
+    done(null, Buffer.concat(chunks));
+  });
+  payload.on('error', fail);
 }
 
 export function registerGitlemGitRoutes(app: FastifyInstance): void {
@@ -85,7 +113,10 @@ function httpBackendEnv(request: FastifyRequest, params: GitParams, gitDir: stri
     GIT_PROJECT_ROOT: gitDir,
     GIT_HTTP_EXPORT_ALL: '1',
     REQUEST_METHOD: request.method,
-    PATH_INFO: `/${params.username}/${params.repo}.git/${params['*'] ?? ''}`,
+    // GIT_PROJECT_ROOT already points at the materialized bare repo, so
+    // PATH_INFO must be only the part after '.git' — http-backend
+    // concatenates the two and would 404 on '<root>/<user>/<repo>.git/...'.
+    PATH_INFO: `/${params['*'] ?? ''}`,
     QUERY_STRING: queryIndex >= 0 ? request.url.slice(queryIndex + 1) : '',
     CONTENT_TYPE: String(request.headers['content-type'] ?? ''),
     CONTENT_LENGTH: body ? String(body.length) : '',
@@ -130,8 +161,13 @@ export async function runHttpBackend(
       ['http-backend'],
       { env, maxBuffer: 256 * 1024 * 1024, encoding: 'buffer' },
       (err, stdout, stderr) => {
-        if (err && !stdout?.length) {
-          void reply.code(502).send({ error: `gitlem: git http-backend failed: ${stderr}` });
+        // A maxBuffer hit means stdout is truncated — never parse it as a
+        // complete CGI response; fail the request instead.
+        const truncated =
+          (err as NodeJS.ErrnoException | null)?.code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER';
+        if (truncated || (err && !stdout?.length)) {
+          const detail = stderr?.length ? stderr : err?.message;
+          void reply.code(502).send({ error: `gitlem: git http-backend failed: ${detail}` });
           resolve(reply);
           return;
         }
