@@ -148,12 +148,24 @@ async function pushBranch(
   secrets: string[],
   auth: GitAuth,
 ): Promise<void> {
+  // A rerun regenerates a slug from the task title, so the remote often still
+  // holds the previous run's commits under the same branch name. A plain push
+  // is rejected as non-fast-forward. Fetch the remote tip into a tracking ref
+  // (best-effort: a first run has no remote branch yet) so the push can lease
+  // against it, then --force-with-lease overwrites the stale branch cleanly —
+  // the same pattern as merge-gate-rebase's force-push. --force-with-lease
+  // still creates a brand-new branch when no remote ref exists to lease
+  // against, so first runs are unaffected.
+  await git(
+    ['fetch', 'origin', `+refs/heads/${branchName}:refs/remotes/origin/${branchName}`],
+    { cwd: workdir, secrets, taskId: task.id, auth },
+  ).catch(() => {});
   await commitAndPush(
     task,
     rt,
     workdir,
     summary,
-    ['push', '-u', 'origin', branchName],
+    ['push', '-u', '--force-with-lease', 'origin', branchName],
     secrets,
     auth,
   );
