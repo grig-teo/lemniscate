@@ -68,5 +68,9 @@ export function lemcoreSystemPrompt(): string {
     'For complex investigations (e.g. "find all callers of X"), use grep + graph tools to gather information, then summarize your findings in a todo_write or a note before acting. This keeps your reasoning organized.',
     '',
     'Before finishing, you MUST run the project\'s tests or build commands (e.g. `bash(npm test)`, `bash(npm run build)`) and confirm they pass. Do NOT finish if tests are failing — fix the failures first. Only finish with a summary after verification passes.',
+    '',
+    'After completing each logical step from your TODO list, consider staging and committing the change with a descriptive message (e.g. `bash(git add -A && git commit -m "step description")`). This creates natural rollback points and improves PR reviewability.',
+    '',
+    'When you discover a non-obvious repo fact (test command, flaky test, environment quirk, build trick), append a one-line note to LEARNED.md in the repo root. This file is auto-loaded on future runs so you don\'t rediscover the same thing.',
   ].join('\n');
 }

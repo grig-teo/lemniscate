@@ -99,7 +99,7 @@ export async function executeTool(
     case 'undo_edit':
       return toolUndoEdit(workdir, String(args.path ?? ''), secrets);
     case 'todo_write':
-      return toolTodoWrite(String(args.content ?? ''), secrets);
+      return toolTodoWrite(workdir, String(args.content ?? ''), secrets);
     default:
       return {
         tool: name as ToolName,
