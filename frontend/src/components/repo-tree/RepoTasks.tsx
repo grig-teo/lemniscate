@@ -11,7 +11,7 @@ import {
 import { groupRepoTasks, isArchivable, isRerunnable, isStartableTask, showsStatusBadge, sortByArchivedAtDesc, toSelectedTask } from '@/lib/repo-tasks';
 import { inFlightPollInterval } from '@/lib/running-tasks';
 import { useWorkspaceSelection } from '@/lib/selection';
-import { cn } from '@/lib/utils';
+import { cn, hoverReveal } from '@/lib/utils';
 import { ArchivedTaskRow } from '@/components/repo-tree/ArchivedTaskRow';
 import { GenerateProposalsButton } from '@/components/repo-tree/GenerateProposalsButton';
 import { PriorityBadge } from '@/components/PriorityBadge';
@@ -97,7 +97,7 @@ function ArchivedTasksGroup({ repositoryId }: { repositoryId: string }) {
         </button>
       </div>
       {!collapsed && (
-        <ul className="flex flex-col gap-0.5">
+        <ul className="group flex flex-col gap-0.5">
           {archived.slice(0, ARCHIVED_PREVIEW_COUNT).map((task) => (
             <ArchivedTaskRow key={task.id} task={task} />
           ))}
@@ -105,7 +105,10 @@ function ArchivedTasksGroup({ repositoryId }: { repositoryId: string }) {
             <button
               type="button"
               onClick={() => openArchived(repositoryId)}
-              className="text-[11px] text-muted-foreground/70 hover:text-muted-foreground"
+              className={cn(
+                'text-[11px] text-muted-foreground/70 hover:text-muted-foreground',
+                hoverReveal,
+              )}
             >
               Show more
             </button>
@@ -128,11 +131,11 @@ function TaskGroup({
 }) {
   return (
     <section>
-      <div className="flex items-center gap-2 py-0.5 pl-2 pr-1">
+      <div className="group flex items-center gap-2 py-0.5 pl-2 pr-1">
         <span className="flex-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground/70">
           {label}
         </span>
-        {action}
+        {action && <span className={hoverReveal}>{action}</span>}
       </div>
       <ul className="flex flex-col gap-0.5">{children}</ul>
     </section>
@@ -147,7 +150,7 @@ function TaskRow({ task }: { task: Task }) {
         type="button"
         onClick={() => selectTask(toSelectedTask(task))}
         className={cn(
-          'flex w-full items-center gap-2 rounded-md px-2 py-1 text-left text-xs hover:bg-accent',
+          'group flex w-full items-center gap-2 rounded-md px-2 py-1 text-left text-xs hover:bg-accent',
           selectedTask?.id === task.id && 'bg-accent font-medium',
         )}
       >
@@ -155,20 +158,20 @@ function TaskRow({ task }: { task: Task }) {
           {task.title}
         </span>
         {task.kind === 'proposal' && (
-          <PriorityBadge priority={task.priority} className="px-1.5 py-0 text-[10px]" />
+          <PriorityBadge priority={task.priority} className={cn('px-1.5 py-0 text-[10px]', hoverReveal)} />
         )}
         {task.kind === 'proposal' && (
-          <Badge variant="outline" className="shrink-0 px-1.5 py-0 text-[10px]">
+          <Badge variant="outline" className={cn('shrink-0 px-1.5 py-0 text-[10px]', hoverReveal)}>
             {task.category ?? 'proposal'}
           </Badge>
         )}
-        {showsStatusBadge(task) && <StatusBadge status={task.status} className="px-1.5 py-0 text-[10px]" />}
+        {showsStatusBadge(task) && <StatusBadge status={task.status} className={cn('px-1.5 py-0 text-[10px]', hoverReveal)} />}
         <TokensBadge
           used={task.llmTokensUsed}
           max={task.maxTokensPerRun}
           running={task.status === 'running'}
           costUsd={task.estimatedCostUsd ?? null}
-          className="px-1.5 py-0 text-[10px]"
+          className={cn('px-1.5 py-0 text-[10px]', hoverReveal)}
         />
         {isStartableTask(task) && <StartTaskButton task={task} />}
         {isRerunnable(task.status) && <RerunTaskButton task={task} />}
@@ -185,7 +188,7 @@ function StartTaskButton({ task }: { task: Task }) {
     <Button
       variant="ghost"
       size="icon"
-      className="h-5 w-5 shrink-0"
+      className={cn('h-5 w-5 shrink-0', hoverReveal)}
       aria-label={`Start ${task.title}`}
       disabled={startTask.isPending}
       onClick={(event) => {
@@ -209,7 +212,7 @@ function RerunTaskButton({ task }: { task: Task }) {
     <Button
       variant="ghost"
       size="icon"
-      className="h-5 w-5 shrink-0"
+      className={cn('h-5 w-5 shrink-0', hoverReveal)}
       aria-label={`Rerun ${task.title}`}
       disabled={rerunTask.isPending}
       onClick={(event) => {
@@ -233,7 +236,7 @@ function ArchiveTaskButton({ task }: { task: Task }) {
     <Button
       variant="ghost"
       size="icon"
-      className="h-5 w-5 shrink-0"
+      className={cn('h-5 w-5 shrink-0', hoverReveal)}
       aria-label={`Archive ${task.title}`}
       title="Archive"
       disabled={archiveTask.isPending}

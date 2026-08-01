@@ -127,8 +127,8 @@ export function ConsoleHeader({
       {PAUSABLE.has(status) && (
         <Button
           variant="ghost"
-          size="icon"
-          className="h-6 w-6 shrink-0"
+          size="sm"
+          className="h-6 shrink-0 gap-1 px-2 text-xs"
           aria-label={`Pause ${task.title}`}
           title="Pause this process — resume continues from the saved transcript"
           disabled={pauseTask.isPending}
@@ -139,13 +139,14 @@ export function ConsoleHeader({
           ) : (
             <Pause className="h-3.5 w-3.5" aria-hidden />
           )}
+          Pause
         </Button>
       )}
       {status === 'paused' && (
         <Button
           variant="ghost"
-          size="icon"
-          className="h-6 w-6 shrink-0"
+          size="sm"
+          className="h-6 shrink-0 gap-1 px-2 text-xs"
           aria-label={`Resume ${task.title}`}
           title="Resume this process"
           disabled={resumeTask.isPending}
@@ -156,6 +157,7 @@ export function ConsoleHeader({
           ) : (
             <Play className="h-3.5 w-3.5" aria-hidden />
           )}
+          Resume
         </Button>
       )}
       {RUNNABLE_ON_DEVICE.has(status) && onRunOnDevice && (

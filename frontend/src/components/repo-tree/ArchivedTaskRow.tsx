@@ -3,6 +3,7 @@ import { ArchiveRestore, Loader2 } from 'lucide-react';
 import { useUnarchiveTask, type Task } from '@/lib/hooks';
 import { toSelectedTask } from '@/lib/repo-tasks';
 import { useWorkspaceSelection } from '@/lib/selection';
+import { cn, hoverReveal } from '@/lib/utils';
 import { StatusBadge } from '@/components/StatusBadge';
 import { Button } from '@/components/ui/button';
 
@@ -14,7 +15,7 @@ import { Button } from '@/components/ui/button';
 export function ArchivedTaskRow({ task }: { task: Task }) {
   const { openArchivedTask } = useWorkspaceSelection();
   return (
-    <li className="flex items-center gap-1 rounded-md px-1 py-0.5 text-xs text-muted-foreground/70 hover:bg-accent hover:text-muted-foreground">
+    <li className="group flex items-center gap-1 rounded-md px-1 py-0.5 text-xs text-muted-foreground/70 hover:bg-accent hover:text-muted-foreground">
       <button
         type="button"
         aria-label={`Open details of ${task.title}`}
@@ -25,7 +26,7 @@ export function ArchivedTaskRow({ task }: { task: Task }) {
           {task.title}
         </span>
       </button>
-      <StatusBadge status={task.status} className="px-1.5 py-0 text-[10px] opacity-70" />
+      <StatusBadge status={task.status} className={cn('px-1.5 py-0 text-[10px] opacity-70', hoverReveal)} />
       <UnarchiveTaskButton task={task} />
     </li>
   );
@@ -38,7 +39,7 @@ export function UnarchiveTaskButton({ task }: { task: Task }) {
     <Button
       variant="ghost"
       size="icon"
-      className="h-5 w-5 shrink-0"
+      className={cn('h-5 w-5 shrink-0', hoverReveal)}
       aria-label={`Unarchive ${task.title}`}
       title="Unarchive"
       disabled={unarchiveTask.isPending}
