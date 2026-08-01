@@ -2,6 +2,7 @@ import type { FastifyPluginAsync } from 'fastify';
 import authRoutes from './auth.js';
 import connectionsRoutes from './connections.js';
 import repositoriesRoutes from './repositories.js';
+import repositoryDeleteRoutes from './repository-delete.js';
 
 // Aggregates all API routers. main.ts registers this plugin once:
 //
@@ -13,6 +14,8 @@ const apiRoutes: FastifyPluginAsync = async (app) => {
   await app.register(authRoutes, { prefix: '/api' });
   await app.register(connectionsRoutes, { prefix: '/api' });
   await app.register(repositoriesRoutes, { prefix: '/api' });
+  // DELETE /api/repositories/:id lives in its own module (max-lines guard).
+  await app.register(repositoryDeleteRoutes, { prefix: '/api' });
 };
 
 export default apiRoutes;

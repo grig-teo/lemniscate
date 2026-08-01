@@ -1,11 +1,12 @@
 import { useRef, useState } from 'react';
-import { Info } from 'lucide-react';
+import { Info, Trash2 } from 'lucide-react';
 
 import { useUpdateRepositoryFlags, type Repository } from '@/lib/hooks';
 import { REPO_FLAG_INFO, setAutoReview, type RepoFlagInfo } from '@/lib/repo-flags';
 import { useCloseOnOutside } from '@/lib/use-close-on-outside';
 import { cn } from '@/lib/utils';
 import { Switch } from '@/components/ui/switch';
+import { DeleteRepoDialog } from '@/components/repo-tree/DeleteRepoDialog';
 
 const SWITCH_CLASS =
   'h-4 w-7 [&>span]:h-3 [&>span]:w-3 [&>span]:data-[state=checked]:translate-x-3';
@@ -64,6 +65,7 @@ function FlagRow({ repo, info }: { repo: Repository; info: RepoFlagInfo }) {
  */
 export function RepoFlagsDropdown({ repo, onClose }: { repo: Repository; onClose: () => void }) {
   const ref = useRef<HTMLDivElement>(null);
+  const [deleteOpen, setDeleteOpen] = useState(false);
   useCloseOnOutside(ref, onClose);
   return (
     <div
@@ -75,6 +77,17 @@ export function RepoFlagsDropdown({ repo, onClose }: { repo: Repository; onClose
       {REPO_FLAG_INFO.map((info) => (
         <FlagRow key={info.key} repo={repo} info={info} />
       ))}
+      <div className="mt-1 border-t px-1 pt-1">
+        <button
+          type="button"
+          onClick={() => setDeleteOpen(true)}
+          className="flex w-full items-center gap-1.5 rounded px-1 py-0.5 text-left text-xs text-destructive hover:bg-destructive/10"
+        >
+          <Trash2 className="h-3 w-3" aria-hidden />
+          Delete repository
+        </button>
+      </div>
+      <DeleteRepoDialog repo={repo} open={deleteOpen} onClose={() => setDeleteOpen(false)} />
     </div>
   );
 }
