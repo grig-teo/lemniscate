@@ -153,6 +153,21 @@ export function usePatchTaskLlmConfig() {
   });
 }
 
+/**
+ * POST /api/tasks/:id/follows — set/clear the manual follow-up (the task that
+ * auto-starts when this one reaches 'done'). nextTaskId null clears the link.
+ * Errors surface inline in the follow-up dropdown, so the global toast is off.
+ */
+export function useSetTaskFollows() {
+  const invalidate = useInvalidator(['tasks'], ['task']);
+  return useMutation({
+    mutationFn: ({ id, nextTaskId }: { id: string; nextTaskId: string | null }) =>
+      api.post<{ task: Task }>(`/api/tasks/${id}/follows`, { nextTaskId }),
+    onSuccess: invalidate,
+    meta: SUPPRESS_ERROR_TOAST_META,
+  });
+}
+
 /** Re-queue a failed or closed task with fresh run state. */
 export function useRerunTask() {
   return useTaskAction('rerun');

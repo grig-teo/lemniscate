@@ -10,6 +10,7 @@ import { BookmarkPlus, Loader2, Paperclip, Send, X } from 'lucide-react';
 import type { TaskImage } from '@/lib/hooks';
 import { IMAGE_ACCEPT, MAX_IMAGES } from '@/lib/prompt-composer';
 import type { TaskComposerState } from '@/components/console/useTaskComposer';
+import { FollowUpSelect } from '@/components/console/FollowUpTaskSelect';
 import {
   ComposerRepoSelect,
   ContextRing,
@@ -146,6 +147,11 @@ export function ComposerToolbar({ composer }: { composer: TaskComposerState }) {
           onChange={composer.setLlmConfigId}
         />
         <ThinkingLevelSelect value={composer.thinkingLevel} onChange={composer.setThinkingLevel} />
+        <FollowUpSelect
+          candidates={composer.followCandidates}
+          value={composer.nextTaskId}
+          onChange={composer.setNextTaskId}
+        />
         <div className="flex-1" />
         <ContextRing tokens={composer.estimatedTokens} contextWindow={composer.contextWindow} />
       </div>

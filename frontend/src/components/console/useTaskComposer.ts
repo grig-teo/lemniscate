@@ -11,6 +11,8 @@ import {
   useCreateTask,
   useLlmConfigs,
   useRepositories,
+  useSetTaskFollows,
+  useTasks,
   type CreateTaskBody,
   type TaskImage,
   type TaskThinkingLevel,
@@ -32,8 +34,10 @@ export function useTaskComposer(onSubmitted?: () => void) {
   const [prompt, setPrompt] = React.useState('');
   const [thinkingLevel, setThinkingLevel] = React.useState<TaskThinkingLevel | null>(null);
   const [llmConfigId, setLlmConfigId] = React.useState<string | null>(null);
+  const [nextTaskId, setNextTaskId] = React.useState<string | null>(null);
   const [images, setImages] = React.useState<TaskImage[]>([]);
   const attachments = useLibraryAttachments();
+  const setFollows = useSetTaskFollows();
 
   const manualChoiceValid = repositories.some((repo) => repo.id === manualRepositoryId);
   const repositoryId = manualChoiceValid
@@ -41,6 +45,11 @@ export function useTaskComposer(onSubmitted?: () => void) {
     : defaultRepositoryId(repositories, selectedTask, selectedRepositoryId);
   const repository = repositories.find((repo) => repo.id === repositoryId) ?? null;
   const enabledConfigs = llmConfigs.filter((config) => config.enabled);
+
+  // Eligible successors for the follow-up dropdown: idle tasks in this repo.
+  const repoTasks = useTasks(repositoryId);
+  const followCandidates = (repoTasks.data ?? [])
+    .filter((t) => t.status === 'pending' || t.status === 'queued');
 
   const canSend =
     repositories.length > 0 &&
@@ -60,6 +69,13 @@ export function useTaskComposer(onSubmitted?: () => void) {
   const resetDraft = () => {
     setPrompt('');
     setImages([]);
+    setNextTaskId(null);
+  };
+
+  // The create body is strict and rejects nextTaskId, so a chosen follow-up is
+  // applied as a second call (POST /tasks/:newId/follows) once the task exists.
+  const applyFollowUpIfChosen = (taskId: string) => {
+    if (nextTaskId) setFollows.mutate({ id: taskId, nextTaskId });
   };
 
   const buildBody = (later?: boolean): CreateTaskBody => {
@@ -100,6 +116,7 @@ export function useTaskComposer(onSubmitted?: () => void) {
     if (!canSend) return;
     createTask.mutate(buildBody(), {
       onSuccess: (task) => {
+        applyFollowUpIfChosen(task.id);
         selectCreatedTask(task);
         resetDraft();
         onSubmitted?.();
@@ -111,7 +128,12 @@ export function useTaskComposer(onSubmitted?: () => void) {
   // selection, no close) so it can be started from the repo tree.
   const saveLater = () => {
     if (!canSend) return;
-    createTask.mutate(buildBody(true), { onSuccess: resetDraft });
+    createTask.mutate(buildBody(true), {
+      onSuccess: (task) => {
+        applyFollowUpIfChosen(task.id);
+        resetDraft();
+      },
+    });
   };
 
   return {
@@ -125,6 +147,9 @@ export function useTaskComposer(onSubmitted?: () => void) {
     setThinkingLevel,
     llmConfigId,
     setLlmConfigId,
+    nextTaskId,
+    setNextTaskId,
+    followCandidates,
     enabledConfigs,
     images,
     addImageFiles,

@@ -4,7 +4,7 @@ import { Loader2, X } from 'lucide-react';
 import {
   DndContext,
   PointerSensor,
-  closestCorners,
+  pointerWithin,
   useSensor,
   useSensors,
   type DragEndEvent,
@@ -16,7 +16,7 @@ import { Button } from '@/components/ui/button';
 import { useRepositories, useTasks } from '@/lib/hooks';
 import { inFlightPollInterval } from '@/lib/running-tasks';
 import { useWorkspaceSelection } from '@/lib/selection';
-import { boardColumns } from '@/lib/task-board';
+import { boardColumns, type BoardColumn } from '@/lib/task-board';
 
 /**
  * Center-pane Kanban board for one repository. Maps the repository's active
@@ -38,7 +38,14 @@ export function TaskBoard({ repositoryId }: { repositoryId: string }) {
     const taskId = String(active.id);
     const task = (tasks.data ?? []).find((t) => t.id === taskId);
     if (!task) return;
-    const targetColumn = columns.find((c) => c.tasks.some((t) => t.id === String(over.id)))?.id;
+    // over.id may be a column id (dropped on the column) or a task id (dropped
+    // on a card). Resolve the target column directly so empty-column and
+    // column-background drops register — not only drops squarely on a card.
+    const overId = String(over.id);
+    const columnIds = new Set(columns.map((c) => c.id));
+    const targetColumn = columnIds.has(overId as BoardColumn['id'])
+      ? (overId as BoardColumn['id'])
+      : columns.find((c) => c.tasks.some((t) => t.id === overId))?.id;
     if (!targetColumn) return;
     const message = drop(task, targetColumn);
     setError(message);
@@ -53,8 +60,8 @@ export function TaskBoard({ repositoryId }: { repositoryId: string }) {
           <Loader2 className="h-3 w-3 animate-spin" aria-hidden /> Loading tasks…
         </div>
       ) : (
-        <DndContext sensors={sensors} collisionDetection={closestCorners} onDragEnd={onDragEnd}>
-          <div className="flex min-h-0 flex-1 gap-3 overflow-x-auto p-4">
+        <DndContext sensors={sensors} collisionDetection={pointerWithin} onDragEnd={onDragEnd}>
+          <div className="flex min-h-0 flex-1 gap-3 p-4">
             {columns.map((column) => (
               <TaskColumn key={column.id} column={column} />
             ))}
