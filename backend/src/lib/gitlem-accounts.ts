@@ -1,4 +1,4 @@
-import { createHash, randomBytes, randomInt } from 'node:crypto';
+import { randomBytes } from 'node:crypto';
 import { config } from '../config.js';
 import { encrypt } from './crypto.js';
 import { DeliveryError, sendEmail } from './notification-email.js';
@@ -6,20 +6,19 @@ import { NOTIFICATION_KINDS, notify } from './notifications.js';
 import { dummyPasswordHash, hashPassword, verifyPassword } from './passwords.js';
 import { prisma } from './prisma.js';
 
-// gitlem account lifecycle: registration codes, account creation, and the
-// "ensure" path that lazily provisions a gitlem account for a logged-in
+// gitlem account lifecycle: account creation, linking, authentication, and
+// the "ensure" path that lazily provisions a gitlem account for a logged-in
 // lemniscate user (and notifies them). Single home for the GitlemUser +
 // GitConnection pair creation (AGENTS.md §6): every path that links a
-// gitlem account to a user funnels through linkGitlemConnection().
-
-export const GITLEM_CODE_TTL_MS = 10 * 60 * 1000;
-export const GITLEM_CODE_MAX_ATTEMPTS = 5;
-
-// Failed code-verification attempts per email; the code is invalidated
-// after GITLEM_CODE_MAX_ATTEMPTS misses (brute-force guard). The code row
-// has no counter column, so this is process-local — sufficient alongside
-// the per-route rate limit, and a restart only resets the counter.
-const failedCodeAttempts = new Map<string, number>();
+// gitlem account to a user funnels through linkGitlemConnection(). The
+// registration-code lifecycle lives in gitlem-registration-codes.ts and is
+// re-exported below for callers that historically imported it from here.
+export {
+  GITLEM_CODE_MAX_ATTEMPTS,
+  GITLEM_CODE_TTL_MS,
+  consumeRegistrationCode,
+  issueRegistrationCode,
+} from './gitlem-registration-codes.js';
 
 /** The email already owns a gitlem account (unique-constraint race). */
 export class GitlemEmailTakenError extends Error {
@@ -55,61 +54,6 @@ export function gitlemUsernameForEmail(email: string): string {
   const local = email.split('@')[0] ?? 'user';
   const base = local.toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/^-+|-+$/g, '') || 'user';
   return base.slice(0, 30);
-}
-
-function codeDigest(code: string): string {
-  return createHash('sha256').update(code).digest('hex');
-}
-
-/** Create and email a 6-digit registration code; replaces any previous one. */
-export async function issueRegistrationCode(email: string): Promise<void> {
-  const code = String(randomInt(0, 1_000_000)).padStart(6, '0');
-  await prisma.gitlemRegistrationCode.deleteMany({ where: { email } });
-  await prisma.gitlemRegistrationCode.create({
-    data: {
-      email,
-      codeHash: codeDigest(code),
-      expiresAt: new Date(Date.now() + GITLEM_CODE_TTL_MS),
-    },
-  });
-  await sendEmail(email, {
-    title: 'Your gitlem registration code',
-    body: `Your gitlem verification code is: ${code}\n\nIt expires in 10 minutes.`,
-  });
-}
-
-/** Consume a valid code for the email; deletes expired/used rows. */
-export async function consumeRegistrationCode(email: string, code: string): Promise<boolean> {
-  const row = await prisma.gitlemRegistrationCode.findFirst({
-    where: { email },
-    orderBy: { createdAt: 'desc' },
-  });
-  if (!row) return false;
-  if (row.expiresAt.getTime() < Date.now()) {
-    await prisma.gitlemRegistrationCode.deleteMany({ where: { id: row.id } });
-    return false;
-  }
-  if (row.codeHash !== codeDigest(code)) return recordFailedCodeAttempt(email, row.id);
-  // Atomic consume: only the first of two concurrent registrations with the
-  // same code deletes the row — the loser sees count 0 instead of a 500.
-  const { count } = await prisma.gitlemRegistrationCode.deleteMany({
-    where: { id: row.id, codeHash: row.codeHash },
-  });
-  if (count === 0) return false;
-  failedCodeAttempts.delete(email);
-  return true;
-}
-
-/** Count a wrong code; invalidate (delete) the row at the attempt limit. */
-async function recordFailedCodeAttempt(email: string, rowId: string): Promise<boolean> {
-  const attempts = (failedCodeAttempts.get(email) ?? 0) + 1;
-  if (attempts < GITLEM_CODE_MAX_ATTEMPTS) {
-    failedCodeAttempts.set(email, attempts);
-    return false;
-  }
-  failedCodeAttempts.delete(email);
-  await prisma.gitlemRegistrationCode.deleteMany({ where: { id: rowId } });
-  return false;
 }
 
 async function uniqueUsername(base: string): Promise<string> {
