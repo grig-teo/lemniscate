@@ -6,7 +6,6 @@ import {
   applyChanges,
   cleanupWorkdir,
   cloneRepository,
-  commitAndPush,
   git,
   hasDirtyWorkdir,
   logEvent,
@@ -14,6 +13,7 @@ import {
   recordJobFailure,
   type GitAuth,
 } from './agent-git.js';
+import { pushTaskBranch, recordChangedPaths } from './agent-publish.js';
 import {
   buildPrBody,
   buildSkillsSection,
@@ -139,39 +139,6 @@ async function proposeTaskChanges(
   return result;
 }
 
-async function pushBranch(
-  task: TaskWithRepo,
-  rt: LlmRuntime,
-  workdir: string,
-  branchName: string,
-  summary: string,
-  secrets: string[],
-  auth: GitAuth,
-): Promise<void> {
-  // A rerun regenerates a slug from the task title, so the remote often still
-  // holds the previous run's commits under the same branch name. A plain push
-  // is rejected as non-fast-forward. Fetch the remote tip into a tracking ref
-  // (best-effort: a first run has no remote branch yet) so the push can lease
-  // against it, then --force-with-lease overwrites the stale branch cleanly —
-  // the same pattern as merge-gate-rebase's force-push. --force-with-lease
-  // still creates a brand-new branch when no remote ref exists to lease
-  // against, so first runs are unaffected.
-  await git(
-    ['fetch', 'origin', `+refs/heads/${branchName}:refs/remotes/origin/${branchName}`],
-    { cwd: workdir, secrets, taskId: task.id, auth },
-  ).catch(() => {});
-  await commitAndPush(
-    task,
-    rt,
-    workdir,
-    summary,
-    ['push', '-u', '--force-with-lease', 'origin', branchName],
-    secrets,
-    auth,
-  );
-  await logEvent(task.id, `pushed branch ${branchName}`);
-}
-
 async function openTaskPullRequest(
   task: TaskWithRepo,
   rt: LlmRuntime,
@@ -214,28 +181,6 @@ async function finalizeRunTask(
     return;
   }
   await openTaskPullRequest(task, rt, branchName, summary);
-}
-
-// Persists the repo-relative paths the task branch changed (feeds the
-// run-targets endpoint). Fail-soft: a failed diff is logged to the task
-// console and changedPaths stays null, so the endpoint falls back to the
-// repository platform.
-async function recordChangedPaths(task: TaskWithRepo, workdir: string): Promise<void> {
-  try {
-    const out = await git(
-      ['diff', '--name-only', `${task.repository.defaultBranch}...HEAD`],
-      { cwd: workdir, taskId: task.id },
-    );
-    const changedPaths = out
-      .split('\n')
-      .map((line) => line.trim())
-      .filter(Boolean);
-    await prisma.task.update({ where: { id: task.id }, data: { changedPaths } });
-  } catch (err) {
-    await logEvent(task.id, `could not record changed paths: ${(err as Error).message}`).catch(
-      () => {},
-    );
-  }
 }
 
 // Runs the configured task executor. Returns the change summary for the
@@ -351,7 +296,7 @@ async function executeRunTask(
     await setTaskStatus(task.id, 'done');
     return rt;
   }
-  await pushBranch(task, rt, workdir, branchName, summary, secrets, gitAuth);
+  await pushTaskBranch(task, rt, workdir, branchName, summary, secrets, gitAuth);
   await recordChangedPaths(task, workdir);
   if (emptyRepo) {
     await logEvent(task.id, `empty repository bootstrapped on ${branchName}; no PR opened`);
