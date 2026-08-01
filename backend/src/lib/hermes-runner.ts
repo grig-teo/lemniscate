@@ -5,6 +5,7 @@ import readline from 'node:readline';
 import { logBatch } from './agent-git.js';
 import { LineBatcher } from './line-batcher.js';
 import { prisma } from './prisma.js';
+import { TaskPausedError } from './task-pause.js';
 import { redactSecrets } from './utils.js';
 
 // Runs the Hermes Agent CLI non-interactively (`hermes chat -q <prompt>`)
@@ -52,17 +53,16 @@ const CANCEL_POLL_MS = 5_000;
 const BATCH_MAX_LINES = 50;
 const BATCH_FLUSH_MS = 500;
 
-// The cancel endpoint marks the task failed; the runner notices on the next
-// poll and kills the agent — a real stop, not just a status flip.
-async function taskIsCancelled(taskId: string): Promise<boolean> {
+// Cancel marks the task failed, pause marks it 'paused'; the runner notices
+// on the next poll and kills the agent — a real stop, not just a status
+// flip. Pause rejects with TaskPausedError so the run stays resumable.
+async function taskRunControl(taskId: string): Promise<'cancelled' | 'paused' | null> {
   try {
-    const task = await prisma.task.findUnique({
-      where: { id: taskId },
-      select: { status: true },
-    });
-    return task?.status === 'failed';
+    const task = await prisma.task.findUnique({ where: { id: taskId }, select: { status: true } });
+    if (task?.status === 'failed') return 'cancelled';
+    return task?.status === 'paused' ? 'paused' : null;
   } catch {
-    return false;
+    return null;
   }
 }
 
@@ -214,10 +214,12 @@ function waitForHermes(child: ChildProcess, opts: HermesTaskOptions): Promise<vo
     const taskId = opts.taskId;
     const cancelPoll = taskId
       ? setInterval(() => {
-          void taskIsCancelled(taskId).then((cancelled) => {
-            if (!cancelled) return;
+          void taskRunControl(taskId).then((control) => {
+            if (!control) return;
             child.kill('SIGKILL');
-            reject(new Error('cancelled by user'));
+            reject(
+              control === 'paused' ? new TaskPausedError(taskId) : new Error('cancelled by user'),
+            );
           });
         }, opts.pollMs ?? CANCEL_POLL_MS)
       : undefined;

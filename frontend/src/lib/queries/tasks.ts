@@ -111,7 +111,17 @@ export function useImproveTask() {
  * only in the action segment.
  */
 function useTaskAction(
-  action: 'rerun' | 'cancel' | 'archive' | 'unarchive' | 'close-pr' | 'review' | 'merge' | 'backlog',
+  action:
+    | 'rerun'
+    | 'cancel'
+    | 'archive'
+    | 'unarchive'
+    | 'close-pr'
+    | 'review'
+    | 'merge'
+    | 'backlog'
+    | 'pause'
+    | 'resume',
 ) {
   const invalidate = useInvalidator(['tasks'], ['task']);
   return useMutation({
@@ -176,6 +186,16 @@ export function useRerunTask() {
 /** Stop a pending/queued/running task. */
 export function useCancelTask() {
   return useTaskAction('cancel');
+}
+
+/** Put an in-flight task on hold (executor exits at the next turn boundary). */
+export function usePauseTask() {
+  return useTaskAction('pause');
+}
+
+/** Resume a paused task — continues from the saved transcript. */
+export function useResumeTask() {
+  return useTaskAction('resume');
 }
 
 /** POST /api/tasks/:id/backlog — drag a card back to the backlog (pending). */

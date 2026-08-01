@@ -34,6 +34,7 @@ import {
   type PrReview,
 } from './pr-review.js';
 import { requestReviewWithRetry } from './review-request.js';
+import { isTaskPaused, TaskPausedError } from './task-pause.js';
 import { buildRepoContext } from './repo-context.js';
 import { loadAgentsMdTemplate, loadTaskSkills } from './task-skills.js';
 
@@ -275,6 +276,12 @@ export async function reviewTask(taskId: string, attempt = 0): Promise<void> {
   try {
     rt = await executeReviewTask(task, task.branchName, attempt, workdir, secrets);
   } catch (err) {
+    if (err instanceof TaskPausedError) {
+      // Paused mid-review: status stays 'paused' (resume re-enqueues the
+      // review) — do NOT record a failure or rethrow into a retry.
+      await logEvent(taskId, 'paused by user — resume continues the review').catch(() => {});
+      return;
+    }
     // Record the failure. A rate-limited review defers itself past the
     // provider's quota window and completes the job instead of rethrowing —
     // BullMQ's 60s backoff is useless against a multi-hour 429 and the old
@@ -291,6 +298,8 @@ export async function reviewTask(taskId: string, attempt = 0): Promise<void> {
       rt?.usedTokens ?? task.llmTokensUsed,
       rt ? tokenSplit(rt) : undefined,
     );
-    await cleanupWorkdir(workdir, taskId);
+    // Paused reviews keep the workdir (and transcript) for the resume.
+    const paused = await isTaskPaused(taskId);
+    if (!paused) await cleanupWorkdir(workdir, taskId);
   }
 }

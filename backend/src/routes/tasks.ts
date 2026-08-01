@@ -14,6 +14,7 @@ import {
   unarchiveTask,
 } from './task-action-handlers.js';
 import { triggerMerge, triggerReview } from './task-review-handlers.js';
+import { pauseTask, resumeTask } from './task-pause-handlers.js';
 import { getTaskRunTargets } from './task-run-targets.js';
 import { getTaskEvents } from './task-events-stream.js';
 import { setFollowsTask } from './task-follows-handlers.js';
@@ -42,6 +43,8 @@ const tasksRoutes: FastifyPluginAsync = async (app) => {
   app.post('/tasks/:id/improve', improveTask);
   app.post('/tasks/:id/rerun', rerunTask);
   app.post('/tasks/:id/cancel', cancelTask);
+  app.post('/tasks/:id/pause', pauseTask);
+  app.post('/tasks/:id/resume', resumeTask);
   app.post('/tasks/:id/backlog', returnToBacklog);
   app.post('/tasks/:id/close-pr', closePrTask);
   app.post('/tasks/:id/review', triggerReview);
@@ -69,6 +72,7 @@ export {
   archivedTasksWhere,
   attachmentValidationError,
   backlogBlocker,
+  buildResumeUpdate,
   buildRerunUpdate,
   buildStartUpdate,
   closePrBlocker,
@@ -77,7 +81,9 @@ export {
   isArchivable,
   mergeBlocker,
   modelSwitchBlocker,
+  pauseBlocker,
   resolveAttachmentUpdate,
+  resumeBlocker,
   reviewBlocker,
   rerunBlocker,
   startBlocker,
