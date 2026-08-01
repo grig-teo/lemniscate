@@ -27,6 +27,9 @@ const mocks = vi.hoisted(() => ({
   taskUpdateMany: vi.fn(),
   taskFindUnique: vi.fn(),
   enqueueReviewTask: vi.fn(),
+  enqueueRunTask: vi.fn(),
+  claimTaskForRun: vi.fn(),
+  RUN_CLAIMABLE_STATUSES: ['queued', 'pending'],
   openPullRequest: vi.fn(),
   buildRepoContext: vi.fn(),
   setTaskStatus: vi.fn(),
@@ -76,7 +79,14 @@ vi.mock('../src/lib/prisma.js', () => ({
     },
   },
 }));
-vi.mock('../src/lib/proposal-scheduler.js', () => ({ enqueueReviewTask: mocks.enqueueReviewTask }));
+vi.mock('../src/lib/proposal-scheduler.js', () => ({
+  enqueueReviewTask: mocks.enqueueReviewTask,
+  enqueueRunTask: mocks.enqueueRunTask,
+}));
+vi.mock('../src/lib/task-claim.js', () => ({
+  claimTaskForRun: mocks.claimTaskForRun,
+  RUN_CLAIMABLE_STATUSES: mocks.RUN_CLAIMABLE_STATUSES,
+}));
 vi.mock('../src/lib/pull-requests.js', () => ({ openPullRequest: mocks.openPullRequest }));
 vi.mock('../src/lib/repo-context.js', () => ({ buildRepoContext: mocks.buildRepoContext }));
 vi.mock('../src/lib/task-events.js', () => ({ setTaskStatus: mocks.setTaskStatus }));
@@ -154,6 +164,10 @@ beforeEach(() => {
   mocks.taskUpdate.mockResolvedValue(undefined);
   // The atomic claim succeeds by default; concurrency tests override this.
   mocks.taskUpdateMany.mockResolvedValue({ count: 1 });
+  // claimTaskForRun: first call wins the initial claim; retries keep winning
+  // unless a test simulates a lost requeue (returns false to stand down).
+  mocks.claimTaskForRun.mockResolvedValue(true);
+  mocks.enqueueRunTask.mockResolvedValue(undefined);
   mocks.persistTokenUsage.mockResolvedValue(undefined);
   mocks.cleanupWorkdir.mockResolvedValue(undefined);
   mocks.logEvent.mockResolvedValue(undefined);
@@ -225,14 +239,18 @@ describe('runTask with resolveAgentExecutor=hermes', () => {
     });
   });
 
-  it('finishes without committing when hermes left the workdir clean', async () => {
+  it('does not commit/push when hermes left the workdir clean (and never marks done)', async () => {
+    // A clean workdir with no open PR used to be marked 'done' — a green task
+    // with zero deliverable. It now retries once then fails; either way the
+    // run never commits, pushes, or opens a PR, and is never 'done'.
     mocks.hasDirtyWorkdir.mockResolvedValue(false);
+    mocks.taskFindUnique.mockResolvedValue({ status: 'queued' });
     await runTask('task-1');
 
     expect(mocks.runHermesTask).toHaveBeenCalled();
     expect(mocks.commitAndPush).not.toHaveBeenCalled();
     expect(mocks.openPullRequest).not.toHaveBeenCalled();
-    expect(mocks.setTaskStatus).toHaveBeenCalledWith('task-1', 'done');
+    expect(mocks.setTaskStatus).not.toHaveBeenCalledWith('task-1', 'done');
   });
 
   it('returns to awaiting_review instead of done when a PR is already open', async () => {
@@ -376,26 +394,22 @@ describe('runTask resumption after an interrupted run', () => {
 
 describe('runTask exactly-once claim', () => {
   it('runs exactly once when two deliveries race for the same task', async () => {
-    // First invocation wins the conditional update; the second (BullMQ
-    // stalled re-delivery / double-enqueue) matches 0 rows and stands down.
-    mocks.taskUpdateMany
-      .mockResolvedValueOnce({ count: 1 })
-      .mockResolvedValueOnce({ count: 0 });
+    // First invocation wins the atomic claim; the second (BullMQ stalled
+    // re-delivery / double-enqueue) loses and stands down.
+    mocks.claimTaskForRun
+      .mockResolvedValueOnce(true)
+      .mockResolvedValueOnce(false);
 
     await Promise.all([runTask('task-1'), runTask('task-1')]);
 
-    expect(mocks.taskUpdateMany).toHaveBeenCalledTimes(2);
+    expect(mocks.claimTaskForRun).toHaveBeenCalledTimes(2);
     expect(mocks.runHermesTask).toHaveBeenCalledTimes(1);
     expect(mocks.commitAndPush).toHaveBeenCalledTimes(1);
     expect(mocks.openPullRequest).toHaveBeenCalledTimes(1);
-    expect(mocks.logger.info).toHaveBeenCalledWith(
-      expect.objectContaining({ taskId: 'task-1' }),
-      expect.stringContaining('already claimed'),
-    );
   });
 
   it('never touches the shared workdir when the claim is lost', async () => {
-    mocks.taskUpdateMany.mockResolvedValue({ count: 0 });
+    mocks.claimTaskForRun.mockResolvedValue(false);
 
     await runTask('task-1');
 
@@ -412,10 +426,7 @@ describe('runTask exactly-once claim', () => {
   it('claims before doing any work, flipping the task to running', async () => {
     await runTask('task-1');
 
-    expect(mocks.taskUpdateMany).toHaveBeenCalledWith({
-      where: { id: 'task-1', status: { in: ['queued', 'pending'] } },
-      data: { status: 'running' },
-    });
+    expect(mocks.claimTaskForRun).toHaveBeenCalledWith('task-1');
   });
 });
 
@@ -468,6 +479,57 @@ describe('runTask push over a same-named remote branch (rerun)', () => {
       'origin',
       'lemniscate/add-feature-x',
     ]);
+  });
+});
+
+describe('runTask no-changes retry (prevent premature done)', () => {
+  // A run whose agent left the worktree clean and with no open PR used to be
+  // marked 'done' — a green task with zero deliverable. Now it retries once
+  // (requeue + stronger prompt), then 'failed' if still empty. 'done' is
+  // reserved for runs that produced something.
+
+  it('requeues one retry when hermes left the workdir clean, then completes', async () => {
+    // Attempt 1: clean workdir → requeue. Attempt 2: dirty → normal PR flow.
+    mocks.hasDirtyWorkdir.mockResolvedValueOnce(false).mockResolvedValue(true);
+    mocks.taskFindUnique.mockResolvedValue({ status: 'queued' }); // settle check sees requeue
+    await runTask('task-1');
+
+    // Two implementation passes (the retry), both hermes.
+    expect(mocks.runHermesTask).toHaveBeenCalledTimes(2);
+    // The retry prompt nudges the agent that the previous attempt was empty.
+    const retryPrompt = mocks.runHermesTask.mock.calls[1]?.[0]?.prompt ?? '';
+    expect(retryPrompt).toContain('previous attempt finished without changing a single file');
+    // The requeue happened: status flipped to 'queued' and the job re-enqueued.
+    expect(mocks.setTaskStatus).toHaveBeenCalledWith('task-1', 'queued');
+    expect(mocks.enqueueRunTask).toHaveBeenCalledWith('task-1');
+  });
+
+  it('fails the task after the final attempt instead of marking done', async () => {
+    // Both attempts leave the worktree clean and no PR exists: the run ends
+    // 'failed' with a clear message — never 'done'.
+    mocks.hasDirtyWorkdir.mockResolvedValue(false);
+    mocks.taskFindUnique.mockResolvedValue({ status: 'queued' });
+    await runTask('task-1');
+
+    expect(mocks.runHermesTask).toHaveBeenCalledTimes(2);
+    expect(mocks.setTaskStatus).not.toHaveBeenCalledWith('task-1', 'done');
+    expect(mocks.setTaskStatus).toHaveBeenCalledWith(
+      'task-1',
+      'failed',
+      expect.objectContaining({ errorCode: expect.any(String) }),
+    );
+    expect(mocks.recordJobFailure).toHaveBeenCalled();
+  });
+
+  it('stands down when the requeued task is no longer claimable (cancelled mid-run)', async () => {
+    // Attempt 1 requeues; by the settle check the task left the claimable
+    // states (user cancelled) — the retry must not run.
+    mocks.hasDirtyWorkdir.mockResolvedValueOnce(false);
+    mocks.taskFindUnique.mockResolvedValue({ status: 'failed' }); // cancelled → failed
+    await runTask('task-1');
+
+    expect(mocks.runHermesTask).toHaveBeenCalledTimes(1);
+    expect(mocks.notifyTaskCompleted).not.toHaveBeenCalled();
   });
 });
 

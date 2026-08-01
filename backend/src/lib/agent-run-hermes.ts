@@ -11,7 +11,10 @@ const HERMES_INSTRUCTIONS =
 const RESUME_INSTRUCTIONS =
   'RESUMED RUN: a previous attempt was interrupted (redeploy). The current directory already contains the task branch with its uncommitted work — inspect the current state and CONTINUE the implementation from where it stopped; do not start over or redo completed work.';
 
-function hermesPrompt(task: TaskWithRepo, rt: LlmRuntime, resume = false): string {
+const NO_CHANGE_RETRY_INSTRUCTIONS =
+  'Your previous attempt finished without changing a single file — no edits, nothing to commit. The task is NOT done. Inspect the repository, identify the concrete change the task requires, and implement it now (write/edit the relevant files). Do not stop until the workdir has real changes.';
+
+function hermesPrompt(task: TaskWithRepo, rt: LlmRuntime, resume = false, attempt = 1): string {
   return [
     `# Task\n${task.title}`,
     task.prompt ? `\n${task.prompt}` : '',
@@ -19,6 +22,7 @@ function hermesPrompt(task: TaskWithRepo, rt: LlmRuntime, resume = false): strin
       ? ['', 'Additional instructions from the repository owner:', rt.cfg.systemPromptExtra]
       : []),
     ...(resume ? ['', RESUME_INSTRUCTIONS] : []),
+    ...(attempt > 1 ? ['', NO_CHANGE_RETRY_INSTRUCTIONS] : []),
     '',
     HERMES_INSTRUCTIONS,
   ].join('\n');
@@ -30,11 +34,12 @@ export async function runHermesForTask(
   workdir: string,
   secrets: string[],
   resume: boolean,
+  attempt = 1,
 ): Promise<void> {
   await logEvent(task.id, resume ? 'resuming hermes agent' : 'running hermes agent');
   await runHermesTask({
     workdir,
-    prompt: hermesPrompt(task, rt, resume),
+    prompt: hermesPrompt(task, rt, resume, attempt),
     llm: {
       baseUrl: rt.cfg.baseUrl,
       apiKey: rt.apiKey,
