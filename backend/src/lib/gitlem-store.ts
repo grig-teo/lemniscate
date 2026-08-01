@@ -2,13 +2,10 @@
 //
 // One GitlemRepository row holds the whole repository state as a JSON
 // document (the `doc` column): branches, files, pull requests, CI runs.
-// This module is the single home for that document's shape, its pure
-// operations, and the shared prisma-backed access helpers (ownership
-// resolution + the read-modify-write doc transaction) — routes and the
-// provider clients never mutate the document inline (AGENTS.md §6).
-
-import type { GitlemRepository, GitlemUser } from '@prisma/client';
-import { prisma } from './prisma.js';
+// This module is the single home for that document's shape and its pure
+// operations. The prisma-backed access helpers (ownership resolution + the
+// read-modify-write doc transaction) live in gitlem-doc-access.ts — routes
+// and the provider clients never mutate the document inline (AGENTS.md §6).
 
 export const GITLEM_DEFAULT_BRANCH = 'main';
 export const GITLEM_MAX_FILE_CHARS = 200_000;
@@ -257,54 +254,4 @@ export function startCiRun(doc: GitlemRepoDoc, branchName: string): GitlemCiRun 
   // The JSON doc is unbounded otherwise — keep only the latest entries.
   doc.ciRuns.length = Math.min(doc.ciRuns.length, GITLEM_MAX_HISTORY);
   return run;
-}
-
-/** Error outcome of a doc mutation: abort the write and let the caller report it. */
-export interface GitlemDocError {
-  error: string;
-  status: number;
-}
-
-export function isGitlemDocError(outcome: unknown): outcome is GitlemDocError {
-  return typeof outcome === 'object' && outcome !== null && 'error' in outcome;
-}
-
-/**
- * The ONE read → parse → mutate → stringify → write transaction for a
- * repo's JSON document (shared by the routes and both provider clients).
- * The callback returns the outcome payload, or a GitlemDocError to abort
- * without writing; a thrown error rolls the transaction back.
- */
-export async function mutateGitlemRepoDoc<T>(
-  repoId: string,
-  mutate: (doc: GitlemRepoDoc) => T | GitlemDocError,
-): Promise<T | GitlemDocError> {
-  return prisma.$transaction(async (tx) => {
-    const current = await tx.gitlemRepository.findUniqueOrThrow({ where: { id: repoId } });
-    const doc = parseGitlemDoc(current.doc);
-    const outcome = mutate(doc);
-    if (isGitlemDocError(outcome)) return outcome;
-    await tx.gitlemRepository.update({
-      where: { id: repoId },
-      data: { doc: JSON.stringify(doc) },
-    });
-    return outcome;
-  });
-}
-
-/**
- * Resolve '<username>/<name>' to the repository row owned by `account`,
- * failing closed (null) unless the username segment IS the account's own —
- * gitlem repos are per-account, so 'other-user/name' must never resolve to
- * the caller's same-named repo.
- */
-export async function findOwnedGitlemRepo(
-  account: Pick<GitlemUser, 'id' | 'username'>,
-  repoFullName: string,
-): Promise<GitlemRepository | null> {
-  const [username, name] = repoFullName.split('/');
-  if (username !== account.username || !name) return null;
-  return prisma.gitlemRepository.findUnique({
-    where: { ownerId_name: { ownerId: account.id, name } },
-  });
 }

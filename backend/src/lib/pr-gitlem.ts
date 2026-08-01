@@ -1,9 +1,9 @@
 import { decrypt } from './crypto.js';
+import { findOwnedGitlemRepo } from './gitlem-doc-access.js';
 import {
   closePullRequest,
   findBranch,
   findOpenPullRequest,
-  findOwnedGitlemRepo,
   findPullRequest,
   mergePullRequest,
   openPullRequest,
