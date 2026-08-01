@@ -41,7 +41,7 @@ function porcelainPath(line: string): string | null {
   if (trimmed === '') return null;
   const rest = trimmed.slice(2).trimStart();
   const renamed = rest.split(' -> ');
-  return unquote(renamed[renamed.length - 1]);
+  return unquote(renamed.at(-1) ?? rest);
 }
 
 // git quotes paths containing special chars; strip one layer of quotes.

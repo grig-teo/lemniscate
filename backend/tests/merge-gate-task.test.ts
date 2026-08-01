@@ -23,6 +23,7 @@ const mocks = vi.hoisted(() => ({
   commitAndPush: vi.fn(),
   git: vi.fn(),
   hasDirtyWorkdir: vi.fn(),
+  hasMeaningfulChanges: vi.fn(),
   logEvent: vi.fn(),
   persistTokenUsage: vi.fn(),
   recordJobFailure: vi.fn(),
@@ -56,6 +57,9 @@ vi.mock('../src/lib/agent-git.js', () => ({
   persistTokenUsage: mocks.persistTokenUsage,
   recordJobFailure: mocks.recordJobFailure,
   sanitizeRelativePath: (p: string) => p,
+}));
+vi.mock('../src/lib/workdir-changes.js', () => ({
+  hasMeaningfulChanges: mocks.hasMeaningfulChanges,
 }));
 vi.mock('../src/lib/agent-runtime.js', () => ({
   llmCall: mocks.llmCall,
@@ -186,7 +190,7 @@ beforeEach(() => {
   });
   mocks.mergePullRequest.mockResolvedValue({ merged: true, prUrl: 'https://pr/1', conflict: false });
   mocks.serviceFindUnique.mockResolvedValue(null);
-  mocks.hasDirtyWorkdir.mockResolvedValue(true);
+  mocks.hasMeaningfulChanges.mockResolvedValue(true);
   mocks.checkoutTaskBranch.mockResolvedValue(undefined);
   mocks.cloneRepository.mockResolvedValue({ emptyRepo: false });
   mocks.commitAndPush.mockResolvedValue(undefined);
