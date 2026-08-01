@@ -358,33 +358,43 @@ test('human review feedback produces a follow-up commit (poll fallback)', async 
   });
 
   await t.test('task events summarize the addressed review comment', async () => {
-    const eventsResponse = await api('GET', `/tasks/${task.id}/events`, { cookie: true });
-    assert.equal(eventsResponse.status, 200);
-    const lines = eventsResponse.json
-      .filter((event) => event.kind === 'log')
-      .map((event) => event.payload.line);
-    assert.ok(
-      lines.some((line) => /^addressing review comment rc-\d+ from @e2e-reviewer/.test(line)),
-      `console missing the "addressing" line; lines:\n${lines.join('\n')}`,
-    );
-    assert.ok(
-      lines.some((line) => line.includes('Stub LLM addressed the review comment')),
-      `console missing the fix summary; lines:\n${lines.join('\n')}`,
-    );
-    assert.ok(
-      lines.some((line) => /^addressed review comment rc-\d+$/.test(line)),
-      `console missing the "addressed" line; lines:\n${lines.join('\n')}`,
-    );
+    // Poll instead of reading once: the follow-up commit becomes visible via
+    // ls-remote the moment the remote acks the push, but the job writes its
+    // completion lines (pushed/addressed + notification) a few hundred ms
+    // later — a single read right after the head change races the job.
+    const deadline = Date.now() + REVIEW_TIMEOUT_MS;
+    let lines = [];
+    for (;;) {
+      const eventsResponse = await api('GET', `/tasks/${task.id}/events`, { cookie: true });
+      assert.equal(eventsResponse.status, 200);
+      lines = eventsResponse.json
+        .filter((event) => event.kind === 'log')
+        .map((event) => event.payload.line);
+      const done =
+        lines.some((line) => /^addressing review comment rc-\d+ from @e2e-reviewer/.test(line)) &&
+        lines.some((line) => line.includes('Stub LLM addressed the review comment')) &&
+        lines.some((line) => /^addressed review comment rc-\d+$/.test(line));
+      if (done) break;
+      assert.ok(Date.now() < deadline, `console missing the address-review lines; lines:\n${lines.join('\n')}`);
+      await sleep(1000);
+    }
   });
 
   await t.test('a "review addressed" notification was recorded', async () => {
-    const response = await api('GET', '/notifications', { cookie: true });
-    assert.equal(response.status, 200, `GET /notifications -> ${response.status}`);
-    const notification = response.json.notifications.find(
-      (entry) => entry.kind === 'review_addressed' && entry.taskId === task.id,
-    );
-    assert.ok(notification, `no review_addressed notification for task ${task.id}`);
-    assert.equal(notification.prUrl, EXPECTED_PR_URL);
+    const deadline = Date.now() + REVIEW_TIMEOUT_MS;
+    for (;;) {
+      const response = await api('GET', '/notifications', { cookie: true });
+      assert.equal(response.status, 200, `GET /notifications -> ${response.status}`);
+      const notification = response.json.notifications.find(
+        (entry) => entry.kind === 'review_addressed' && entry.taskId === task.id,
+      );
+      if (notification) {
+        assert.equal(notification.prUrl, EXPECTED_PR_URL);
+        return;
+      }
+      assert.ok(Date.now() < deadline, `no review_addressed notification for task ${task.id}`);
+      await sleep(1000);
+    }
   });
 });
 
