@@ -4,8 +4,10 @@
 
 import { execFile } from 'node:child_process';
 import { promises as fs } from 'node:fs';
+import * as fsSync from 'node:fs';
 import path from 'node:path';
 import { redactSecrets } from '../utils.js';
+import { checkpointEdit, lintAndMaybeRevert } from './edit-checkpoint.js';
 
 export const TOOL_MAX_OUTPUT_CHARS = 8_000;
 export const BASH_TIMEOUT_MS = 120_000;
@@ -16,6 +18,7 @@ export type ToolName =
   | 'write_file'
   | 'edit_file'
   | 'multi_edit'
+  | 'undo_edit'
   | 'bash'
   | 'grep'
   | 'glob'
@@ -25,7 +28,8 @@ export type ToolName =
   | 'graph_impact'
   | 'graph_neighbors'
   | 'graph_search'
-  | 'load_skill';
+  | 'load_skill'
+  | 'todo_write';
 
 export interface ToolResult {
   tool: ToolName;
@@ -37,12 +41,22 @@ export interface ToolResult {
 }
 
 // Returns the absolute path if it stays inside workdir; throws on escape.
+// Resolves symlinks so a symlink inside workdir pointing outside is rejected.
 export function jailPath(workdir: string, relPath: string): string {
-  const resolved = path.resolve(workdir, relPath);
-  if (!resolved.startsWith(path.resolve(workdir) + path.sep) && resolved !== path.resolve(workdir)) {
-    throw new Error(`path escape rejected: ${relPath}`);
+  const target = path.resolve(workdir, relPath);
+  const resolvedWorkdir = fsSync.realpathSync(workdir);
+  let resolvedTarget: string;
+  try {
+    resolvedTarget = fsSync.realpathSync(target);
+  } catch {
+    // File doesn't exist yet (write_file/edit creating a new file): resolve the
+    // parent dir and re-append the basename so new-file paths are still jailed.
+    resolvedTarget = fsSync.realpathSync(path.dirname(target)) + path.sep + path.basename(target);
   }
-  return resolved;
+  if (!resolvedTarget.startsWith(resolvedWorkdir + path.sep) && resolvedTarget !== resolvedWorkdir) {
+    throw new Error(`path escapes workdir: ${relPath}`);
+  }
+  return resolvedTarget;
 }
 
 export async function toolReadFile(
@@ -57,7 +71,10 @@ export async function toolReadFile(
   const content = await fs.readFile(absPath, 'utf8');
   const lines = content.split('\n');
   const start = offset ?? 0;
-  const end = limit !== undefined ? start + limit : undefined;
+  // Default cap (100 lines) so an unbounded read doesn't dump a whole file
+  // into the transcript; the agent can pass an explicit limit to read more.
+  const effectiveLimit = limit !== undefined ? limit : 100;
+  const end = start + effectiveLimit;
   const slice = lines.slice(start, end);
   const preview = slice.join('\n');
   return {
@@ -95,23 +112,20 @@ export async function toolEditFile(
 ): Promise<ToolResult> {
   const startMs = Date.now();
   const absPath = jailPath(workdir, relPath);
-  const existing = await fs.readFile(absPath, 'utf8');
-  if (!existing.includes(search)) {
-    const preview = existing.split('\n').filter(l => l.trim()).slice(0, 5).join('\n');
+  const originalContent = await fs.readFile(absPath, 'utf8');
+  if (!originalContent.includes(search)) {
+    const preview = originalContent.split('\n').filter(l => l.trim()).slice(0, 5).join('\n');
     throw new Error(`edit_file: search string not found in ${relPath}. First lines:\n${preview}`);
   }
-  const count = (existing.match(new RegExp(search.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g')) ?? []).length;
+  const count = (originalContent.match(new RegExp(search.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g')) ?? []).length;
   if (count !== 1) {
     throw new Error(`edit_file: expected exactly 1 match, found ${count} in ${relPath}`);
   }
-  const updated = existing.replace(search, () => replace);
+  const updated = originalContent.replace(search, () => replace);
+  // Checkpoint the pre-edit content so undo_edit can restore it.
+  checkpointEdit(relPath, originalContent);
   await fs.writeFile(absPath, updated, 'utf8');
-  return {
-    tool: 'edit_file',
-    title: relPath,
-    outputPreview: truncate(redactSecrets(`replaced 1 occurrence (${search.length} chars)`, secrets)),
-    durationMs: Date.now() - startMs,
-  };
+  return lintAndMaybeRevert(workdir, relPath, originalContent, updated, secrets, startMs, 'edit_file');
 }
 
 export async function toolMultiEdit(
@@ -122,7 +136,8 @@ export async function toolMultiEdit(
 ): Promise<ToolResult> {
   const startMs = Date.now();
   const absPath = jailPath(workdir, relPath);
-  let content = await fs.readFile(absPath, 'utf8');
+  const originalContent = await fs.readFile(absPath, 'utf8');
+  let content = originalContent;
   let applied = 0;
   for (const { search, replace } of edits) {
     if (!content.includes(search)) {
@@ -136,19 +151,15 @@ export async function toolMultiEdit(
     content = content.replace(search, replace);
     applied += 1;
   }
+  // Checkpoint the pre-edit content so undo_edit can restore it.
+  checkpointEdit(relPath, originalContent);
   await fs.writeFile(absPath, content, 'utf8');
-  return {
-    tool: 'multi_edit',
-    title: relPath,
-    outputPreview: truncate(redactSecrets(`applied ${applied} edit(s)`, secrets)),
-    durationMs: Date.now() - startMs,
-  };
+  return lintAndMaybeRevert(workdir, relPath, originalContent, content, secrets, startMs, 'multi_edit');
 }
 
-// Only true infrastructure failures (timeout, spawn error) are tool errors;
-// a non-zero exit (grep no-match, ls missing file, failing tests) is a normal
-// result the agent should see in the output and act on — not a consecutive
-// tool failure that counts toward MAX_TOOL_FAILURES.
+// Only true infra failures (timeout, spawn error) are tool errors; a non-zero
+// exit (grep no-match, missing file, failing tests) is a normal result the
+// agent should see and act on — not a consecutive failure toward MAX_TOOL_FAILURES.
 function isRealBashError(err: Error | null): boolean {
   if (!err) return false;
   const e = err as unknown as { killed?: boolean; signal?: string; code?: string | number };
@@ -163,14 +174,32 @@ export async function toolBash(
   secrets: string[] = [],
 ): Promise<ToolResult> {
   const startMs = Date.now();
+  // Circuit breaker: never run commands that would wipe the filesystem, the
+  // home dir, or raw block devices. Reject before execFile so the model gets
+  // an immediate, actionable error and can pick a targeted command instead.
+  const CATASTROPHIC = new RegExp(
+    '\\brm\\s+-rf?\\s+/(\\s|$)|\\brm\\s+-rf?\\s+~/(\\s|$)|\\bdd\\s+if=.*of=/(dev|sd|nvme|hd)',
+    'i',
+  );
+  if (CATASTROPHIC.test(command)) {
+    return {
+      tool: 'bash',
+      title: 'blocked',
+      durationMs: 0,
+      outputPreview:
+        'BLOCKED: this command matches a catastrophic pattern (rm -rf /, rm -rf ~, or dd to a device). Use a more targeted command.',
+      error: 'command blocked by circuit breaker',
+    };
+  }
   return new Promise((resolve) => {
     execFile(
       'bash',
       ['-c', command],
       { cwd: workdir, timeout: BASH_TIMEOUT_MS, maxBuffer: 16 * 1024 * 1024 },
       (err, stdout, stderr) => {
-        const combined = [stdout ?? '', stderr ?? ''].join('');
-        const capped = truncate(redactSecrets(combined, secrets));
+        const combined = stdout + (stderr ? `\n${stderr}` : '');
+        const output = combined.trim() || '(ran successfully, no output)';
+        const capped = truncate(redactSecrets(output, secrets));
         resolve({
           tool: 'bash',
           title: command.length > 80 ? `${command.slice(0, 80)}…` : command,
@@ -183,103 +212,17 @@ export async function toolBash(
   });
 }
 
-export async function toolGrep(
-  workdir: string,
-  pattern: string,
-  pathArg?: string,
-  globArg?: string,
-  secrets: string[] = [],
-): Promise<ToolResult> {
-  const startMs = Date.now();
-  const searchPath = pathArg ? jailPath(workdir, pathArg) : workdir;
-  const args = ['-n', '--color=never', pattern, searchPath];
-  if (globArg) args.push('--glob', globArg);
-  return new Promise((resolve) => {
-    execFile('rg', args, { cwd: workdir, timeout: 30_000 }, (err, stdout) => {
-      const preview = truncate(redactSecrets(stdout ?? '', secrets));
-      resolve({
-        tool: 'grep',
-        title: `grep ${pattern}${pathArg ? ` in ${pathArg}` : ''}`,
-        outputPreview: preview || '(no matches)',
-        durationMs: Date.now() - startMs,
-        // exit 1 (no matches) is not an error; only timeout/spawn failures are
-        error: err && typeof err.code === 'string' && !stdout ? err.message : undefined,
-      });
-    });
-  });
-}
-
-export async function toolGlob(
-  workdir: string,
-  pattern: string,
-  secrets: string[] = [],
-): Promise<ToolResult> {
-  const startMs = Date.now();
-  return new Promise((resolve) => {
-    execFile('find', ['.', '-name', pattern], { cwd: workdir, maxBuffer: 1_000_000 }, (err, stdout) => {
-      let results: string[] = [];
-      if (!err && stdout) {
-        results = stdout.split('\n').filter(Boolean).slice(0, GLOB_MAX_RESULTS);
-      }
-      const preview = truncate(results.join('\n'));
-      resolve({
-        tool: 'glob',
-        title: `glob ${pattern}`,
-        outputPreview: preview || '(no matches)',
-        durationMs: Date.now() - startMs,
-      });
-    });
-  });
-}
-
-export async function toolListDir(
-  workdir: string,
-  relPath: string,
-  secrets: string[] = [],
-): Promise<ToolResult> {
-  const startMs = Date.now();
-  const absPath = relPath ? jailPath(workdir, relPath) : workdir;
-  const entries = await fs.readdir(absPath, { withFileTypes: true });
-  const lines = entries
-    .sort((a, b) => (a.isDirectory() === b.isDirectory() ? a.name.localeCompare(b.name) : a.isDirectory() ? -1 : 1))
-    .map((e) => `${e.isDirectory() ? '📁' : '📄'} ${e.name}`)
-    .slice(0, 200);
-  return {
-    tool: 'list_dir',
-    title: relPath || '.',
-    outputPreview: truncate(redactSecrets(lines.join('\n'), secrets)),
-    durationMs: Date.now() - startMs,
-  };
-}
-
-// DuckDuckGo HTML search — see web-search.ts.
-export async function toolWebSearch(
-  query: string,
-  secrets: string[] = [],
-): Promise<ToolResult> {
-  const startMs = Date.now();
-  try {
-    const { duckDuckGoSearch, formatWebSearchResults } = await import('./web-search.js');
-    const hits = await duckDuckGoSearch(query);
-    return {
-      tool: 'web_search',
-      title: query,
-      outputPreview: truncate(redactSecrets(formatWebSearchResults(query, hits), secrets)),
-      durationMs: Date.now() - startMs,
-    };
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    return {
-      tool: 'web_search',
-      title: query,
-      outputPreview: truncate(redactSecrets(`web_search failed: ${msg}`, secrets)),
-      durationMs: Date.now() - startMs,
-      error: msg,
-    };
-  }
-}
-
 export function truncate(text: string, maxChars: number = TOOL_MAX_OUTPUT_CHARS): string {
   if (text.length <= maxChars) return text;
-  return `${text.slice(0, maxChars)}\n… [truncated at ${maxChars} chars]`;
+  // Keep a head and a tail so both the start of a log and the final error
+  // lines (which usually carry the actionable failure) survive truncation.
+  const head = Math.floor(maxChars * 0.35);
+  const tail = maxChars - head - 20;
+  return `${text.slice(0, head)}\n… [truncated] …\n${text.slice(-tail)}`;
 }
+
+// Public API re-exports: these tools live in split modules but are part of the
+// lemcore tools surface, so existing importers can keep using `tools.js`.
+export { toolGrep, toolGlob, toolListDir, toolWebSearch } from './explore-tools.js';
+export { toolUndoEdit } from './edit-checkpoint.js';
+export { toolTodoWrite, getTodoList, setTodoList, resetTodoList } from './todo-store.js';
