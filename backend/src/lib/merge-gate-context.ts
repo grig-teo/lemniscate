@@ -14,4 +14,5 @@ export interface GateContext {
   cloneUrl: string;
   secrets: string[];
   auth: GitAuth;
+  failingChecks?: string[];
 }

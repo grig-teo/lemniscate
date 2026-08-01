@@ -265,11 +265,15 @@ export function buildHermesCiFixPrompt(input: {
   baseBranch: string;
   headBranch: string;
   systemPromptExtra?: string | null;
+  failingChecks?: string[];
 }): string {
   return [
     `# Task\n${input.taskTitle}`,
     '',
     `The CI checks on the pull request branch '${input.headBranch}' (target '${input.baseBranch}') are FAILING. The branch must not merge until they pass.`,
+    ...(input.failingChecks?.length
+      ? [`\nThe following CI checks are failing: ${input.failingChecks.join(', ')}.`]
+      : []),
     '',
     'The current directory is a clone of the repository with the PR branch checked out.',
     '1. Find what CI runs: inspect the workflow/pipeline config (.github/workflows, .gitlab-ci.yml, …) and the project scripts.',

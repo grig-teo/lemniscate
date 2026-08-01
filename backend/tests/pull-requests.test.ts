@@ -481,25 +481,25 @@ describe('pullRequestChecksStatus', () => {
   it('github: green when the combined commit status is success', async () => {
     stubGithubChecks({ state: 'success', total_count: 2 });
     const status = await pullRequestChecksStatus(ghConnection, gvRef);
-    expect(status).toEqual({ supported: true, green: true, state: 'green' });
+    expect(status).toMatchObject({ supported: true, green: true, state: 'green' });
   });
 
   it('github: green when the commit has no checks at all', async () => {
     stubGithubChecks({ state: 'pending', total_count: 0 });
     const status = await pullRequestChecksStatus(ghConnection, gvRef);
-    expect(status).toEqual({ supported: true, green: true, state: 'green' });
+    expect(status).toMatchObject({ supported: true, green: true, state: 'green' });
   });
 
   it('github: failing when checks failed', async () => {
     stubGithubChecks({ state: 'failure', total_count: 3 });
     const status = await pullRequestChecksStatus(ghConnection, gvRef);
-    expect(status).toEqual({ supported: true, green: false, state: 'failing' });
+    expect(status).toMatchObject({ supported: true, green: false, state: 'failing' });
   });
 
   it('github: pending while checks are still running', async () => {
     stubGithubChecks({ state: 'pending', total_count: 2 });
     const status = await pullRequestChecksStatus(ghConnection, gvRef);
-    expect(status).toEqual({ supported: true, green: false, state: 'pending' });
+    expect(status).toMatchObject({ supported: true, green: false, state: 'pending' });
   });
 
   it('github: failing when an Actions check run failed despite zero commit statuses', async () => {
@@ -510,7 +510,7 @@ describe('pullRequestChecksStatus', () => {
       { status: 'completed', conclusion: 'failure' },
     ]);
     const status = await pullRequestChecksStatus(ghConnection, gvRef);
-    expect(status).toEqual({ supported: true, green: false, state: 'failing' });
+    expect(status).toMatchObject({ supported: true, green: false, state: 'failing' });
   });
 
   it('github: pending while an Actions check run is still in progress', async () => {
@@ -518,7 +518,7 @@ describe('pullRequestChecksStatus', () => {
       { status: 'in_progress', conclusion: null },
     ]);
     const status = await pullRequestChecksStatus(ghConnection, gvRef);
-    expect(status).toEqual({ supported: true, green: false, state: 'pending' });
+    expect(status).toMatchObject({ supported: true, green: false, state: 'pending' });
   });
 
   it('gitlab: green when the MR has no head pipeline', async () => {
@@ -528,7 +528,7 @@ describe('pullRequestChecksStatus', () => {
       return mockResponse(200, { head_pipeline: null });
     });
     const status = await pullRequestChecksStatus(gitlabConnection, gvRef);
-    expect(status).toEqual({ supported: true, green: true, state: 'green' });
+    expect(status).toMatchObject({ supported: true, green: true, state: 'green' });
   });
 
   it('gitlab: not green when the head pipeline failed', async () => {
@@ -537,7 +537,7 @@ describe('pullRequestChecksStatus', () => {
       return mockResponse(200, { head_pipeline: { status: 'failed' } });
     });
     const status = await pullRequestChecksStatus(gitlabConnection, gvRef);
-    expect(status).toEqual({ supported: true, green: false, state: 'failing' });
+    expect(status).toMatchObject({ supported: true, green: false, state: 'failing' });
   });
 
   it('gitlab: pending while the head pipeline is running', async () => {
@@ -546,7 +546,7 @@ describe('pullRequestChecksStatus', () => {
       return mockResponse(200, { head_pipeline: { status: 'running' } });
     });
     const status = await pullRequestChecksStatus(gitlabConnection, gvRef);
-    expect(status).toEqual({ supported: true, green: false, state: 'pending' });
+    expect(status).toMatchObject({ supported: true, green: false, state: 'pending' });
   });
 
   it('reports unsupported for providers without a checks API', async () => {

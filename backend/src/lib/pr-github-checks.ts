@@ -13,13 +13,14 @@ import {
 const githubCombinedStatusSchema = z.object({ state: z.string(), total_count: z.number() });
 
 const githubCheckRunsSchema = z.object({
-  check_runs: z.array(z.object({ status: z.string(), conclusion: z.string().nullable() })),
+  check_runs: z.array(z.object({ name: z.string().optional(), status: z.string(), conclusion: z.string().nullable() })),
 });
 
 const githubWorkflowRunsSchema = z.object({
   workflow_runs: z.array(
     z.object({
       workflow_id: z.number(),
+      name: z.string().optional(),
       status: z.string(),
       conclusion: z.string().nullable(),
     }),
@@ -32,18 +33,34 @@ export interface GitHubCombinedStatus {
 }
 
 export interface GitHubCheckRun {
+  name?: string;
   status: string;
   conclusion: string | null;
 }
 
 export interface GitHubWorkflowRun {
   workflow_id: number;
+  name?: string;
   status: string;
   conclusion: string | null;
 }
 
 // Conclusions that do not block a merge (GitHub Actions docs).
 const CHECK_RUN_OK_CONCLUSIONS = new Set(['success', 'neutral', 'skipped']);
+
+function collectFailingCheckNames(
+  checkRuns: GitHubCheckRun[],
+  workflowRuns: GitHubWorkflowRun[],
+): string[] {
+  const names: string[] = [];
+  for (const run of checkRuns) {
+    if (checkRunOutcome(run) === 'failing') names.push(run.name ?? 'check');
+  }
+  for (const run of workflowRuns) {
+    if (workflowRunOutcome(run) === 'failing') names.push(run.name ?? `workflow ${run.workflow_id}`);
+  }
+  return [...new Set(names)].slice(0, 20);
+}
 
 function checkRunOutcome(run: GitHubCheckRun): 'pending' | 'failing' | 'ok' {
   if (run.status !== 'completed') return 'pending';
@@ -129,5 +146,5 @@ export async function githubChecksStatus(
     ? latestRunsPerWorkflow(githubWorkflowRunsSchema.parse(workflowRunsRes.body).workflow_runs)
     : [];
   const state = githubChecksState(combined, check_runs, workflowRuns);
-  return { supported: true, green: state === 'green', state };
+  return { supported: true, green: state === 'green', state, failingChecks: collectFailingCheckNames(check_runs, workflowRuns) };
 }

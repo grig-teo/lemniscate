@@ -56,6 +56,7 @@ export interface PrChecksStatus {
   green: boolean;
   /** Three-way gate state: pending re-checks later, failing triggers a CI fix. */
   state: 'green' | 'pending' | 'failing';
+  failingChecks?: string[];
 }
 
 export type PrState = 'open' | 'merged' | 'closed';
