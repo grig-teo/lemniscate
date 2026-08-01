@@ -145,6 +145,23 @@ export function readFile(
   return findBranch(doc, branchName)?.files.find((file) => file.path === path);
 }
 
+/**
+ * Replace one branch's whole file tree with `files`. A git push defines the
+ * full authoritative state of the pushed branch, so files absent from `files`
+ * are removed (unlike upsertFile, which only adds/updates). Creates the branch
+ * when missing. PRs, CI runs, and the PR/run counters are left untouched — a
+ * push never rewrites repo history metadata. (Single home for this op so the
+ * ingest path doesn't mutate the doc inline — AGENTS.md §6.)
+ */
+export function replaceBranchTree(
+  doc: GitlemRepoDoc,
+  branchName: string,
+  files: GitlemFile[],
+): void {
+  const branch = ensureBranch(doc, branchName);
+  branch.files = files.map((file) => ({ path: file.path, content: file.content }));
+}
+
 export function openPullRequest(
   doc: GitlemRepoDoc,
   input: { title: string; body: string; head: string; base: string },

@@ -94,6 +94,23 @@ describe('git smart-HTTP transport', () => {
     expect(response.body).toContain('refs/heads/main');
   });
 
+  it('advertises git-receive-pack so authenticated owners can push', async () => {
+    mockRepo();
+    const gitDir = await materializeGitlemRepo('alice', 'demo');
+    materialized.push(gitDir!);
+
+    const app = buildApp();
+    const response = await app.inject({
+      method: 'GET',
+      url: '/alice/demo.git/info/refs?service=git-receive-pack',
+      headers: { authorization: AUTH },
+    });
+    // receive-pack is enabled on the materialized bare repo (gitlem-clone.ts),
+    // so the advertisement returns 200 — without it `git push` 403s.
+    expect(response.statusCode).toBe(200);
+    expect(response.headers['content-type']).toContain('git-receive-pack-advertisement');
+  });
+
   it('rejects requests without valid Basic credentials', async () => {
     mockRepo();
     const app = buildApp();

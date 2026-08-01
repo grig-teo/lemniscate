@@ -112,4 +112,19 @@ describe('materializeGitlemRepo', () => {
     materialized.push(first!);
     expect(second).toBe(first);
   });
+
+  it('enables receive-pack and installs the post-receive hook + repo id', async () => {
+    mockRepo();
+    const gitDir = await materializeGitlemRepo('alice', 'demo');
+    materialized.push(gitDir!);
+
+    // receive-pack must be ON so `git push` is not rejected with 403.
+    const receivepack = execFileSync('git', ['-C', gitDir!, 'config', 'http.receivepack']).toString().trim();
+    expect(receivepack).toBe('true');
+    // The post-receive hook ingests pushes back into the JSON doc.
+    const hook = execFileSync('cat', [`${gitDir}/hooks/post-receive`]).toString();
+    expect(hook).toContain('gitlem-ingest-hook');
+    // The repo id the hook reads so it writes to the right doc.
+    expect(execFileSync('cat', [`${gitDir}/LEMNISCATE_REPO_ID`]).toString()).toBe('r-1');
+  });
 });
