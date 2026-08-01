@@ -111,7 +111,7 @@ export function useImproveTask() {
  * only in the action segment.
  */
 function useTaskAction(
-  action: 'rerun' | 'cancel' | 'archive' | 'unarchive' | 'close-pr' | 'review' | 'merge',
+  action: 'rerun' | 'cancel' | 'archive' | 'unarchive' | 'close-pr' | 'review' | 'merge' | 'backlog',
 ) {
   const invalidate = useInvalidator(['tasks'], ['task']);
   return useMutation({
@@ -161,6 +161,11 @@ export function useRerunTask() {
 /** Stop a pending/queued/running task. */
 export function useCancelTask() {
   return useTaskAction('cancel');
+}
+
+/** POST /api/tasks/:id/backlog — drag a card back to the backlog (pending). */
+export function useBacklogTask() {
+  return useTaskAction('backlog');
 }
 
 /** Close a PR and delete its branch from the UI (awaiting_review tasks only). */

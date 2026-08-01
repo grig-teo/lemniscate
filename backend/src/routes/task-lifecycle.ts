@@ -95,6 +95,25 @@ export function rerunBlocker(task: { status: string }): string | null {
   return null;
 }
 
+// Backlog-return eligibility for POST /tasks/:id/backlog (the Kanban drag-back
+// to "Prompts / Proposals"): a task can return to the backlog (pending) only
+// from an in-flight, non-terminal state. Terminal states are not resurrectable
+// into the backlog, and awaiting_plan_approval is a distinct approval flow.
+const BACKLOG_RETURNABLE_STATUSES = [
+  'pending',
+  'queued',
+  'running',
+  'awaiting_review',
+  'reviewing_code',
+] as const;
+
+export function backlogBlocker(task: { status: string }): string | null {
+  if (!(BACKLOG_RETURNABLE_STATUSES as readonly string[]).includes(task.status)) {
+    return `task is ${task.status}, not in an in-flight state`;
+  }
+  return null;
+}
+
 // Mid-run model-switch eligibility for POST /tasks/:id/model: a queued run
 // resolves the new config id at start; a running / reviewing_code run picks
 // it up between LLM calls (applyPendingModelSwitch in agent-runtime.ts).

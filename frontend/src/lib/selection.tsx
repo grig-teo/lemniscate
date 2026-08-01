@@ -48,6 +48,10 @@ interface WorkspaceSelectionValue {
   openGitlemGrid: () => void;
   openGitlemRepo: (name: string) => void;
   closeGitlemView: () => void;
+  /** Repository whose Kanban task board is open in the center pane. */
+  taskBoardRepoId: string | null;
+  openTaskBoard: (repoId: string) => void;
+  closeTaskBoard: () => void;
   /** Live status from SSE `status` events; overrides selectedTask.status. */
   liveStatus: string | null;
   setLiveStatus: (status: string | null) => void;
@@ -71,6 +75,7 @@ export function WorkspaceSelectionProvider({ children }: { children: React.React
     readPersisted<string | null>(SELECTED_SERVICE_STORAGE_KEY, null),
   );
   const [gitlemView, setGitlemView] = React.useState<null | 'grid' | string>(null);
+  const [taskBoardRepoId, setTaskBoardRepoId] = React.useState<string | null>(null);
 
   const selectTask = React.useCallback((task: SelectedTask | null) => {
     setSelectedTask(task);
@@ -133,8 +138,8 @@ export function WorkspaceSelectionProvider({ children }: { children: React.React
     }
   }, []);
 
-  // The gitlem grid/detail replaces the console — clear the other pane
-  // selections so only one center-pane view is active at a time.
+  // A center-pane view (gitlem grid/detail, task board) replaces the console —
+  // clear the other pane selections so only one is active at a time.
   const clearOtherPanes = React.useCallback(() => {
     setSelectedTask(null);
     writePersisted(SELECTED_TASK_STORAGE_KEY, null);
@@ -144,6 +149,8 @@ export function WorkspaceSelectionProvider({ children }: { children: React.React
     setSelectedServiceId(null);
     writePersisted(SELECTED_SERVICE_STORAGE_KEY, null);
     setPrReviewRepoId(null);
+    setGitlemView(null);
+    setTaskBoardRepoId(null);
   }, []);
   const openGitlemGrid = React.useCallback(() => {
     clearOtherPanes();
@@ -157,6 +164,14 @@ export function WorkspaceSelectionProvider({ children }: { children: React.React
     [clearOtherPanes],
   );
   const closeGitlemView = React.useCallback(() => setGitlemView(null), []);
+  const openTaskBoard = React.useCallback(
+    (repoId: string) => {
+      clearOtherPanes();
+      setTaskBoardRepoId(repoId);
+    },
+    [clearOtherPanes],
+  );
+  const closeTaskBoard = React.useCallback(() => setTaskBoardRepoId(null), []);
 
   const value = React.useMemo<WorkspaceSelectionValue>(
     () => ({
@@ -179,6 +194,9 @@ export function WorkspaceSelectionProvider({ children }: { children: React.React
       openGitlemGrid,
       openGitlemRepo,
       closeGitlemView,
+      taskBoardRepoId,
+      openTaskBoard,
+      closeTaskBoard,
       liveStatus,
       setLiveStatus,
     }),
@@ -202,6 +220,9 @@ export function WorkspaceSelectionProvider({ children }: { children: React.React
       openGitlemGrid,
       openGitlemRepo,
       closeGitlemView,
+      taskBoardRepoId,
+      openTaskBoard,
+      closeTaskBoard,
       liveStatus,
       setLiveStatus,
     ],
