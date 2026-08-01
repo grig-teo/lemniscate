@@ -27,6 +27,15 @@ jobs:
         working-directory: backend
         run: npm ci
 
+      # Second safety net alongside Dependabot (.github/dependabot.yml): fails
+      # on high/critical advisories that Dependabot has not yet opened a PR
+      # for. The threshold matches the security-sensitive posture of this
+      # service (OAuth tokens, LLM keys, host Docker socket). Moderate and
+      # below do not fail the build.
+      - name: Audit dependencies (high/critical)
+        working-directory: backend
+        run: npm audit --audit-level=high
+
       - name: Validate Prisma schema
         working-directory: backend
         run: npx prisma validate
@@ -78,6 +87,13 @@ jobs:
       - name: Install dependencies
         working-directory: frontend
         run: npm ci
+
+      # Second safety net alongside Dependabot (.github/dependabot.yml): fails
+      # on high/critical advisories that Dependabot has not yet opened a PR
+      # for. Moderate and below do not fail the build.
+      - name: Audit dependencies (high/critical)
+        working-directory: frontend
+        run: npm audit --audit-level=high
 
       - name: Build (tsc --noEmit && vite build)
         working-directory: frontend

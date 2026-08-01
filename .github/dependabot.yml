@@ -1,0 +1,151 @@
+# Dependabot — automated dependency updates for Lemniscate.
+#
+# Security advisories always open immediately (Dependabot default); the
+# schedules below only govern *routine* (non-security) version bumps.
+# Each Dependabot PR runs the full path-filtered CI pipeline, so a broken
+# update is caught before merge — see .github/workflows/ci.yml.
+#
+# Coverage (8 entries):
+#   npm           backend/, frontend/, agent/, agent-tauri/
+#   gradle        android/    (libs.versions.toml)
+#   docker        backend/Dockerfile, frontend/Dockerfile
+#   github-actions /          (actions/*, dorny/paths-filter, gradle/actions)
+#
+# iOS Swift Package Manager deps are resolved by xcodegen at xcodebuild time,
+# so Dependabot cannot track them reliably — they remain manual (see
+# CONTRIBUTING.md "Dependency updates"). Schedules are staggered across a few
+# hours on Monday UTC to avoid a Monday-morning PR flood.
+
+version: 2
+
+updates:
+  # ── npm ecosystems ──────────────────────────────────────────────────────
+
+  - package-ecosystem: npm
+    directory: /backend/
+    schedule:
+      interval: weekly
+      day: monday
+      time: "02:00"
+      timezone: UTC
+    open-pull-requests-limit: 10
+    commit-message:
+      prefix: "chore(deps)"
+      prefix-development: "chore(dev-deps)"
+    groups:
+      minor-patch:
+        update-types:
+          - version-update:semver-minor
+          - version-update:semver-patch
+
+  - package-ecosystem: npm
+    directory: /frontend/
+    schedule:
+      interval: weekly
+      day: monday
+      time: "03:00"
+      timezone: UTC
+    open-pull-requests-limit: 10
+    commit-message:
+      prefix: "chore(deps)"
+      prefix-development: "chore(dev-deps)"
+    groups:
+      minor-patch:
+        update-types:
+          - version-update:semver-minor
+          - version-update:semver-patch
+
+  - package-ecosystem: npm
+    directory: /agent/
+    schedule:
+      interval: weekly
+      day: monday
+      time: "04:00"
+      timezone: UTC
+    open-pull-requests-limit: 10
+    commit-message:
+      prefix: "chore(deps)"
+      prefix-development: "chore(dev-deps)"
+    groups:
+      minor-patch:
+        update-types:
+          - version-update:semver-minor
+          - version-update:semver-patch
+
+  - package-ecosystem: npm
+    directory: /agent-tauri/
+    schedule:
+      interval: weekly
+      day: monday
+      time: "05:00"
+      timezone: UTC
+    open-pull-requests-limit: 10
+    commit-message:
+      prefix: "chore(deps)"
+      prefix-development: "chore(dev-deps)"
+    groups:
+      minor-patch:
+        update-types:
+          - version-update:semver-minor
+          - version-update:semver-patch
+
+  # ── gradle (Android) ────────────────────────────────────────────────────
+
+  - package-ecosystem: gradle
+    directory: /android/
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: UTC
+    open-pull-requests-limit: 10
+    commit-message:
+      prefix: "chore(deps)"
+      prefix-development: "chore(dev-deps)"
+    groups:
+      minor-patch:
+        update-types:
+          - version-update:semver-minor
+          - version-update:semver-patch
+
+  # ── docker ──────────────────────────────────────────────────────────────
+
+  - package-ecosystem: docker
+    directory: /backend/
+    schedule:
+      interval: weekly
+      day: monday
+      time: "07:00"
+      timezone: UTC
+    open-pull-requests-limit: 10
+    commit-message:
+      prefix: "chore(deps)"
+
+  - package-ecosystem: docker
+    directory: /frontend/
+    schedule:
+      interval: weekly
+      day: monday
+      time: "08:00"
+      timezone: UTC
+    open-pull-requests-limit: 10
+    commit-message:
+      prefix: "chore(deps)"
+
+  # ── github-actions ──────────────────────────────────────────────────────
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+      timezone: UTC
+    open-pull-requests-limit: 10
+    commit-message:
+      prefix: "chore(deps)"
+    groups:
+      minor-patch:
+        update-types:
+          - version-update:semver-minor
+          - version-update:semver-patch
