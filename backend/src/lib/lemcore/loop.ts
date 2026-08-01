@@ -18,6 +18,7 @@ import {
   shouldCompactTranscript,
 } from './loop-compact.js';
 import { classifyAssistantReply, EMPTY_REPLY_NUDGE } from './loop-reply.js';
+import { throwIfPaused } from '../task-pause.js';
 export {
   MAX_TURNS,
   MAX_TOOL_FAILURES,
@@ -128,6 +129,9 @@ export async function runLemcoreLoop(opts: LemcoreRunOptions): Promise<string> {
   // Stall watchdog: a hung provider aborts the run fast instead of pinning the slot.
   const perTurnTimeoutMs = turnTimeoutMs(opts);
   for (let turn = 0; turn < MAX_TURNS; turn++) {
+    // A paused run exits on the next turn boundary with the transcript
+    // saved, so resume replays it instead of starting over.
+    await throwIfPaused(taskId);
     if (Date.now() - startTime > wallClockCapMs) {
       throw new Error(`lemcore agent timed out after ${Math.round(wallClockCapMs / 1000)}s`);
     }
@@ -147,10 +151,8 @@ export async function runLemcoreLoop(opts: LemcoreRunOptions): Promise<string> {
     }
     const totalChars = messages.reduce((sum, m) => sum + m.content.length, 0);
     const estimatedTokens = Math.ceil(totalChars / 4);
-    // Budget enforcement only when the LLM config sets one (the runtime is
-    // seeded with the task's cumulative usage, so a configured budget spans
-    // the whole task). No implicit default — large tasks must not be
-    // killed by a hidden cap; the compaction cap bounds per-turn cost.
+    // Budget only when the config sets one (seeded with the task's
+    // cumulative usage, so it spans the whole task).
     if (rt.cfg.maxTokensPerRun != null && rt.usedTokens + estimatedTokens > rt.cfg.maxTokensPerRun) {
       throw new Error(
         `LLM token budget exceeded (${rt.usedTokens + estimatedTokens} > ${rt.cfg.maxTokensPerRun})`,

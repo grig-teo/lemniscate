@@ -1,7 +1,0 @@
-# Learnings (auto-loaded on future runs)
-
-- **Monorepo install:** `npm install` must run at the repo ROOT (workspaces: backend, lemcore), not per-package. Per-package `npm install` won't resolve `@types/node`/`tsc`/`vitest` for the backend.
-- **Backend typecheck:** `cd backend && npx prisma generate` must run before `npm run typecheck` (the generated Prisma client is gitignored). Migration files can add an enum value to the DB, but `prisma/schema.prisma`'s enum must be updated in the SAME PR or the generated client lacks the value and TS comparison fails (e.g. `TaskStatus` vs `'paused'`).
-- **TaskStatus enum gap:** migration `0041_task_status_paused` adds `'paused'` to the DB enum on main, but `prisma/schema.prisma`'s `enum TaskStatus` block does NOT list `paused` — so the generated Prisma client omits it. `backend/src/lib/task-pause.ts` (executor pause support, on main) compares against `'paused'` and fails typecheck until the schema enum is fixed.
-- **Backend route pattern:** task action handlers live in `backend/src/routes/task-action-handlers.ts` and lifecycle rules (blockers, update builders) in `task-lifecycle.ts` (single source of truth, AGENTS.md §6). Routes are registered in `tasks.ts`.
-- **Frontend mutation pattern:** `useTaskAction(action)` in `frontend/src/lib/queries/tasks.ts` is the single "POST /api/tasks/:id/<action> then invalidate" helper — pause/resume reuse it.

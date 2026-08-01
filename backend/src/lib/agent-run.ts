@@ -41,6 +41,7 @@ import { buildTaskAttachmentFiles } from './repo-init.js';
 import { loadAgentsMdTemplate, loadTaskSkills } from './task-skills.js';
 import { setTaskStatus } from './task-events.js';
 import { claimTaskForRun, RUN_CLAIMABLE_STATUSES } from './task-claim.js';
+import { TaskPausedError } from './task-pause.js';
 import {
   NoChangesProducedError,
   handleNoChangesProduced,
@@ -370,6 +371,12 @@ export async function runTask(taskId: string): Promise<void> {
       logger.error({ taskId, err }, 'run-task: task_completed notification failed');
     });
   } catch (err) {
+    if (err instanceof TaskPausedError) {
+      // Status is already 'paused' (set by the pause route); the saved
+      // transcript + kept workdir let resume replay the run. Not a failure.
+      await logEvent(taskId, 'paused by user — resume continues from the saved transcript').catch(() => {});
+      return;
+    }
     if (err instanceof NoChangesProducedError) {
       // Status/errorCode were already set when the last attempt gave up; log
       // the failure without clobbering them via the generic classifier.
@@ -387,17 +394,15 @@ export async function runTask(taskId: string): Promise<void> {
       rt?.usedTokens ?? task.llmTokensUsed,
       rt ? tokenSplit(rt) : undefined,
     );
-    // The workdir outlives the run only while the PR awaits review/merge —
-    // it is removed once the task is done (merged), failed, or cancelled.
-    if (await isAwaitingReview(taskId)) {
+    // The workdir outlives the run only while the PR awaits review/merge or
+    // the task is paused (resume replays the transcript from it); it is
+    // removed once the task is done (merged), failed, or cancelled.
+    const status = (await prisma.task.findUnique({ where: { id: taskId }, select: { status: true } }))
+      ?.status;
+    if (status === 'awaiting_review' || status === 'reviewing_code') {
       await logEvent(taskId, 'workdir kept until the pull request is merged').catch(() => {});
-    } else {
+    } else if (status !== 'paused') {
       await cleanupWorkdir(workdir, taskId);
     }
   }
-}
-
-async function isAwaitingReview(taskId: string): Promise<boolean> {
-  const task = await prisma.task.findUnique({ where: { id: taskId }, select: { status: true } });
-  return task?.status === 'awaiting_review' || task?.status === 'reviewing_code';
 }

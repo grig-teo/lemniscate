@@ -186,6 +186,34 @@ export function buildRerunUpdate() {
   };
 }
 
+// Pause eligibility for POST /tasks/:id/pause: only an in-flight task the
+// executor is actively working (queued/about to run, running, or
+// reviewing_code) can be put on hold — terminal/parked states have no live
+// run to pause. The executor loop detects the flip on its next turn
+// boundary / cancel-poll tick and exits cleanly (TaskPausedError).
+const PAUSABLE_STATUSES = ['queued', 'running', 'reviewing_code'] as const;
+
+export function pauseBlocker(task: { status: string }): string | null {
+  if (!(PAUSABLE_STATUSES as readonly string[]).includes(task.status)) {
+    return `task is ${task.status}, not pausable`;
+  }
+  return null;
+}
+
+// Resume is the inverse of pause: only a task that was paused can be
+// resumed — anything else has no paused run to replay.
+export function resumeBlocker(task: { status: string }): string | null {
+  if (task.status !== 'paused') return `task is ${task.status}, not paused`;
+  return null;
+}
+
+// Resume re-queues the task but keeps the branch and PR link intact — the
+// workdir is preserved across pause, so the resumed run continues from the
+// saved transcript, not from scratch (contrast with buildRerunUpdate).
+export function buildResumeUpdate() {
+  return { status: 'queued' as const };
+}
+
 // Async part of the attachment update: slugs are resolved to the stored
 // configs/contents so a later library edit can't retroactively change the run.
 export async function resolveAttachmentUpdate(body: PatchBody, userId?: string) {

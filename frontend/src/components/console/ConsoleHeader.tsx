@@ -1,6 +1,6 @@
-import { ExternalLink, GitBranch, Loader2, Play, Smartphone, Square, X } from 'lucide-react';
+import { ExternalLink, GitBranch, Loader2, Pause, Play, Smartphone, Square, X } from 'lucide-react';
 
-import { useCancelTask, useStartTask } from '@/lib/hooks';
+import { useCancelTask, usePauseTask, useResumeTask, useStartTask } from '@/lib/hooks';
 import { useWorkspaceSelection, type SelectedTask } from '@/lib/selection';
 import type { ChangeSummary } from '@/lib/session-changes';
 import { isSafeHttpUrl } from '@/lib/url';
@@ -10,6 +10,7 @@ import { DiffStat } from '@/components/console/ChangesDialog';
 import { Button } from '@/components/ui/button';
 
 const CANCELLABLE = new Set(['queued', 'running']);
+const PAUSABLE = new Set(['queued', 'running', 'reviewing_code']);
 const RUNNABLE_ON_DEVICE = new Set(['done', 'awaiting_review', 'reviewing_code']);
 
 /** Live token consumption for the header badge, polled by the console pane. */
@@ -67,6 +68,8 @@ export function ConsoleHeader({
   const { selectTask } = useWorkspaceSelection();
   const cancelTask = useCancelTask();
   const startTask = useStartTask();
+  const pauseTask = usePauseTask();
+  const resumeTask = useResumeTask();
   return (
     <div className="flex items-center gap-3 border-b px-4 py-2">
       <span className="min-w-0 flex-1 truncate text-sm font-medium" title={task.title}>
@@ -115,6 +118,40 @@ export function ConsoleHeader({
           onClick={() => startTask.mutate(task.id)}
         >
           {startTask.isPending ? (
+            <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+          ) : (
+            <Play className="h-3.5 w-3.5" aria-hidden />
+          )}
+        </Button>
+      )}
+      {PAUSABLE.has(status) && (
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-6 w-6 shrink-0"
+          aria-label={`Pause ${task.title}`}
+          title="Pause this process — resume continues from the saved transcript"
+          disabled={pauseTask.isPending}
+          onClick={() => pauseTask.mutate(task.id)}
+        >
+          {pauseTask.isPending ? (
+            <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+          ) : (
+            <Pause className="h-3.5 w-3.5" aria-hidden />
+          )}
+        </Button>
+      )}
+      {status === 'paused' && (
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-6 w-6 shrink-0"
+          aria-label={`Resume ${task.title}`}
+          title="Resume this process"
+          disabled={resumeTask.isPending}
+          onClick={() => resumeTask.mutate(task.id)}
+        >
+          {resumeTask.isPending ? (
             <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
           ) : (
             <Play className="h-3.5 w-3.5" aria-hidden />

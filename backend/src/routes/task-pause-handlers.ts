@@ -1,5 +1,5 @@
 import type { FastifyReply, FastifyRequest } from 'fastify';
-import { enqueueRunTask } from '../lib/proposal-scheduler.js';
+import { enqueueReviewTask, enqueueRunTask } from '../lib/proposal-scheduler.js';
 import { prisma } from '../lib/prisma.js';
 import { publishTaskEvent } from '../lib/task-events.js';
 import { authenticatedUserId } from '../plugins/auth.js';
@@ -38,16 +38,18 @@ export async function pauseTask(request: FastifyRequest, reply: FastifyReply) {
   return { task: updated };
 }
 
-// Resume a paused task: re-queue and re-enqueue. Enqueued before the status
-// flip (same anti-stranding rule as start/rerun); the resume update keeps the
-// branch/PR intact so the run continues from the saved workdir, not from scratch.
+// Resume a paused task: re-queue and re-enqueue. A task paused mid-review
+// (PR already open) re-enqueues the review; anything else re-enqueues the
+// run. Enqueued before the status flip (same anti-stranding rule as
+// start/rerun); the resume update keeps the branch/PR intact so the run
+// continues from the saved workdir, not from scratch.
 export async function resumeTask(request: FastifyRequest, reply: FastifyReply) {
   const userId = authenticatedUserId(request);
   const params = parseOrReply(idParamsSchema, request.params, reply, 'Invalid task id');
   if (params === null) return;
   const task = await prisma.task.findFirst({
     where: ownedTaskWhere(userId, params.id),
-    select: { id: true, status: true },
+    select: { id: true, status: true, prUrl: true },
   });
   if (!task) {
     return reply.code(404).send({ error: 'Task not found' });
@@ -57,7 +59,8 @@ export async function resumeTask(request: FastifyRequest, reply: FastifyReply) {
     return reply.code(400).send({ error: blocker });
   }
 
-  await enqueueRunTask(task.id);
+  if (task.prUrl) await enqueueReviewTask(task.id);
+  else await enqueueRunTask(task.id);
   const updated = await prisma.task.update({
     where: { id: task.id },
     data: buildResumeUpdate(),
