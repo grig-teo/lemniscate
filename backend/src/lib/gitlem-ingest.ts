@@ -1,12 +1,8 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import { mutateGitlemRepoDoc } from './gitlem-doc-access.js';
 import { logger } from './logger.js';
-import {
-  GITLEM_MAX_FILE_CHARS,
-  mutateGitlemRepoDoc,
-  replaceBranchTree,
-  type GitlemFile,
-} from './gitlem-store.js';
+import { GITLEM_MAX_FILE_CHARS, replaceBranchTree, type GitlemFile } from './gitlem-store.js';
 
 // Push ingestion for gitlem: a `git push` against a materialized bare repo
 // (receive-pack now enabled in gitlem-clone.ts) writes objects into that bare
