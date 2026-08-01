@@ -1,6 +1,7 @@
 import type { FastifyPluginAsync } from 'fastify';
 import { requireAuth } from '../plugins/auth.js';
 import { createTask, getTask, listTasks } from './task-crud-handlers.js';
+import { returnToBacklog } from './task-backlog-handler.js';
 import {
   archiveTask,
   cancelTask,
@@ -41,6 +42,7 @@ const tasksRoutes: FastifyPluginAsync = async (app) => {
   app.post('/tasks/:id/improve', improveTask);
   app.post('/tasks/:id/rerun', rerunTask);
   app.post('/tasks/:id/cancel', cancelTask);
+  app.post('/tasks/:id/backlog', returnToBacklog);
   app.post('/tasks/:id/close-pr', closePrTask);
   app.post('/tasks/:id/review', triggerReview);
   app.post('/tasks/:id/merge', triggerMerge);
@@ -66,6 +68,7 @@ export {
 export {
   archivedTasksWhere,
   attachmentValidationError,
+  backlogBlocker,
   buildRerunUpdate,
   buildStartUpdate,
   closePrBlocker,

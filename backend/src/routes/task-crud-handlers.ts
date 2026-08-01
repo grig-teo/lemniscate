@@ -136,7 +136,10 @@ export async function createTask(request: FastifyRequest, reply: FastifyReply) {
     data: {
       repositoryId: data.repositoryId,
       kind: 'prompt',
-      title: data.prompt.slice(0, 80),
+      // Synchronous placeholder title; an LLM-summarized title replaces it
+      // asynchronously (reviveGeneratedTitle below) so creation never blocks
+      // on the LLM being unavailable.
+      title: fallbackTaskTitle(data.prompt),
       prompt: data.prompt,
       status: initialTaskStatus(data.later),
       llmConfigId,
@@ -148,6 +151,11 @@ export async function createTask(request: FastifyRequest, reply: FastifyReply) {
       ...(await resolveAttachmentUpdate(data, userId)),
     },
   });
+
+  // Best-effort: summarize the raw prompt into a concise imperative title.
+  // Fire-and-forget — the row already has a valid fallback title; a failure
+  // or slow LLM never blocks creation or the queue add below.
+  void reviveGeneratedTitle(task.id, userId, data.prompt);
 
   // Same queue/job name as the worker; route-local options (no jobId
   // dedupe, immediate removal on completion) preserved as before. A
@@ -162,6 +170,30 @@ export async function createTask(request: FastifyRequest, reply: FastifyReply) {
 
   const configs = await loadUsageConfigs(userId);
   return reply.code(201).send({ task: serializeTaskWithUsage(task, repository.llmConfigId, configs) });
+}
+
+// Async title generation: resolve the LLM config via the canonical resolver
+// (task override → repository → user default), ask it for a concise imperative
+// title, and update the task row when the result is usable and differs from the
+// placeholder. All failures are swallowed (AGENTS.md §7 fallback-safe) — the
+// task already has a valid title from createTask.
+async function reviveGeneratedTitle(taskId: string, userId: string, prompt: string): Promise<void> {
+  try {
+    const task = await prisma.task.findUnique({ where: { id: taskId }, select: { llmConfigId: true } });
+    const repo = await prisma.repository.findFirst({
+      where: { tasks: { some: { id: taskId } } },
+      select: { llmConfigId: true },
+    });
+    if (!repo) return;
+    const cfg = await findLlmConfig(task, repo, userId);
+    if (!cfg) return;
+    const title = await requestTaskTitle(cfg, prompt);
+    if (title && title !== fallbackTaskTitle(prompt)) {
+      await prisma.task.update({ where: { id: taskId }, data: { title } });
+    }
+  } catch {
+    // LLM unavailable / errored — keep the fallback title; never throw.
+  }
 }
 
 // Single task (with its repository), ownership-scoped.

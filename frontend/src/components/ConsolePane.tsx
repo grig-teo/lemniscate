@@ -19,6 +19,7 @@ import { TaskStepsRail } from '@/components/TaskStepsRail';
 import { ComposerCard, TaskComposerFab } from '@/components/console/TaskComposer';
 import { ServiceDetail } from '@/components/services/ServiceDetail';
 import { PrListPane } from '@/components/PrListPane';
+import { TaskBoard } from '@/components/task-board/TaskBoard';
 import { GitlemRepoDetail } from '@/components/gitlem/GitlemRepoDetail';
 import { GitlemReposGrid } from '@/components/gitlem/GitlemReposGrid';
 import { useTaskConsole } from '@/components/console/useTaskConsole';
@@ -68,7 +69,7 @@ function EmptyConsole() {
  * reachable via the header's run-on-device button.
  */
 export function ConsolePane() {
-  const { selectedTask, liveStatus, archivedRepoId, archivedTask, selectedServiceId, prReviewRepoId, gitlemView } =
+  const { selectedTask, liveStatus, archivedRepoId, archivedTask, selectedServiceId, prReviewRepoId, gitlemView, taskBoardRepoId } =
     useWorkspaceSelection();
   const taskId = selectedTask?.id ?? null;
   const consoleState = useTaskConsole(taskId);
@@ -136,6 +137,7 @@ export function ConsolePane() {
     }
   }, [autoOpenPending, taskId, runTargets.data, runTargets.isError]);
 
+  if (taskBoardRepoId) return <TaskBoard repositoryId={taskBoardRepoId} />;
   if (gitlemView && gitlemView !== 'grid') return <GitlemRepoDetail name={gitlemView} />;
   if (gitlemView === 'grid') return <GitlemReposGrid />;
   if (selectedServiceId) return <ServiceDetail serviceId={selectedServiceId} />;
