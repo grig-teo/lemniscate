@@ -1,8 +1,8 @@
 import path from 'node:path';
+import { hasMeaningfulChanges } from '../workdir-changes.js';
 import { promises as fs } from 'node:fs';
 import {
   commitAndPush,
-  hasDirtyWorkdir,
   logEvent,
   checkoutTaskBranch,
   type GitAuth,
@@ -113,7 +113,7 @@ async function runLemcoreFixIteration(
     secrets,
   });
 
-  if (!(await hasDirtyWorkdir(workdir))) {
+  if (!(await hasMeaningfulChanges(workdir))) {
     await logEvent(task.id, 'no fix changes produced; re-reviewing the existing branch');
     return;
   }

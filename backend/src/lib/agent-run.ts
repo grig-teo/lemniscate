@@ -7,12 +7,12 @@ import {
   cleanupWorkdir,
   cloneRepository,
   git,
-  hasDirtyWorkdir,
   logEvent,
   persistTokenUsage,
   recordJobFailure,
   type GitAuth,
 } from './agent-git.js';
+import { hasMeaningfulChanges } from './workdir-changes.js';
 import { pushTaskBranch, recordChangedPaths } from './agent-publish.js';
 import {
   buildPrBody,
@@ -209,7 +209,9 @@ async function implementTask(
   await logEvent(task.id, `executor: ${executor}`);
   if (executor === 'hermes') {
     await runHermesForTask(task, rt, workdir, secrets, resume, attempt);
-    return (await hasDirtyWorkdir(workdir)) ? task.title : null;
+    // Attachments (.mcp.json/AGENTS.md) and agent scratch must not count as
+    // "changes": a run that only read files must NOT be treated as done.
+    return (await hasMeaningfulChanges(workdir)) ? task.title : null;
   }
   if (executor === 'lemcore') {
     const result = await runLemcoreTask({
@@ -225,7 +227,7 @@ async function implementTask(
   const { summary, changes } = await proposeTaskChanges(task, rt, workdir);
   const applied = await applyChanges(task.id, workdir, changes, secrets);
   await logEvent(task.id, `applied ${applied} of ${changes.length} proposed change(s)`);
-  if (applied === 0 || !(await hasDirtyWorkdir(workdir))) return null;
+  if (applied === 0 || !(await hasMeaningfulChanges(workdir))) return null;
   return summary;
 }
 
@@ -372,8 +374,7 @@ export async function runTask(taskId: string): Promise<void> {
     });
   } catch (err) {
     if (err instanceof TaskPausedError) {
-      // Status is already 'paused' (set by the pause route); the saved
-      // transcript + kept workdir let resume replay the run. Not a failure.
+      // Status is already 'paused' (pause route); transcript + kept workdir let resume replay.
       await logEvent(taskId, 'paused by user — resume continues from the saved transcript').catch(() => {});
       return;
     }
@@ -395,8 +396,7 @@ export async function runTask(taskId: string): Promise<void> {
       rt ? tokenSplit(rt) : undefined,
     );
     // The workdir outlives the run only while the PR awaits review/merge or
-    // the task is paused (resume replays the transcript from it); it is
-    // removed once the task is done (merged), failed, or cancelled.
+    // the task is paused; it is removed once done (merged), failed, or cancelled.
     const status = (await prisma.task.findUnique({ where: { id: taskId }, select: { status: true } }))
       ?.status;
     if (status === 'awaiting_review' || status === 'reviewing_code') {

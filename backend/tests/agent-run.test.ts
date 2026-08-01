@@ -15,6 +15,7 @@ const mocks = vi.hoisted(() => ({
   commitAndPush: vi.fn(),
   git: vi.fn(),
   hasDirtyWorkdir: vi.fn(),
+  hasMeaningfulChanges: vi.fn(),
   logEvent: vi.fn(),
   persistTokenUsage: vi.fn(),
   recordJobFailure: vi.fn(),
@@ -56,6 +57,9 @@ vi.mock('../src/lib/agent-git.js', () => ({
   logEvent: mocks.logEvent,
   persistTokenUsage: mocks.persistTokenUsage,
   recordJobFailure: mocks.recordJobFailure,
+}));
+vi.mock('../src/lib/workdir-changes.js', () => ({
+  hasMeaningfulChanges: mocks.hasMeaningfulChanges,
 }));
 vi.mock('../src/lib/agent-prompts.js', () => ({
   buildPrBody: mocks.buildPrBody,
@@ -156,7 +160,7 @@ beforeEach(() => {
   mocks.prepareAgentRuntime.mockResolvedValue({ cloneUrl: 'https://clone', rt: stubRuntime() });
   mocks.cloneRepository.mockResolvedValue({ emptyRepo: false });
   mocks.generateBranchName.mockResolvedValue('lemniscate/add-feature-x');
-  mocks.hasDirtyWorkdir.mockResolvedValue(true);
+  mocks.hasMeaningfulChanges.mockResolvedValue(true);
   mocks.buildPrBody.mockReturnValue('pr body');
   mocks.openPullRequest.mockResolvedValue({ prUrl: 'https://pr/1' });
   mocks.recordJobFailure.mockResolvedValue('recorded failure');
@@ -243,7 +247,7 @@ describe('runTask with resolveAgentExecutor=hermes', () => {
     // A clean workdir with no open PR used to be marked 'done' — a green task
     // with zero deliverable. It now retries once then fails; either way the
     // run never commits, pushes, or opens a PR, and is never 'done'.
-    mocks.hasDirtyWorkdir.mockResolvedValue(false);
+    mocks.hasMeaningfulChanges.mockResolvedValue(false);
     mocks.taskFindUnique.mockResolvedValue({ status: 'queued' });
     await runTask('task-1');
 
@@ -257,7 +261,7 @@ describe('runTask with resolveAgentExecutor=hermes', () => {
     // A duplicate/resumed run that finds nothing new must not close the
     // pipeline: the open PR continues through review/merge — 'done' is only
     // for merged work (or no-PR flows).
-    mocks.hasDirtyWorkdir.mockResolvedValue(false);
+    mocks.hasMeaningfulChanges.mockResolvedValue(false);
     mocks.loadTaskWithRepo.mockResolvedValue({ ...stubTask(), prUrl: 'https://pr/1' });
     await runTask('task-1');
 
@@ -490,7 +494,7 @@ describe('runTask no-changes retry (prevent premature done)', () => {
 
   it('requeues one retry when hermes left the workdir clean, then completes', async () => {
     // Attempt 1: clean workdir → requeue. Attempt 2: dirty → normal PR flow.
-    mocks.hasDirtyWorkdir.mockResolvedValueOnce(false).mockResolvedValue(true);
+    mocks.hasMeaningfulChanges.mockResolvedValueOnce(false).mockResolvedValue(true);
     mocks.taskFindUnique.mockResolvedValue({ status: 'queued' }); // settle check sees requeue
     await runTask('task-1');
 
@@ -507,7 +511,7 @@ describe('runTask no-changes retry (prevent premature done)', () => {
   it('fails the task after the final attempt instead of marking done', async () => {
     // Both attempts leave the worktree clean and no PR exists: the run ends
     // 'failed' with a clear message — never 'done'.
-    mocks.hasDirtyWorkdir.mockResolvedValue(false);
+    mocks.hasMeaningfulChanges.mockResolvedValue(false);
     mocks.taskFindUnique.mockResolvedValue({ status: 'queued' });
     await runTask('task-1');
 
@@ -524,7 +528,7 @@ describe('runTask no-changes retry (prevent premature done)', () => {
   it('stands down when the requeued task is no longer claimable (cancelled mid-run)', async () => {
     // Attempt 1 requeues; by the settle check the task left the claimable
     // states (user cancelled) — the retry must not run.
-    mocks.hasDirtyWorkdir.mockResolvedValueOnce(false);
+    mocks.hasMeaningfulChanges.mockResolvedValueOnce(false);
     mocks.taskFindUnique.mockResolvedValue({ status: 'failed' }); // cancelled → failed
     await runTask('task-1');
 

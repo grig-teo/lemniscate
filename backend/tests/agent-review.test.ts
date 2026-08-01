@@ -20,6 +20,7 @@ const mocks = vi.hoisted(() => ({
   cleanupWorkdir: vi.fn(),
   commitAndPush: vi.fn(),
   hasDirtyWorkdir: vi.fn(),
+  hasMeaningfulChanges: vi.fn(),
   logEvent: vi.fn(),
   persistTokenUsage: vi.fn(),
   recordJobFailure: vi.fn(),
@@ -54,6 +55,9 @@ vi.mock('../src/lib/agent-git.js', () => ({
   logEvent: mocks.logEvent,
   persistTokenUsage: mocks.persistTokenUsage,
   recordJobFailure: mocks.recordJobFailure,
+}));
+vi.mock('../src/lib/workdir-changes.js', () => ({
+  hasMeaningfulChanges: mocks.hasMeaningfulChanges,
 }));
 vi.mock('../src/lib/agent-prompts.js', () => ({
   buildSkillsSection: mocks.buildSkillsSection,
@@ -161,7 +165,7 @@ beforeEach(() => {
   mocks.loadAgentsMdTemplate.mockResolvedValue(null);
   mocks.loadTaskSkills.mockResolvedValue([]);
   mocks.applyChanges.mockResolvedValue(1);
-  mocks.hasDirtyWorkdir.mockResolvedValue(true);
+  mocks.hasMeaningfulChanges.mockResolvedValue(true);
   mocks.checkoutTaskBranch.mockResolvedValue(undefined);
   mocks.commitAndPush.mockResolvedValue(undefined);
   mocks.enqueueMergeGate.mockResolvedValue(undefined);
@@ -490,7 +494,7 @@ describe('reviewTask on the hermes executor', () => {
     mocks.runHermesTask
       .mockImplementationOnce(hermesWritesReviewFile(reviewJson('changes_requested')))
       .mockImplementationOnce(async () => {});
-    mocks.hasDirtyWorkdir.mockResolvedValue(false);
+    mocks.hasMeaningfulChanges.mockResolvedValue(false);
     await reviewTask('task-1');
     expect(mocks.commitAndPush).not.toHaveBeenCalled();
     expect(mocks.enqueueReviewTask).not.toHaveBeenCalled();

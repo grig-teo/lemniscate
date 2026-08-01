@@ -13,6 +13,10 @@ vi.mock('../src/lib/agent-git.js', () => ({
   hasDirtyWorkdir: vi.fn(async () => false),
 }));
 
+vi.mock('../src/lib/workdir-changes.js', () => ({
+  hasMeaningfulChanges: vi.fn(async () => false),
+}));
+
 vi.mock('../src/lib/agent-prompts.js', () => ({
   buildSkillsSection: vi.fn(() => ''),
 }));

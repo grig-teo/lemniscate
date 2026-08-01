@@ -1,9 +1,9 @@
 import { promises as fs } from 'node:fs';
+import { hasMeaningfulChanges } from './workdir-changes.js';
 import path from 'node:path';
 import { config } from '../config.js';
 import {
   commitAndPush,
-  hasDirtyWorkdir,
   logEvent,
   type GitAuth,
 } from './agent-git.js';
@@ -99,7 +99,7 @@ export async function runHermesFixIteration(
     timeoutMs: config.AGENT_HERMES_TIMEOUT_MINUTES * 60_000,
     stallTimeoutMs: config.AGENT_HERMES_STALL_TIMEOUT_MINUTES * 60_000,
   });
-  if (!(await hasDirtyWorkdir(workdir))) {
+  if (!(await hasMeaningfulChanges(workdir))) {
     await logEvent(task.id, 'no fix changes produced; re-reviewing the existing branch');
     return;
   }

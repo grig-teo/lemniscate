@@ -7,7 +7,6 @@ import {
   checkoutTaskBranch,
   cleanupWorkdir,
   commitAndPush,
-  hasDirtyWorkdir,
   logEvent,
   persistTokenUsage,
   recordJobFailure,
@@ -27,6 +26,7 @@ import { runLemcoreReview } from './lemcore/review.js';
 import { deferRateLimitedReview } from './review-defer.js';
 import { continueOrFinishReview } from './review-finish.js';
 import { setTaskStatus } from './task-events.js';
+import { hasMeaningfulChanges } from './workdir-changes.js';
 import { getPullRequestDiff } from './pull-requests.js';
 import {
   buildFixUserPrompt,
@@ -125,7 +125,7 @@ export async function applyReviewFixes(
   }
   const { summary, changes } = await proposeFixes(task, rt, review, workdir);
   const applied = await applyChanges(task.id, workdir, changes, secrets);
-  if (applied === 0 || !(await hasDirtyWorkdir(workdir))) {
+  if (applied === 0 || !(await hasMeaningfulChanges(workdir))) {
     await logEvent(task.id, 'no fix changes produced; the branch is unchanged');
     return;
   }
