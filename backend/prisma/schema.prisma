@@ -31,6 +31,10 @@ enum TaskStatus {
   pending
   queued
   running
+  // A running task paused by the user (POST /tasks/:id/pause); the executor
+  // loop detects this and exits with TaskPausedError, leaving the workdir for
+  // resume. task-pause.ts isTaskPaused/throwIfPaused gate on this value.
+  paused
   // lemcore plan mode (Repository.planMode): the loop paused after its
   // first-turn plan until the user approves or rejects it.
   awaiting_plan_approval
