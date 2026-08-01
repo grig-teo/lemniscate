@@ -109,6 +109,9 @@ describe('buildStartUpdate', () => {
 // Locking tests for POST /tasks/:id/rerun: failed tasks (including
 // user-cancelled ones) and closed tasks (PR closed without merge) can be
 // rerun; the rerun resets the run state (error/branch/pr) and re-queues.
+// queued/running are also accepted so an orphaned task (its BullMQ job died
+// without flipping the status, e.g. a worker kill mid-run) can be recovered
+// via the rerun button — otherwise it is stranded with no job to process it.
 describe('rerunBlocker', () => {
   it('allows a failed task (including user-cancelled)', () => {
     expect(rerunBlocker({ status: 'failed' })).toBeNull();
@@ -118,10 +121,14 @@ describe('rerunBlocker', () => {
     expect(rerunBlocker({ status: 'closed' })).toBeNull();
   });
 
-  it.each(['pending', 'queued', 'running', 'awaiting_review', 'done'])(
+  it.each(['queued', 'running'])('allows an orphaned %s task (no live job to process it)', (status) => {
+    expect(rerunBlocker({ status })).toBeNull();
+  });
+
+  it.each(['pending', 'awaiting_review', 'reviewing_code', 'done'])(
     'rejects tasks that are %s',
     (status) => {
-      expect(rerunBlocker({ status })).toBe(`task is ${status}, not failed or closed`);
+      expect(rerunBlocker({ status })).toMatch(/not rerunnable/);
     },
   );
 });
