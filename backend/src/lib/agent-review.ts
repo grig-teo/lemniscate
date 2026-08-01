@@ -208,7 +208,7 @@ async function executeReviewTask(
   );
   const review = await requestReview(rt, task, diff, reviewRepoContext);
   await logReview(task.id, review, rt.usedTokens);
-  await continueOrFinishReview(task, rt, review, attempt, () =>
+  await continueOrFinishReview(task, rt, review, () =>
     runReviewFixIteration(task, rt, review, headBranch, workdir, cloneUrl, secrets, gitAuth),
   );
   return rt;
@@ -245,7 +245,7 @@ async function executeHermesReview(
     review = await requestReview(rt, task, await fetchReviewDiff(task, headBranch));
   }
   await logReview(task.id, review, rt.usedTokens);
-  await continueOrFinishReview(task, rt, review, attempt, () =>
+  await continueOrFinishReview(task, rt, review, () =>
     runHermesFixIteration(task, rt, review, headBranch, workdir, secrets, auth),
   );
   return rt;

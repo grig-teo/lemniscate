@@ -164,7 +164,24 @@ export function getAvailableTools(): ChatCompletionTool[] {
       },
       ['content'],
     ),
+    fnTool(
+      'spawn_subagent',
+      'Spawn a read-only investigator that searches the codebase and returns a summary. Use for complex investigations (e.g. "find all callers of X and summarize the patterns"). The subagent has read-only tools — it cannot modify files.',
+      {
+        prompt: { type: 'string', description: 'The investigation question or task for the subagent' },
+      },
+      ['prompt'],
+    ),
   ];
+}
+
+const READ_ONLY_TOOLS = new Set([
+  'read_file', 'grep', 'glob', 'list_dir', 'web_search',
+  'graph_query', 'graph_impact', 'graph_neighbors', 'graph_search', 'load_skill',
+]);
+
+export function getReadOnlyTools(): ChatCompletionTool[] {
+  return getAvailableTools().filter((t) => READ_ONLY_TOOLS.has(t.function.name));
 }
 
 function fnTool(

@@ -34,14 +34,14 @@ const STUCK_REVIEW_LOG_SCAN = 5;
 const STUCK_REVIEW_STALE_MS = 30 * 60 * 1000;
 
 // A review that concluded normally ends with one of these lines: either a
-// human gate (manual merge/review — no job will ever run again for it) or a
-// follow-up job was queued (merge gate / re-review). Neither is stuck, even
-// when an older 'error:' line is still inside the scan window.
+// human gate (manual merge/review — no job will ever run again for it) or the
+// merge gate was queued. None is stuck, even when an older 'error:' line is
+// still inside the scan window. (Reviews no longer re-review — one pass, one
+// fix, then finish — so there is no "queued re-review" marker anymore.)
 const CONCLUDED_REVIEW_MARKERS = [
   'approved by LLM, awaiting manual merge',
   'changes still requested, awaiting manual review',
   'queued the merge gate',
-  'queued re-review of the updated pull request',
 ];
 
 function logLine(entry: { payload: unknown }): string | null {

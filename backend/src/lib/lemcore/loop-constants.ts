@@ -62,6 +62,7 @@ export function lemcoreSystemPrompt(): string {
     '- load_skill(name): load the full instructions of an attached skill on demand',
     '- undo_edit(path): revert the last edit to a file',
     '- todo_write(content): write/update a TODO list to track multi-step work',
+    '- spawn_subagent(prompt): spawn a read-only investigator to research a question and return a summary',
     '',
     'Use tools in a structured way. Prefer graph tools, then selective reads, then writes. After making changes, verify them.',
     '',
