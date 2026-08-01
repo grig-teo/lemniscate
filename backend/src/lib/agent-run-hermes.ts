@@ -11,7 +11,18 @@ const HERMES_INSTRUCTIONS =
 const RESUME_INSTRUCTIONS =
   'RESUMED RUN: a previous attempt was interrupted (redeploy). The current directory already contains the task branch with its uncommitted work — inspect the current state and CONTINUE the implementation from where it stopped; do not start over or redo completed work.';
 
-function hermesPrompt(task: TaskWithRepo, rt: LlmRuntime, resume = false): string {
+// Appended on the automatic no-changes retry (attempt > 1): the previous
+// run ended with a clean worktree, which is only acceptable when the task
+// is genuinely already satisfied.
+const RETRY_INSTRUCTIONS =
+  'IMPORTANT: a previous attempt finished without changing a single file. Reading the code is not enough — you MUST edit/create files to implement the task and verify your changes (run the tests/build). Only if the task is already fully implemented in the repository, state that explicitly and explain why no change is needed.';
+
+function hermesPrompt(
+  task: TaskWithRepo,
+  rt: LlmRuntime,
+  resume = false,
+  attempt = 1,
+): string {
   return [
     `# Task\n${task.title}`,
     task.prompt ? `\n${task.prompt}` : '',
@@ -19,6 +30,7 @@ function hermesPrompt(task: TaskWithRepo, rt: LlmRuntime, resume = false): strin
       ? ['', 'Additional instructions from the repository owner:', rt.cfg.systemPromptExtra]
       : []),
     ...(resume ? ['', RESUME_INSTRUCTIONS] : []),
+    ...(attempt > 1 && !resume ? ['', RETRY_INSTRUCTIONS] : []),
     '',
     HERMES_INSTRUCTIONS,
   ].join('\n');
@@ -30,11 +42,17 @@ export async function runHermesForTask(
   workdir: string,
   secrets: string[],
   resume: boolean,
+  attempt = 1,
 ): Promise<void> {
-  await logEvent(task.id, resume ? 'resuming hermes agent' : 'running hermes agent');
+  await logEvent(
+    task.id,
+    resume
+      ? 'resuming hermes agent'
+      : `running hermes agent (attempt ${attempt})`,
+  );
   await runHermesTask({
     workdir,
-    prompt: hermesPrompt(task, rt, resume),
+    prompt: hermesPrompt(task, rt, resume, attempt),
     llm: {
       baseUrl: rt.cfg.baseUrl,
       apiKey: rt.apiKey,

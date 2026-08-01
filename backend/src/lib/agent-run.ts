@@ -30,8 +30,13 @@ import {
 } from './agent-runtime.js';
 import { resolveAgentExecutor } from './agent-executor.js';
 import { runHermesForTask } from './agent-run-hermes.js';
+import {
+  NoChangesProducedError,
+  handleNoChangesProduced,
+  taskStillClaimable,
+} from './agent-run-retry.js';
 import { runLemcoreTask } from './lemcore/run.js';
-import { classifyError } from './errors.js';
+import { classifyError, TaskErrorCode } from './errors.js';
 import { notify, notifyTaskCompleted } from './notifications.js';
 import { prisma } from './prisma.js';
 import { enqueueReviewTask } from './proposal-scheduler.js';
@@ -40,8 +45,13 @@ import { buildRepoContext } from './repo-context.js';
 import { buildTaskAttachmentFiles } from './repo-init.js';
 import { loadAgentsMdTemplate, loadTaskSkills } from './task-skills.js';
 import { setTaskStatus } from './task-events.js';
-import { claimTaskForRun } from './task-claim.js';
+import { claimTaskForRun, RUN_CLAIMABLE_STATUSES } from './task-claim.js';
 import { errorMessage } from './utils.js';
+
+// Outcome of one executeRunTask pass: the pipeline ended in a final status,
+// or the run produced no changes and requeued itself for one more attempt
+// (the retried delivery runs executeRunTask again).
+type RunOutcome = 'final' | 'retry';
 
 // Job: run-task — clone → LLM-proposed changes → branch → commit → push →
 // pull request. Extracted from agent-loop.ts.
@@ -238,12 +248,13 @@ async function implementTask(
   workdir: string,
   secrets: string[],
   resume: boolean,
+  attempt: number,
 ): Promise<string | null> {
   const userId = task.repository.connection.userId;
   const executor = await resolveAgentExecutor(userId);
   await logEvent(task.id, `executor: ${executor}`);
   if (executor === 'hermes') {
-    await runHermesForTask(task, rt, workdir, secrets, resume);
+    await runHermesForTask(task, rt, workdir, secrets, resume, attempt);
     return (await hasDirtyWorkdir(workdir)) ? task.title : null;
   }
   if (executor === 'lemcore') {
@@ -254,6 +265,7 @@ async function implementTask(
       rt,
       secrets,
       resume,
+      attempt,
     });
     return result.changed ? task.title : null;
   }
@@ -291,12 +303,16 @@ async function prepareFreshRun(
   return { branchName, emptyRepo };
 }
 
-// Returns the runtime so the caller can persist cumulative token usage.
+// Runs one full pass (clone/resume → implement → push → PR). Returns the
+// runtime (so the caller can persist cumulative token usage) plus the
+// outcome — 'retry' means the run produced no changes and requeued itself
+// for another attempt, so the caller must NOT fire completion hooks.
 async function executeRunTask(
   task: TaskWithRepo,
   workdir: string,
   secrets: string[],
-): Promise<LlmRuntime> {
+  attempt: number,
+): Promise<{ rt: LlmRuntime; outcome: RunOutcome }> {
   await logEvent(task.id, 'checking repository push access');
   const { cloneUrl, gitAuth, rt } = await prepareAgentRuntime(
     task,
@@ -321,7 +337,7 @@ async function executeRunTask(
       }
     : await prepareFreshRun(task, workdir, cloneUrl, secrets, gitAuth, rt);
   await writeTaskAttachments(task, workdir);
-  const summary = await implementTask(task, rt, workdir, secrets, resume);
+  const summary = await implementTask(task, rt, workdir, secrets, resume, attempt);
   if (summary === null) {
     if (task.prUrl) {
       // A duplicate/resumed run found nothing new, but a PR is already open
@@ -332,26 +348,27 @@ async function executeRunTask(
         'no changes produced; the existing pull request continues through review',
       );
       await setTaskStatus(task.id, 'awaiting_review');
-      return rt;
+      return { rt, outcome: 'final' };
     }
-    await logEvent(task.id, 'no changes produced; nothing to commit');
-    await prisma.task.update({ where: { id: task.id }, data: { changedPaths: [] } });
-    await setTaskStatus(task.id, 'done');
-    return rt;
+    // The agent left the worktree clean and there is no PR — nothing was
+    // implemented. Never mark that 'done': retry while attempts remain,
+    // otherwise fail the task (throws NoChangesProducedError).
+    const outcome = await handleNoChangesProduced(task.id, attempt);
+    return { rt, outcome };
   }
   await pushBranch(task, rt, workdir, branchName, summary, secrets, gitAuth);
   await recordChangedPaths(task, workdir);
   if (emptyRepo) {
     await logEvent(task.id, `empty repository bootstrapped on ${branchName}; no PR opened`);
     await setTaskStatus(task.id, 'done');
-    return rt;
+    return { rt, outcome: 'final' };
   }
   await finalizeRunTask(task, rt, branchName, summary);
-  return rt;
+  return { rt, outcome: 'final' };
 }
 
 export async function runTask(taskId: string): Promise<void> {
-  const task = await loadTaskWithRepo(taskId);
+  let task = await loadTaskWithRepo(taskId);
   if (!task) {
     logger.error({ taskId }, 'run-task: task not found');
     return;
@@ -372,8 +389,24 @@ export async function runTask(taskId: string): Promise<void> {
   const workdir = path.join(config.AGENT_WORKDIR, taskId);
   let rt: LlmRuntime | null = null;
   try {
-    rt = await executeRunTask(task, workdir, secrets);
-    // Terminal 'done' runs (no auto-PR, empty repo, no changes) notify here;
+    // A run that produced no changes requeues itself (status 'queued') and
+    // enqueues one immediate retry with a stronger prompt; the loop below
+    // picks that delivery up. 'retry' skips the completion hook — the task
+    // is not finished yet.
+    for (let attempt = 1; ; attempt++) {
+      const result = await executeRunTask(task, workdir, secrets, attempt);
+      rt = result.rt;
+      if (result.outcome === 'final') break;
+      if (!(await taskStillClaimable(taskId, RUN_CLAIMABLE_STATUSES))) {
+        logger.info({ taskId }, 'run-task: retry requeue lost (cancelled or claimed), standing down');
+        return;
+      }
+      if (!(await claimTaskForRun(taskId))) return;
+      // Refresh so the next attempt sees the current prompt/branch/prUrl.
+      const fresh = await loadTaskWithRepo(taskId);
+      if (fresh) task = fresh;
+    }
+    // Terminal 'done' runs (no auto-PR, empty repo) notify here;
     // the auto-PR path ends awaiting_review and already fired pr_opened.
     // A dispatch failure must not fail the run, but it is logged — silent
     // notification loss is exactly what this subsystem exists to prevent.
@@ -381,6 +414,12 @@ export async function runTask(taskId: string): Promise<void> {
       logger.error({ taskId, err }, 'run-task: task_completed notification failed');
     });
   } catch (err) {
+    if (err instanceof NoChangesProducedError) {
+      // Status/errorCode were already set when the last attempt gave up;
+      // log the failure without clobbering them via the generic classifier.
+      await recordJobFailure('run-task', taskId, err, secrets).catch(() => {});
+      return;
+    }
     // Failure state is fully recorded on the task; the BullMQ job is allowed
     // to complete so it is not retried into a duplicate branch/PR.
     const message = await recordJobFailure('run-task', taskId, err, secrets);

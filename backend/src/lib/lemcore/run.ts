@@ -17,7 +17,18 @@ export const HERMES_INSTRUCTIONS =
 const RESUME_INSTRUCTIONS =
   'RESUMED RUN: a previous attempt was interrupted (redeploy). The current directory already contains the task branch with its uncommitted work — inspect the current state and CONTINUE the implementation from where it stopped; do not start over or redo completed work.';
 
-function lemcorePrompt(task: TaskWithRepo, rt: LlmRuntime, resume = false): string {
+// Appended on the automatic no-changes retry (attempt > 1): the previous
+// run ended with a clean worktree, which is only acceptable when the task
+// is genuinely already satisfied.
+const RETRY_INSTRUCTIONS =
+  'IMPORTANT: a previous attempt finished without changing a single file. Reading the code is not enough — you MUST edit/create files to implement the task and verify your changes (run the tests/build). Only if the task is already fully implemented in the repository, state that explicitly and explain why no change is needed.';
+
+function lemcorePrompt(
+  task: TaskWithRepo,
+  rt: LlmRuntime,
+  resume = false,
+  attempt = 1,
+): string {
   return [
     `# Task\n${task.title}`,
     task.prompt ? `\n${task.prompt}` : '',
@@ -25,6 +36,7 @@ function lemcorePrompt(task: TaskWithRepo, rt: LlmRuntime, resume = false): stri
       ? ['', 'Additional instructions from the repository owner:', rt.cfg.systemPromptExtra]
       : []),
     ...(resume ? ['', RESUME_INSTRUCTIONS] : []),
+    ...(attempt > 1 && !resume ? ['', RETRY_INSTRUCTIONS] : []),
     '',
     HERMES_INSTRUCTIONS,
   ].join('\n');
@@ -90,6 +102,7 @@ async function prepareGraphBackedPrompt(
   workdir: string,
   rt: LlmRuntime,
   resume: boolean,
+  attempt: number,
   promptOverride?: string,
 ): Promise<string> {
   const graphScan = await scanRepositoryGraph(taskId, workdir);
@@ -105,7 +118,7 @@ async function prepareGraphBackedPrompt(
         `(~${Math.round(implContext.savedRatio * 100)}% under raw dump estimate)`,
     );
   }
-  const basePrompt = promptOverride ?? lemcorePrompt(task, rt, resume);
+  const basePrompt = promptOverride ?? lemcorePrompt(task, rt, resume, attempt);
   return appendGraphContext(basePrompt, graphScan.summaryText, implContext.text);
 }
 
@@ -125,11 +138,14 @@ export async function runLemcoreTask(opts: {
   rt: LlmRuntime;
   secrets: string[];
   resume: boolean;
+  /** 1-based run attempt; >1 appends the no-changes retry instructions. */
+  attempt?: number;
   /** When set, used as the user prompt instead of the default task prompt. */
   promptOverride?: string;
   existingTranscript?: unknown;
 }): Promise<LemcoreTaskResult> {
   const { taskId, task, workdir, rt, secrets, resume, promptOverride } = opts;
+  const attempt = opts.attempt ?? 1;
 
   try {
     return await executeLemcoreTask({
@@ -139,6 +155,7 @@ export async function runLemcoreTask(opts: {
       rt,
       secrets,
       resume,
+      attempt,
       promptOverride,
     });
   } finally {
@@ -154,11 +171,15 @@ async function executeLemcoreTask(opts: {
   rt: LlmRuntime;
   secrets: string[];
   resume: boolean;
+  attempt: number;
   promptOverride?: string;
 }): Promise<LemcoreTaskResult> {
-  const { taskId, task, workdir, rt, secrets, resume, promptOverride } = opts;
+  const { taskId, task, workdir, rt, secrets, resume, attempt, promptOverride } = opts;
 
-  await logEvent(taskId, resume ? 'resuming lemcore agent' : 'running lemcore agent');
+  await logEvent(
+    taskId,
+    resume ? 'resuming lemcore agent' : `running lemcore agent (attempt ${attempt})`,
+  );
   // Older builds wrote the resume transcript inside the clone; remove any
   // leftover so it cannot land in the task commit / PR.
   scrubLegacyInCloneTranscript(workdir);
@@ -169,6 +190,7 @@ async function executeLemcoreTask(opts: {
     workdir,
     rt,
     resume,
+    attempt,
     promptOverride,
   );
   const { section: skillsSection, skills: lemcoreSkills } = await materializeTaskSkills(task, workdir);
