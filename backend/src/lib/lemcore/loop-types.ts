@@ -47,6 +47,14 @@ export interface LemcoreRunOptions {
    * plan gate, tool approvals and self-verification nudges.
    */
   skipSessionGates?: boolean;
+  /**
+   * Override the default implementation system prompt
+   * (lemcoreSystemPrompt). Used by review runs, where the "implement the task
+   * completely, including tests" instructions are contradictory — a review
+   * should only examine and write a verdict. When unset, lemcoreSystemPrompt()
+   * is used.
+   */
+  systemPromptOverride?: string;
 }
 
 /** Persistable transcript entries (JSON-safe). */
@@ -59,6 +67,33 @@ export type LemcoreMessage =
       toolCallId: string;
       toolName?: string;
     };
+
+/**
+ * Synthesize placeholder tool results for any assistant tool_calls that lack
+ * matching tool messages — happens when the process dies mid-batch between an
+ * assistant reply and the tool executor. Without repair the next provider call
+ * gets HTTP 400 (tool_calls must be followed by tool results).
+ */
+export function repairOrphanedToolCalls(messages: LemcoreMessage[]): void {
+  const answered = new Set<string>();
+  for (const m of messages) {
+    if (m.role === 'tool' && m.toolCallId) answered.add(m.toolCallId);
+  }
+  for (const m of messages) {
+    if (m.role === 'assistant' && m.toolCalls) {
+      for (const tc of m.toolCalls) {
+        if (tc.id && !answered.has(tc.id)) {
+          messages.push({
+            role: 'tool',
+            content: 'Tool execution was interrupted (process restart). Re-run the tool if needed.',
+            toolCallId: tc.id,
+            toolName: 'interrupted',
+          });
+        }
+      }
+    }
+  }
+}
 
 /** Error thrown when a single LLM turn exceeds the stalled-turn timeout. */
 export class LemcoreStalledError extends Error {

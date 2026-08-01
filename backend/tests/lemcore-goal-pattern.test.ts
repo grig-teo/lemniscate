@@ -25,10 +25,7 @@ describe('default goal pattern', () => {
 });
 
 describe('compaction keeps the tracked objective', () => {
-  const system: LemcoreMessage = {
-    role: 'system',
-    content: `${lemcoreSystemPrompt()}\n\nObjective: fix the login redirect`,
-  };
+  const system: LemcoreMessage = { role: 'system', content: lemcoreSystemPrompt() };
   const filler = (n: number): LemcoreMessage[] =>
     Array.from({ length: n }, (_, i) => ({
       role: 'tool' as const,
@@ -37,22 +34,31 @@ describe('compaction keeps the tracked objective', () => {
       content: 'x'.repeat(900),
     }));
 
-  it('re-injects the declared Objective: line after compacting old turns', () => {
-    const out = compactTranscript([system, { role: 'user', content: 'go' }, ...filler(8)], 3);
+  it('re-injects the Objective: line from the assistant restatement after compacting', () => {
+    // The model restates its objective in an assistant message (not the system prompt).
+    const restatement: LemcoreMessage = {
+      role: 'assistant',
+      content: 'Objective: fix the login redirect\n\nI will start by...',
+    };
+    const out = compactTranscript(
+      [system, { role: 'user', content: 'go' }, restatement, ...filler(8)],
+      3,
+    );
     const goals = out.filter(
       (m) => m.role === 'system' && m.content === '[goal] Objective: fix the login redirect',
     );
     expect(goals).toHaveLength(1);
-    // Reminder sits right after the system prompt, before compacted history.
     expect(out.indexOf(goals[0]!)).toBe(1);
   });
 
-  it('keeps the latest Objective: line when the run restated its goal', () => {
-    const restated: LemcoreMessage = {
-      role: 'system',
-      content: 'Objective: first draft\n…\nObjective: final scope',
+  it('keeps the latest Objective: line from the most recent assistant restatement', () => {
+    const first: LemcoreMessage = {
+      role: 'assistant', content: 'Objective: first draft\n\nWorking on it...',
     };
-    const out = compactTranscript([restated, ...filler(9)], 3);
+    const second: LemcoreMessage = {
+      role: 'assistant', content: 'Objective: final scope\n\nNow focused.',
+    };
+    const out = compactTranscript([system, first, ...filler(4), second, ...filler(5)], 3);
     const goal = out.find((m) => m.role === 'system' && m.content.startsWith('[goal]'));
     expect(goal?.content).toBe('[goal] Objective: final scope');
   });

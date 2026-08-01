@@ -15,7 +15,7 @@ import {
   transcriptPath,
 } from './loop-constants.js';
 import type { LemcoreMessage, LemcoreRunOptions, LemcoreStep } from './loop-types.js';
-import { chatWithTurnTimeout, turnTimeoutMs } from './loop-types.js';
+import { chatWithTurnTimeout, repairOrphanedToolCalls, turnTimeoutMs } from './loop-types.js';
 import { getAvailableTools } from './tool-catalog.js';
 import { runToolCalls } from './loop-tool-runner.js';
 import type { LemcoreSkill } from './skills.js';
@@ -73,14 +73,20 @@ export function loadTranscript(workdir: string): LemcoreMessage[] | null {
   }
   return null;
 }
-
 function saveTranscript(workdir: string, messages: LemcoreMessage[]): void {
-  const file = transcriptPath(workdir);
-  const tmp = `${file}.tmp`;
-  fs.writeFileSync(tmp, JSON.stringify(messages, null, 2));
-  fs.renameSync(tmp, file);
+  // The transcript is bookkeeping, not critical to the run: a disk-full or FS
+  // error here should never abort an otherwise-healthy turn. Log and swallow.
+  try {
+    const file = transcriptPath(workdir);
+    const tmp = `${file}.tmp`;
+    fs.writeFileSync(tmp, JSON.stringify(messages, null, 2));
+    fs.renameSync(tmp, file);
+  } catch (err) {
+    console.warn(
+      `[lemcore] saveTranscript failed (non-fatal): ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
 }
-
 export async function checkReviewFile(workdir: string): Promise<boolean> {
   const file = path.join(workdir, REVIEW_FILENAME);
   try {
@@ -91,7 +97,6 @@ export async function checkReviewFile(workdir: string): Promise<boolean> {
     return false;
   }
 }
-
 function toChatMessages(messages: LemcoreMessage[]): ChatMessage[] {
   const out: ChatMessage[] = [];
   for (const m of messages) {
@@ -114,24 +119,31 @@ function toChatMessages(messages: LemcoreMessage[]): ChatMessage[] {
   }
   return out;
 }
-
 export async function runLemcoreLoop(opts: LemcoreRunOptions): Promise<string> {
   const { taskId, task, workdir, rt, prompt, secrets, resumeTranscript, skillsSection } = opts;
   const skills: LemcoreSkill[] = opts.skills ?? [];
   const messages: LemcoreMessage[] = resumeTranscript ? [...resumeTranscript] : [];
   const resuming = Boolean(resumeTranscript?.length);
+  // Resume repair: a transcript saved mid-tool-call can end with an assistant
+  // message carrying tool_calls but no matching `tool` result messages (the
+  // process was killed between the assistant reply and the tool executor).
+  // The OpenAI API rejects (HTTP 400) any assistant tool_calls that aren't
+  // followed by their tool results. Synthesize a placeholder result for each
+  // orphaned tool_call_id so the next provider call is well-formed; the model
+  // can choose to re-run the tool if it still needs it.
+  if (resuming) repairOrphanedToolCalls(messages);
   if (!messages.some((m) => m.role === 'system')) {
     const skillsBlock = skillsSection?.trim() ? `\n\n${skillsSection.trim()}` : '';
+    const baseSystem = opts.systemPromptOverride ?? lemcoreSystemPrompt();
     messages.push({
       role: 'system',
-      content: `${lemcoreSystemPrompt()}${skillsBlock}\n\n${task.title}${task.prompt ? `\n${task.prompt}` : ''}`,
+      content: `${baseSystem}${skillsBlock}\n\n${task.title}${task.prompt ? `\n${task.prompt}` : ''}`,
     });
   }
   if (!messages.some((m) => m.role === 'user')) {
     messages.push({ role: 'user', content: prompt });
   }
   saveTranscript(workdir, messages);
-
   if (resuming) {
     const priorToolSteps = resumeTranscript!.filter((m) => m.role === 'tool').length;
     const priorAssistant = resumeTranscript!.filter((m) => m.role === 'assistant').length;
@@ -144,19 +156,16 @@ export async function runLemcoreLoop(opts: LemcoreRunOptions): Promise<string> {
       detail: `Continuing from saved transcript (${resumeTranscript!.length} messages).`,
     });
   }
-
   let consecutiveToolFailures = 0;
   let consecutiveEmptyReplies = 0;
   const startTime = Date.now();
   const wallClockCapMs = config.AGENT_HERMES_TIMEOUT_MINUTES * 60_000;
   // Stall watchdog: a hung provider aborts the run fast instead of pinning the slot.
   const perTurnTimeoutMs = turnTimeoutMs(opts);
-
   for (let turn = 0; turn < MAX_TURNS; turn++) {
     if (Date.now() - startTime > wallClockCapMs) {
       throw new Error(`lemcore agent timed out after ${Math.round(wallClockCapMs / 1000)}s`);
     }
-
     if (shouldCompactTranscript(messages, rt.cfg.contextWindow)) {
       const before = messages.length;
       const compacted = compactTranscript(messages);
@@ -171,7 +180,6 @@ export async function runLemcoreLoop(opts: LemcoreRunOptions): Promise<string> {
       });
       saveTranscript(workdir, messages);
     }
-
     const totalChars = messages.reduce((sum, m) => sum + m.content.length, 0);
     const estimatedTokens = Math.ceil(totalChars / 4);
     // Budget enforcement only when the LLM config sets one (the runtime is
@@ -183,7 +191,6 @@ export async function runLemcoreLoop(opts: LemcoreRunOptions): Promise<string> {
         `LLM token budget exceeded (${rt.usedTokens + estimatedTokens} > ${rt.cfg.maxTokensPerRun})`,
       );
     }
-
     const stepId = nextStepId();
     const assistantStep: LemcoreStep = {
       stepId,
@@ -192,7 +199,6 @@ export async function runLemcoreLoop(opts: LemcoreRunOptions): Promise<string> {
       title: `Assistant turn ${turn + 1}`,
     };
     await publishStepEvent(taskId, assistantStep);
-
     const startedMs = Date.now();
     const result = await chatWithTurnTimeout(turn + 1, perTurnTimeoutMs, () =>
       chatCompletion({
@@ -221,13 +227,11 @@ export async function runLemcoreLoop(opts: LemcoreRunOptions): Promise<string> {
         },
       }),
     );
-
     if (result.usage?.totalTokens) {
       rt.usedTokens += result.usage.totalTokens;
       rt.usedPromptTokens += result.usage.promptTokens;
       rt.usedCompletionTokens += result.usage.completionTokens;
     }
-
     const toolCalls = result.toolCalls ?? [];
     const hasToolCalls = Boolean(result.hasToolCalls && toolCalls.length > 0);
     assistantStep.status = 'done';
@@ -235,13 +239,11 @@ export async function runLemcoreLoop(opts: LemcoreRunOptions): Promise<string> {
     assistantStep.durationMs = Date.now() - startedMs;
     assistantStep.tokensUsed = result.usage?.totalTokens;
     await publishStepEvent(taskId, assistantStep);
-
     messages.push({
       role: 'assistant',
       content: result.content,
       ...(hasToolCalls ? { toolCalls } : {}),
     });
-
     if (await checkReviewFile(workdir)) {
       saveTranscript(workdir, messages);
       return result.content;
@@ -273,7 +275,6 @@ export async function runLemcoreLoop(opts: LemcoreRunOptions): Promise<string> {
       saveTranscript(workdir, messages);
       continue;
     }
-
     consecutiveEmptyReplies = 0;
     consecutiveToolFailures = await runToolCalls({
       taskId,
@@ -288,7 +289,6 @@ export async function runLemcoreLoop(opts: LemcoreRunOptions): Promise<string> {
     });
     saveTranscript(workdir, messages);
   }
-
   // MAX_TURNS exhausted — surface a truncation signal so the run isn't mistaken for done.
   const lastContent = messages[messages.length - 1]?.content ?? '';
   await publishStepEvent(taskId, {
