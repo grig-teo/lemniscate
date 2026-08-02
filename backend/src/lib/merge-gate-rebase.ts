@@ -15,7 +15,7 @@ import {
 } from './conflict-resolve.js';
 import { runHermesTask } from './hermes-runner.js';
 import type { GateContext } from './merge-gate-context.js';
-import { buildHermesConflictPrompt } from './pr-review.js';
+import { buildAgentConflictPrompt } from './pr-review.js';
 import { publishTaskEvent } from './task-events.js';
 
 // Rebase machinery for the merge-gate job: staleness checkout, the rebase
@@ -164,7 +164,7 @@ export async function rebaseHeadBranchViaHermes(ctx: GateContext): Promise<void>
     );
     await runHermesTask({
       workdir,
-      prompt: buildHermesConflictPrompt({
+      prompt: buildAgentConflictPrompt({
         baseBranch: task.repository.defaultBranch,
         headBranch,
         conflictedPaths: conflicted,
@@ -196,7 +196,7 @@ export async function rebaseHeadBranchViaLemcore(ctx: GateContext): Promise<void
       rt,
       secrets,
       resume: false,
-      promptOverride: buildHermesConflictPrompt({
+      promptOverride: buildAgentConflictPrompt({
         baseBranch: task.repository.defaultBranch,
         headBranch,
         conflictedPaths: conflicted,
