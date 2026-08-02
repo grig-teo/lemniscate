@@ -7,7 +7,6 @@ import { promises as fs } from 'node:fs';
 import * as fsSync from 'node:fs';
 import path from 'node:path';
 import { redactSecrets } from '../utils.js';
-import { checkpointEdit } from './edit-checkpoint.js';
 import { enhanceErrorOutput } from './error-hints.js';
 
 export { enhanceErrorOutput } from './error-hints.js';
@@ -51,7 +50,8 @@ export type ToolName =
   | 'graph_search'
   | 'load_skill'
   | 'todo_write'
-  | 'spawn_subagent';
+  | 'spawn_subagent'
+  | 'think';
 
 export interface ToolResult {
   tool: ToolName;
@@ -156,69 +156,10 @@ export async function toolWriteFile(
   };
 }
 
-/**
- * Shared edit-content preparation for edit_file / multi_edit: reads the file,
- * runs the caller's validation + content transform, and checkpoints the
- * pre-edit content for undo_edit. Does NOT write — the caller (or
- * verifyEditWithFallback) owns the write via lintAndMaybeRevert. Exported so
- * executeTool can route through multi-sample verification when a runtime
- * context is available, reusing the exact same validation logic.
- */
-export async function prepareEditContent(
-  workdir: string,
-  relPath: string,
-  compute: (original: string) => string,
-): Promise<{ originalContent: string; newContent: string }> {
-  const absPath = jailPath(workdir, relPath);
-  const originalContent = await fs.readFile(absPath, 'utf8');
-  const newContent = compute(originalContent);
-  checkpointEdit(workdir, relPath, originalContent);
-  return { originalContent, newContent };
-}
-
-/** Compute the result of an edit_file search/replace, with full validation. */
-export function applySingleEdit(
-  relPath: string,
-  original: string,
-  search: string,
-  replace: string,
-): string {
-  if (!original.includes(search)) {
-    const preview = original.split('\n').filter((l) => l.trim()).slice(0, 5).join('\n');
-    throw new Error(`edit_file: search string not found in ${relPath}. First lines:\n${preview}`);
-  }
-  const count = countOccurrences(original, search);
-  if (count !== 1) {
-    throw new Error(`edit_file: expected exactly 1 match, found ${count} in ${relPath}`);
-  }
-  // Replacer function so $ patterns (e.g. `$&`, `$1`) in `replace` are literal.
-  return original.replace(search, () => replace);
-}
-
-/** Compute the result of a multi_edit sequence, with full validation. */
-export function applyMultiEdit(
-  relPath: string,
-  original: string,
-  edits: { search: string; replace: string }[],
-): string {
-  let content = original;
-  edits.forEach(({ search, replace }, i) => {
-    if (!content.includes(search)) {
-      throw new Error(`multi_edit: search string not found in ${relPath} (edit ${i + 1})`);
-    }
-    const count = countOccurrences(content, search);
-    if (count !== 1) {
-      throw new Error(`multi_edit: expected exactly 1 match for edit ${i + 1}, found ${count}`);
-    }
-    content = content.replace(search, () => replace);
-  });
-  return content;
-}
-
-function countOccurrences(haystack: string, needle: string): number {
-  const escaped = needle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  return (haystack.match(new RegExp(escaped, 'g')) ?? []).length;
-}
+// Edit-content helpers live in edit-helpers.ts (single source of truth for
+// edit validation). Re-exported here so existing importers using `tools.js`
+// keep working.
+export { prepareEditContent, applySingleEdit, applyMultiEdit } from './edit-helpers.js';
 
 // Only true infra failures (timeout, spawn error) are tool errors; a non-zero
 // exit (grep no-match, missing file, failing tests) is a normal result the
@@ -285,6 +226,19 @@ export function truncate(text: string, maxChars: number = TOOL_MAX_OUTPUT_CHARS)
   const head = Math.floor(maxChars * 0.35);
   const tail = maxChars - head - 20;
   return `${text.slice(0, head)}\n… [truncated] …\n${text.slice(-tail)}`;
+}
+
+// The `think` tool: a mid-loop scratchpad (Anthropic "think" tool pattern).
+// The model calls it to reason before edits/finishing. It executes nothing —
+// it just echoes the thought into the transcript so it survives compaction
+// and is visible to the model on the next turn. A no-cost reasoning aid.
+export function toolThink(thought: string): ToolResult {
+  return {
+    tool: 'think',
+    title: 'think',
+    outputPreview: thought,
+    durationMs: 0,
+  };
 }
 
 // Public API re-exports: these tools live in split modules but are part of the

@@ -55,6 +55,14 @@ export interface LemcoreRunOptions {
    * is used.
    */
   systemPromptOverride?: string;
+  /**
+   * When true, the loop runs a programmatic verify gate (detect + run the
+   * project's test/build command) before accepting the model's final reply.
+   * On failure the model is nudged with a Reflexion-style critique and the
+   * loop continues (up to MAX_GATE_FAILURES). Implementation runs set this
+   * true; review runs leave it false (they finish via the review file path).
+   */
+  verifyGate?: boolean;
 }
 
 /** Persistable transcript entries (JSON-safe). */

@@ -134,6 +134,11 @@ const envSchema = z.object({
   LEMCORE_MULTI_SAMPLE: z.coerce.boolean().default(true),
   LEMCORE_SUBAGENT_ENABLED: z.coerce.boolean().default(true),
   LEMCORE_SUBAGENT_MAX_TURNS: z.coerce.number().int().positive().default(8),
+  // Lemcore verify gate: before a run finishes, programmatically detect and
+  // run the project's test/build command and require exit 0. On failure the
+  // model is nudged with a Reflexion-style critique and the loop continues.
+  // Default on. Set LEMCORE_VERIFY_GATE=false to disable.
+  LEMCORE_VERIFY_GATE: z.coerce.boolean().default(true),
   // Lemcore-only: build a codebase graph (code-review-graph) on every repo
   // scan and prefer graph-derived implementation context to cut LLM tokens.
   // Default on. Set LEMCORE_CODE_GRAPH=false to disable.

@@ -18,6 +18,7 @@ import {
   shouldCompactTranscript,
 } from './loop-compact.js';
 import { classifyAssistantReply, EMPTY_REPLY_NUDGE } from './loop-reply.js';
+import { checkVerifyGate } from './verify-gate.js';
 import { throwIfPaused } from '../task-pause.js';
 export {
   MAX_TURNS,
@@ -124,6 +125,7 @@ export async function runLemcoreLoop(opts: LemcoreRunOptions): Promise<string> {
   }
   let consecutiveToolFailures = 0;
   let consecutiveEmptyReplies = 0;
+  let consecutiveGateFailures = 0;
   const startTime = Date.now();
   const wallClockCapMs = config.AGENT_HERMES_TIMEOUT_MINUTES * 60_000;
   // Stall watchdog: a hung provider aborts the run fast instead of pinning the slot.
@@ -218,8 +220,16 @@ export async function runLemcoreLoop(opts: LemcoreRunOptions): Promise<string> {
     const action = classifyAssistantReply(hasToolCalls, result.content, consecutiveEmptyReplies);
     // A non-empty text reply without tool calls is the agent's final answer.
     if (action.kind === 'final') {
+      const gate = await checkVerifyGate(opts, workdir, taskId, consecutiveGateFailures, messages, result.content);
+      if (gate.kind === 'pass') {
+        saveTranscript(workdir, messages);
+        return gate.summary;
+      }
+      // Gate failed — nudge with a Reflexion critique and continue the loop.
+      consecutiveGateFailures = gate.nextFailureCount;
+      await publishStepEvent(taskId, gate.step);
       saveTranscript(workdir, messages);
-      return result.content;
+      continue;
     }
     if (action.kind === 'abort') {
       throw new Error(

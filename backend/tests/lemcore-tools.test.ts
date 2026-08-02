@@ -4,6 +4,7 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { toolBash, toolGrep, toolGlob, toolReadFile } from '../src/lib/lemcore/tools.js';
+import { executeTool } from '../src/lib/lemcore/loop-tool-runner.js';
 
 let workdir: string;
 
@@ -89,5 +90,22 @@ describe('toolGlob', () => {
     expect(result.outputPreview).toContain('a.ts');
     expect(result.outputPreview).toContain('b.ts');
     expect(result.outputPreview).not.toContain('c.md');
+  });
+});
+
+describe('think tool', () => {
+  it('echoes the thought back as the tool result (mid-loop scratchpad)', async () => {
+    const result = await executeTool('think', { thought: 'I should check if tests pass before finishing.' }, workdir, []);
+
+    expect(result.tool).toBe('think');
+    expect(result.error).toBeUndefined();
+    expect(result.outputPreview).toBe('I should check if tests pass before finishing.');
+  });
+
+  it('handles an empty thought gracefully', async () => {
+    const result = await executeTool('think', {}, workdir, []);
+
+    expect(result.tool).toBe('think');
+    expect(result.error).toBeUndefined();
   });
 });

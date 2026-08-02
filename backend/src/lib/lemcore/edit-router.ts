@@ -4,7 +4,8 @@
 // the validation logic in one place (prepareEditContent) so both paths agree.
 import type { ChatToolCall } from '../llm-client.js';
 import type { LlmRuntime } from '../agent-runtime.js';
-import { prepareEditContent, type ToolResult } from './tools.js';
+import type { ToolResult } from './tools.js';
+import { prepareEditContent } from './edit-helpers.js';
 import { lintAndMaybeRevert } from './edit-checkpoint.js';
 import { verifyEditWithFallback } from './multi-sample.js';
 

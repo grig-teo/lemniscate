@@ -4,6 +4,7 @@
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import type { GraphEdge, GraphNode, LemcoreCodebaseGraph } from './types.js';
+import { extractSymbols } from '../repo-map.js';
 
 const SKIP_DIRS = new Set([
   '.git',
@@ -54,10 +55,16 @@ export async function buildFallbackGraph(repoRoot: string): Promise<LemcoreCodeb
     filePath: f,
   }));
   const edges: GraphEdge[] = [];
+  const fileSymbols = new Map<string, string[]>();
   const byPath = new Map(files.map((f) => [f, true] as const));
 
   for (const rel of files) {
-    const imports = await readImports(path.join(repoRoot, rel));
+    const text = await readText(repoRoot, rel);
+    if (!text) continue;
+    // Extract symbols in the same pass (file already read for imports).
+    const syms = extractSymbols(rel, text);
+    if (syms.length > 0) fileSymbols.set(rel, syms);
+    const imports = readImportsFromText(text);
     for (const spec of imports) {
       const resolved = resolveImport(rel, spec, byPath);
       if (!resolved) continue;
@@ -78,6 +85,7 @@ export async function buildFallbackGraph(repoRoot: string): Promise<LemcoreCodeb
     nodes,
     edges,
     files,
+    fileSymbols,
     stats: {
       fileCount: files.length,
       nodeCount: nodes.length,
@@ -147,20 +155,24 @@ async function walk(dir: string, rel: string, out: string[]): Promise<void> {
   }
 }
 
-async function readImports(absPath: string): Promise<string[]> {
+async function readText(repoRoot: string, rel: string): Promise<string | null> {
   try {
+    const absPath = path.join(repoRoot, rel);
     const stat = await fs.stat(absPath);
-    if (stat.size > MAX_FILE_BYTES) return [];
-    const text = await fs.readFile(absPath, 'utf8');
-    const found: string[] = [];
-    for (const match of text.matchAll(IMPORT_RE)) {
-      const spec = match[1] ?? match[2] ?? match[3];
-      if (spec) found.push(spec);
-    }
-    return found;
+    if (stat.size > MAX_FILE_BYTES) return null;
+    return await fs.readFile(absPath, 'utf8');
   } catch {
-    return [];
+    return null;
   }
+}
+
+function readImportsFromText(text: string): string[] {
+  const found: string[] = [];
+  for (const match of text.matchAll(IMPORT_RE)) {
+    const spec = match[1] ?? match[2] ?? match[3];
+    if (spec) found.push(spec);
+  }
+  return found;
 }
 
 function resolveImport(

@@ -172,12 +172,20 @@ export function getAvailableTools(): ChatCompletionTool[] {
       },
       ['prompt'],
     ),
+    fnTool(
+      'think',
+      'Use for complex reasoning: list rules that apply, check whether all required information is collected, verify that a planned action is correct before executing it. A scratchpad — it executes nothing and only records your reasoning.',
+      {
+        thought: { type: 'string', description: 'Your structured reasoning / checklist / verification' },
+      },
+      ['thought'],
+    ),
   ];
 }
 
 const READ_ONLY_TOOLS = new Set([
   'read_file', 'grep', 'glob', 'list_dir', 'web_search',
-  'graph_query', 'graph_impact', 'graph_neighbors', 'graph_search', 'load_skill',
+  'graph_query', 'graph_impact', 'graph_neighbors', 'graph_search', 'load_skill', 'think',
 ]);
 
 export function getReadOnlyTools(): ChatCompletionTool[] {
