@@ -90,16 +90,19 @@ export async function runLemcoreReview(
   }
 
   await logReview(task.id, review, rt.usedTokens);
-  // Shared finish path with hermes/internal (review-finish.ts): single review
-  // pass — on changes_requested the fix is applied once, then the PR is handed
-  // to the merge gate / manual review (no re-review loop).
+  // Shared finish path (review-finish.ts): single review pass — on
+  // changes_requested the fix is applied once, then the PR is handed to the
+  // merge gate / manual review (no re-review loop).
   await continueOrFinishReview(task, rt, review, () =>
     runLemcoreFixIteration(task, rt, review, headBranch, workdir, secrets, auth),
   );
   return rt;
 }
 
-async function runLemcoreFixIteration(
+// Also called directly by agent-review's applyReviewFixes (the fix tail
+// shared with the address-review job): the branch is already checked out in
+// `workdir`, so the agent fixes the review issues and pushes to the branch.
+export async function runLemcoreFixIteration(
   task: TaskWithRepo,
   rt: LlmRuntime,
   review: PrReview,

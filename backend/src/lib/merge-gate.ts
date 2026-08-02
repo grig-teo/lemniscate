@@ -17,16 +17,9 @@ import {
   type LlmRuntime,
   type TaskWithRepo,
 } from './agent-runtime.js';
-import { resolveAgentExecutor } from './agent-executor.js';
-import { runHermesTask } from './hermes-runner.js';
 import { runLemcoreTask } from './lemcore/run.js';
 import type { GateContext } from './merge-gate-context.js';
-import {
-  hermesLlm,
-  prepareMergeCheckout,
-  rebaseHeadBranchViaHermes,
-  rebaseHeadBranchWithLlm,
-} from './merge-gate-rebase.js';
+import { prepareMergeCheckout, rebaseHeadBranchViaLemcore } from './merge-gate-rebase.js';
 import { notify, notifyOncePerTask } from './notifications.js';
 import { enqueueMergeGate } from './proposal-scheduler.js';
 import { queueDeployment } from './deploy/deploy-service.js';
@@ -39,11 +32,11 @@ import { errorMessage } from './utils.js';
 // Job: merge-gate — owns the PR after the review passes on an auto-merge
 // repository. The PR merges ONLY when provider CI checks are green:
 //   pending  → re-enqueue with a delay and check again (bounded, ~30 min)
-//   failing  → the hermes agent fixes the branch first, then re-check
+//   failing  → the lemcore agent fixes the branch first, then re-check
 //   stale    → main moved since the branch started: rebase the task branch
-//              onto main (conflicts resolved by hermes or direct LLM),
-//              force-push, and wait for CI on the rebased head before the
-//              next merge attempt — never main-into-branch merge commits
+//              onto main (conflicts resolved by lemcore), force-push, and
+//              wait for CI on the rebased head before the next merge
+//              attempt — never main-into-branch merge commits
 // Providers without a checks API (e.g. GitVerse) merge unverified, as before.
 
 export const MERGE_GATE_DELAY_MS = 60_000;
@@ -55,10 +48,10 @@ export const MAX_CI_FIX_ATTEMPTS = 3;
 export const MAX_REBASE_RETRIES = 1;
 
 // ---------------------------------------------------------------------------
-// CI fix (hermes or lemcore)
+// CI fix (lemcore)
 // ---------------------------------------------------------------------------
 
-async function runCiFixViaHermes(ctx: GateContext): Promise<void> {
+async function runCiFixViaLemcore(ctx: GateContext): Promise<void> {
   const { task, rt, headBranch, workdir, cloneUrl, secrets, auth } = ctx;
   await checkoutTaskBranch(
     workdir,
@@ -75,46 +68,29 @@ async function runCiFixViaHermes(ctx: GateContext): Promise<void> {
     systemPromptExtra: rt.cfg.systemPromptExtra,
     failingChecks: ctx.failingChecks,
   });
-  const executor = await resolveAgentExecutor(task.repository.connection.userId);
-  if (executor === 'lemcore') {
-    await runLemcoreTask({
-      taskId: task.id,
-      task,
-      workdir,
-      rt,
-      secrets,
-      resume: false,
-      promptOverride: ciPrompt,
-    });
-  } else {
-    await runHermesTask({
-      workdir,
-      prompt: ciPrompt,
-      llm: hermesLlm(rt),
-      taskId: task.id,
-      secrets,
-      timeoutMs: config.AGENT_HERMES_TIMEOUT_MINUTES * 60_000,
-      stallTimeoutMs: config.AGENT_HERMES_STALL_TIMEOUT_MINUTES * 60_000,
-    });
-  }
+  await runLemcoreTask({
+    taskId: task.id,
+    task,
+    workdir,
+    rt,
+    secrets,
+    resume: false,
+    promptOverride: ciPrompt,
+  });
   if (!(await hasMeaningfulChanges(workdir))) {
     await logEvent(task.id, 'agent produced no CI fix changes');
     return;
   }
-  const lemcore = executor === 'lemcore';
   await commitAndPush(
     task,
     rt,
     workdir,
-    lemcore ? 'fix failing CI checks (lemcore)' : 'fix failing CI checks',
+    'fix failing CI checks (lemcore)',
     ['push', 'origin', headBranch],
     secrets,
     auth,
   );
-  await logEvent(
-    task.id,
-    lemcore ? `pushed CI fixes to ${headBranch} (lemcore)` : `pushed CI fixes to ${headBranch}`,
-  );
+  await logEvent(task.id, `pushed CI fixes to ${headBranch} (lemcore)`);
 }
 
 // Auto-deploy: a merged PR redeploys the repository's service when it has
@@ -187,18 +163,10 @@ async function mergeWithConflictResolution(ctx: GateContext): Promise<void> {
   await enqueueMergeGate(task.id, attempt + 1, ciFixes, MERGE_GATE_DELAY_MS, ctx.rebaseRetries);
 }
 
-// Executor dispatch for the rebase-and-resolve-conflicts step, shared by the
-// merge path and the rebase-retry fallback.
+// Rebase-and-resolve-conflicts step, shared by the merge path and the
+// rebase-retry fallback: lemcore rewrites each round's conflicted files.
 async function rebaseHeadBranchForExecutor(ctx: GateContext): Promise<void> {
-  const executor = await resolveAgentExecutor(ctx.task.repository.connection.userId);
-  if (executor === 'hermes') {
-    await rebaseHeadBranchViaHermes(ctx);
-  } else if (executor === 'lemcore') {
-    const { rebaseHeadBranchViaLemcore } = await import('./merge-gate-rebase.js');
-    await rebaseHeadBranchViaLemcore(ctx);
-  } else {
-    await rebaseHeadBranchWithLlm(ctx);
-  }
+  await rebaseHeadBranchViaLemcore(ctx);
 }
 
 // rebase-retry: the CI-fix budget is spent. Red CI after several fix rounds
@@ -245,12 +213,10 @@ export function mergeGateAction(
   checks: PrChecksStatus,
   attempt: number,
   ciFixes: number,
-  executor: string,
   rebaseRetries = 0,
 ): MergeGateAction {
   if (!checks.supported || checks.state === 'green') return 'merge';
   if (checks.state === 'pending') return attempt >= MERGE_GATE_MAX_ATTEMPTS ? 'manual' : 'wait';
-  if (executor !== 'hermes' && executor !== 'lemcore') return 'manual';
   if (ciFixes >= MAX_CI_FIX_ATTEMPTS) {
     return rebaseRetries >= MAX_REBASE_RETRIES ? 'manual' : 'rebase-retry';
   }
@@ -268,11 +234,11 @@ function manualGateMessage(checks: PrChecksStatus, ciFixes: number): string {
   return 'CI checks are failing — awaiting manual fix';
 }
 
-// fix-ci: hermes fixes the branch, then the gate re-enqueues — CI must pass
+// fix-ci: lemcore fixes the branch, then the gate re-enqueues — CI must pass
 // on the fix commit before the next merge attempt. Rebase-first: when main
 // moved, red CI is often unfixable by a branch-local patch (broken workflow
 // files, guard regressions already fixed on main, divergent test setup) —
-// hermes fixes are only worth their tokens on an up-to-date branch.
+// agent fixes are only worth their tokens on an up-to-date branch.
 async function runCiFixAndRequeue(ctx: GateContext): Promise<void> {
   const { task, rt } = ctx;
   if (await prepareMergeCheckout(ctx)) {
@@ -289,9 +255,9 @@ async function runCiFixAndRequeue(ctx: GateContext): Promise<void> {
   }
   await logEvent(
     task.id,
-    `CI checks are failing — fixing with the hermes agent (attempt ${ctx.ciFixes + 1}/${MAX_CI_FIX_ATTEMPTS})`,
+    `CI checks are failing — fixing with the lemcore agent (attempt ${ctx.ciFixes + 1}/${MAX_CI_FIX_ATTEMPTS})`,
   );
-  await runCiFixViaHermes(ctx);
+  await runCiFixViaLemcore(ctx);
   await persistTokenUsage(task.id, rt.usedTokens, tokenSplit(rt));
   // The CI fix was pushed — the task waits for checks on the fix commit.
   await setTaskStatus(task.id, 'waiting_ci');
@@ -378,8 +344,7 @@ export async function mergeGateTask(
     if (task.status === 'waiting_ci') {
       await setTaskStatus(taskId, 'awaiting_review');
     }
-    const executor = await resolveAgentExecutor(task.repository.connection.userId);
-    const action = mergeGateAction(checks, attempt, ciFixes, executor, rebaseRetries);
+    const action = mergeGateAction(checks, attempt, ciFixes, rebaseRetries);
     if (!(await dispatchGateAction(action, checks, task, attempt, ciFixes, rebaseRetries))) return;
     if (!checks.supported) {
       await logEvent(task.id, 'provider check statuses unavailable; merging on the review verdict alone');

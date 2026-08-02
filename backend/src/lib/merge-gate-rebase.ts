@@ -1,36 +1,18 @@
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
-import { config } from '../config.js';
 import {
-  cloneRepository,
   git,
   logEvent,
   sanitizeRelativePath,
+  cloneRepository,
 } from './agent-git.js';
-import { llmCall, type LlmRuntime } from './agent-runtime.js';
-import {
-  buildConflictResolutionMessages,
-  hasConflictMarkers,
-  parseResolvedFile,
-} from './conflict-resolve.js';
-import { runHermesTask } from './hermes-runner.js';
 import type { GateContext } from './merge-gate-context.js';
+import { hasConflictMarkers } from './conflict-resolve.js';
 import { buildAgentConflictPrompt } from './pr-review.js';
 import { publishTaskEvent } from './task-events.js';
 
 // Rebase machinery for the merge-gate job: staleness checkout, the rebase
-// loop, and the two conflict resolvers (direct LLM / hermes agent).
-
-const MAX_CONFLICT_FILE_CHARS = 40_000;
-
-export function hermesLlm(rt: LlmRuntime) {
-  return {
-    baseUrl: rt.cfg.baseUrl,
-    apiKey: rt.apiKey,
-    model: rt.cfg.model,
-    contextWindow: rt.cfg.contextWindow,
-  };
-}
+// loop, and the lemcore conflict resolver.
 
 // Paths with unresolved rebase/merge conflicts in the workdir.
 async function conflictedPaths(workdir: string): Promise<string[]> {
@@ -109,78 +91,9 @@ async function runRebaseLoop(
   });
 }
 
-async function resolveConflictedFile(
-  ctx: GateContext,
-  relPath: string,
-): Promise<void> {
-  const { task, rt, headBranch, workdir } = ctx;
-  const rel = sanitizeRelativePath(relPath);
-  const abs = path.join(workdir, rel);
-  const conflictedContent = await fs.readFile(abs, 'utf8');
-  if (conflictedContent.length > MAX_CONFLICT_FILE_CHARS) {
-    throw new Error(`conflicted file ${rel} is too large for LLM resolution`);
-  }
-  const result = parseResolvedFile(
-    await llmCall(
-      rt,
-      buildConflictResolutionMessages({
-        path: rel,
-        conflictedContent,
-        baseBranch: task.repository.defaultBranch,
-        headBranch,
-        systemPromptExtra: rt.cfg.systemPromptExtra,
-      }),
-    ),
-  );
-  // Semantically incompatible sides: the LLM declined to force a merge —
-  // abort the rebase so the merge gate hands the PR to a human.
-  if (result.status === 'unresolved') {
-    throw new Error(`merge conflict in ${rel} needs human resolution: ${result.reason}`);
-  }
-  await fs.writeFile(abs, result.content, 'utf8');
-  await git(['add', '--', rel], { cwd: workdir });
-  await publishTaskEvent(task.id, 'diff', { path: rel, action: 'conflict-resolved' });
-  await logEvent(task.id, `resolved conflict in ${rel}`);
-}
-
 // Rebases the head branch onto the base (checkout already prepared by
-// prepareMergeCheckout); the LLM rewrites each conflicted file per round.
-export async function rebaseHeadBranchWithLlm(ctx: GateContext): Promise<void> {
-  await runRebaseLoop(ctx, async (conflicted) => {
-    for (const rel of conflicted) {
-      await resolveConflictedFile(ctx, rel);
-    }
-  });
-}
-
-// Hermes variant: the agent rewrites every conflicted file of the round;
-// marker verification and staging stay external.
-export async function rebaseHeadBranchViaHermes(ctx: GateContext): Promise<void> {
-  const { task, rt, headBranch, workdir, secrets } = ctx;
-  await runRebaseLoop(ctx, async (conflicted) => {
-    await logEvent(
-      task.id,
-      `resolving ${conflicted.length} conflicted file(s) with the hermes agent`,
-    );
-    await runHermesTask({
-      workdir,
-      prompt: buildAgentConflictPrompt({
-        baseBranch: task.repository.defaultBranch,
-        headBranch,
-        conflictedPaths: conflicted,
-        systemPromptExtra: rt.cfg.systemPromptExtra,
-      }),
-      llm: hermesLlm(rt),
-      taskId: task.id,
-      secrets,
-      timeoutMs: config.AGENT_HERMES_TIMEOUT_MINUTES * 60_000,
-      stallTimeoutMs: config.AGENT_HERMES_STALL_TIMEOUT_MINUTES * 60_000,
-    });
-    await stageResolvedConflicts(ctx, conflicted, 'hermes');
-  });
-}
-
-// Lemcore variant: same rebase loop, conflict prompt via the structured loop.
+// prepareMergeCheckout); lemcore rewrites each round's conflicted files and
+// the resolved files are staged after marker verification.
 export async function rebaseHeadBranchViaLemcore(ctx: GateContext): Promise<void> {
   const { task, rt, headBranch, workdir, secrets } = ctx;
   const { runLemcoreTask } = await import('./lemcore/run.js');

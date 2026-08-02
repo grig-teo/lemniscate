@@ -4,17 +4,12 @@ import type { Task } from '@prisma/client';
 import { config } from '../config.js';
 import { logger } from './logger.js';
 import {
-  applyChanges,
-  checkoutTaskBranch,
   cleanupWorkdir,
-  commitAndPush,
   logEvent,
   persistTokenUsage,
   recordJobFailure,
   type GitAuth,
 } from './agent-git.js';
-import { resolveAgentExecutor } from './agent-executor.js';
-import { buildSkillsSection, requestChanges, type LlmChangesResponse } from './agent-prompts.js';
 import {
   loadTaskWithRepo,
   prepareAgentRuntime,
@@ -22,29 +17,20 @@ import {
   type LlmRuntime,
   type TaskWithRepo,
 } from './agent-runtime.js';
-import { requestReviewViaHermes, runHermesFixIteration } from './agent-review-hermes.js';
-import { runLemcoreReview } from './lemcore/review.js';
+import { runLemcoreReview, runLemcoreFixIteration } from './lemcore/review.js';
 import { deferRateLimitedReview } from './review-defer.js';
-import { continueOrFinishReview } from './review-finish.js';
 import { setTaskStatus } from './task-events.js';
-import { hasMeaningfulChanges } from './workdir-changes.js';
 import { getPullRequestDiff } from './pull-requests.js';
-import {
-  buildFixUserPrompt,
-  AGENT_REVIEW_FILENAME,
-  type PrReview,
-} from './pr-review.js';
+import { type PrReview } from './pr-review.js';
 import { requestReviewWithRetry } from './review-request.js';
 import { isTaskPaused, TaskPausedError } from './task-pause.js';
-import { buildRepoContext } from './repo-context.js';
 import { prisma } from './prisma.js';
 import { transcriptPath } from './lemcore/loop-constants.js';
-import { loadAgentsMdTemplate, loadTaskSkills } from './task-skills.js';
 
-// Job: review-pr — review → fix iterations → hand-off to the merge gate.
-// Both phases run on the configured executor: 'hermes' uses the same agent
-// CLI as the implementation run (verdict via a JSON file), 'internal' uses
-// direct structured LLM calls. Merging lives in merge-gate.ts (CI-gated).
+// Job: review-pr — review → fix iteration → hand-off to the merge gate.
+// Lemcore is the only agent: it reviews in a checked-out clone of the task
+// branch and fixes its own findings on that checkout. Merging lives in
+// merge-gate.ts (CI-gated).
 
 const MAX_REVIEW_DIFF_CHARS = 24_000;
 // Full review loops per PR (re-enqueues from restarts/recovery included —
@@ -53,10 +39,11 @@ const MAX_REVIEW_DIFF_CHARS = 24_000;
 // the merge gate / manual review instead of burning more tokens.
 export const MAX_REVIEW_LOOPS = 3;
 
-// Direct structured review call. Empty/invalid replies (a z.ai GLM quirk)
-// are retried with a nudge inside review-request.ts. When repoContext is
-// provided the reviewer sees the file tree + key files + AGENTS.md alongside
-// the diff, so verdicts can reference repo conventions and surrounding code.
+// Direct structured review call — the fallback when lemcore leaves no valid
+// review file. Empty/invalid replies (a z.ai GLM quirk) are retried with a
+// nudge inside review-request.ts. When repoContext is provided the reviewer
+// sees the file tree + key files + AGENTS.md alongside the diff, so verdicts
+// can reference repo conventions and surrounding code.
 export async function requestReview(
   rt: LlmRuntime,
   task: Task,
@@ -80,43 +67,10 @@ export async function fetchReviewDiff(task: TaskWithRepo, headBranch: string): P
   return `${truncated}\n… [truncated; ~${shownFiles} of ${totalFiles} files shown]`;
 }
 
-async function logReview(taskId: string, review: PrReview, usedTokens: number): Promise<void> {
-  await logEvent(taskId, `LLM review: ${review.verdict} — ${review.summary}`);
-  for (const issue of review.issues) {
-    await logEvent(taskId, `review issue${issue.path ? ` [${issue.path}]` : ''}: ${issue.comment}`);
-  }
-  await logEvent(taskId, `LLM usage so far: ~${usedTokens} tokens`);
-}
-
-// ---------------------------------------------------------------------------
-// Review-fix iteration
-// ---------------------------------------------------------------------------
-
-async function proposeFixes(
-  task: TaskWithRepo,
-  rt: LlmRuntime,
-  review: PrReview,
-  workdir: string,
-): Promise<LlmChangesResponse> {
-  const agentsMdTemplate = await loadAgentsMdTemplate(task.repository);
-  const { text: repoContext } = await buildRepoContext(
-    workdir,
-    rt.cfg.contextWindow,
-    agentsMdTemplate,
-  );
-  const fixPrompt = [
-    buildFixUserPrompt({ taskTitle: task.title, taskPrompt: task.prompt, review }),
-    `\n# Repository context\n${repoContext}`,
-  ].join('\n');
-  const skillsSection = buildSkillsSection(await loadTaskSkills(task));
-  const result = await requestChanges(rt, task, repoContext, fixPrompt, skillsSection);
-  await logEvent(task.id, `LLM proposed ${result.changes.length} fix change(s): ${result.summary}`);
-  return result;
-}
-
 // The fix tail shared by the review loop and the address-review job
 // (AGENTS.md §6 — single home): assumes the task branch is already checked
-// out in `workdir`; proposes/applies fixes and pushes to the same branch.
+// out in `workdir`; the lemcore agent fixes the review issues on that
+// checkout and pushes to the same branch.
 export async function applyReviewFixes(
   task: TaskWithRepo,
   rt: LlmRuntime,
@@ -127,42 +81,10 @@ export async function applyReviewFixes(
   secrets: string[],
   auth: GitAuth,
 ): Promise<void> {
-  if ((await resolveAgentExecutor(task.repository.connection.userId)) === 'hermes') {
-    await runHermesFixIteration(task, rt, review, headBranch, workdir, secrets, auth);
-    return;
-  }
-  const { summary, changes } = await proposeFixes(task, rt, review, workdir);
-  const applied = await applyChanges(task.id, workdir, changes, secrets);
-  if (applied === 0 || !(await hasMeaningfulChanges(workdir))) {
-    await logEvent(task.id, 'no fix changes produced; the branch is unchanged');
-    return;
-  }
-  await commitAndPush(task, rt, workdir, summary, ['push', 'origin', headBranch], secrets, auth);
-  await logEvent(task.id, `pushed review fixes to ${headBranch}`);
-}
-
-// Clones the repo, checks out the task branch, applies LLM fixes for the
-// review issues, commits, and pushes back to the same branch.
-async function runReviewFixIteration(
-  task: TaskWithRepo,
-  rt: LlmRuntime,
-  review: PrReview,
-  headBranch: string,
-  workdir: string,
-  cloneUrl: string,
-  secrets: string[],
-  auth: GitAuth,
-): Promise<void> {
-  await logEvent(task.id, 'applying review fixes');
-  await checkoutTaskBranch(
-    workdir,
-    cloneUrl,
-    task.repository.defaultBranch,
-    headBranch,
-    secrets,
-    auth,
-  );
-  await applyReviewFixes(task, rt, review, headBranch, workdir, cloneUrl, secrets, auth);
+  // cloneUrl is unused: the branch is already checked out in `workdir` — the
+  // parameter stays so the review loop and address-review share one call shape.
+  void cloneUrl;
+  await runLemcoreFixIteration(task, rt, review, headBranch, workdir, secrets, auth);
 }
 
 // ---------------------------------------------------------------------------
@@ -170,11 +92,11 @@ async function runReviewFixIteration(
 // ---------------------------------------------------------------------------
 
 // Auto-merge is delegated to the merge-gate job: it waits for green CI,
-// sends hermes to fix failing checks, and resolves conflicts (again waiting
-// for CI on the resolution). The review job ends here — flip the task back
-// to awaiting_review so the landing page no longer shows it as "reviewing".
-// finishReview / continueOrFinishReview live in review-finish.ts (SSoT for
-// internal, hermes, and lemcore).
+// sends the agent to fix failing checks, and resolves conflicts (again
+// waiting for CI on the resolution). The review job ends here — flip the
+// task back to awaiting_review so the landing page no longer shows it as
+// "reviewing". finishReview / continueOrFinishReview live in
+// review-finish.ts (single home for the review finish path).
 
 // Returns the runtime so the caller can persist cumulative token usage.
 async function executeReviewTask(
@@ -196,68 +118,7 @@ async function executeReviewTask(
     task.llmTokensUsed,
     task.repository.reviewLlmConfigId,
   );
-  const executor = await resolveAgentExecutor(task.repository.connection.userId);
-  if (executor === 'hermes') {
-    return executeHermesReview(task, rt, headBranch, attempt, workdir, cloneUrl, secrets, gitAuth);
-  }
-  if (executor === 'lemcore') {
-    return runLemcoreReview(task, rt, headBranch, attempt, workdir, cloneUrl, secrets, gitAuth);
-  }
-  const diff = await fetchReviewDiff(task, headBranch);
-  await logEvent(task.id, `reviewing pull request (attempt ${attempt + 1})`);
-  // Feed repo context (file tree + key files + AGENTS.md) into the internal
-  // review so the reviewer can reference repo conventions and surrounding code
-  // — not just the bare diff. Hermes/lemcore review in a checked-out clone
-  // and don't need this (they read files themselves).
-  const agentsMdTemplate = await loadAgentsMdTemplate(task.repository);
-  const { text: reviewRepoContext } = await buildRepoContext(
-    workdir,
-    rt.cfg.contextWindow,
-    agentsMdTemplate,
-  );
-  const review = await requestReview(rt, task, diff, reviewRepoContext);
-  await logReview(task.id, review, rt.usedTokens);
-  await continueOrFinishReview(task, rt, review, () =>
-    runReviewFixIteration(task, rt, review, headBranch, workdir, cloneUrl, secrets, gitAuth),
-  );
-  return rt;
-}
-
-// Hermes review flow: clone + checkout the task branch, let the agent review
-// it, let the same agent fix findings on that checkout, then hand the PR to
-// the merge gate exactly like the internal path.
-async function executeHermesReview(
-  task: TaskWithRepo,
-  rt: LlmRuntime,
-  headBranch: string,
-  attempt: number,
-  workdir: string,
-  cloneUrl: string,
-  secrets: string[],
-  auth: GitAuth,
-): Promise<LlmRuntime> {
-  await checkoutTaskBranch(
-    workdir,
-    cloneUrl,
-    task.repository.defaultBranch,
-    headBranch,
-    secrets,
-    auth,
-  );
-  await logEvent(task.id, `reviewing pull request (attempt ${attempt + 1})`);
-  let review = await requestReviewViaHermes(task, rt, workdir, headBranch, secrets);
-  if (!review) {
-    await logEvent(
-      task.id,
-      `no valid ${AGENT_REVIEW_FILENAME} from hermes, falling back to a direct LLM review`,
-    );
-    review = await requestReview(rt, task, await fetchReviewDiff(task, headBranch));
-  }
-  await logReview(task.id, review, rt.usedTokens);
-  await continueOrFinishReview(task, rt, review, () =>
-    runHermesFixIteration(task, rt, review, headBranch, workdir, secrets, auth),
-  );
-  return rt;
+  return runLemcoreReview(task, rt, headBranch, attempt, workdir, cloneUrl, secrets, gitAuth);
 }
 
 export async function reviewTask(taskId: string, attempt = 0): Promise<void> {
