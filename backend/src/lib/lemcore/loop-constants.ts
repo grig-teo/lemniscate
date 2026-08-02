@@ -34,15 +34,33 @@ const GOAL_LINES = [
   '- Every turn moves the tracked objective forward; when it is verifiably complete, stop and summarize.',
 ];
 
+const PLAN_LINES = [
+  'Plan before you implement:',
+  '- Before starting implementation, present a plan: the tracked objective plus a TODO list (via todo_write) of the steps you will complete.',
+  '- Keep the TODO list current with todo_write as work progresses; mark each item done only when its changes are in place and verified.',
+];
+
+const COMMIT_LINES = [
+  'Commit and push after each TODO mark:',
+  '- You run on a task branch that backs an open pull request. After marking a TODO item done, check `git status --porcelain`; if that step changed files, stage them and make a commit with a descriptive message, then `git push` so the open pull request updates.',
+  '- Make one commit per TODO item — never batch several marked items into a single commit.',
+  '- If `git status --porcelain` shows no changes for the step, skip the commit and push for that mark.',
+  '- Never create branches, force-push (--force), or rewrite history — plain commits and pushes to the current branch only.',
+];
+
 export function lemcoreSystemPrompt(): string {
   const hermesInstructions =
-    "Work in the current directory. Implement the task completely, including tests if the project has a test setup. Respect the repository's own rules (AGENTS.md, lint/size guards) and keep any repo-provided checks (e.g. check:max-lines, lint scripts) passing — split modules instead of growing files past a size limit. Do NOT git commit, push, or create branches — git is handled externally.";
+    "Work in the current directory. Implement the task completely, including tests if the project has a test setup. Respect the repository's own rules (AGENTS.md, lint/size guards) and keep any repo-provided checks (e.g. check:max-lines, lint scripts) passing — split modules instead of growing files past a size limit.";
   return [
     hermesInstructions,
     '',
     'A codebase graph is built on each repository scan. Prefer graph_query, graph_impact, graph_neighbors, and graph_search to navigate structure (callers/callees/imports) before bulk raw-file reads. Only read full files when the graph cannot answer. This keeps prompt tokens low.',
     '',
     ...GOAL_LINES,
+    '',
+    ...PLAN_LINES,
+    '',
+    ...COMMIT_LINES,
     '',
     'You have access to the following tools. Use them to read, write, and explore files.',
     '- read_file(path, offset?, limit?): read a file',
@@ -69,8 +87,6 @@ export function lemcoreSystemPrompt(): string {
     'For complex investigations (e.g. "find all callers of X"), use grep + graph tools to gather information, then summarize your findings in a todo_write or a note before acting. This keeps your reasoning organized.',
     '',
     'Before finishing, you MUST run the project\'s tests or build commands (e.g. `bash(npm test)`, `bash(npm run build)`) and confirm they pass. Do NOT finish if tests are failing — fix the failures first. Only finish with a summary after verification passes. Call think() first to verify your changes against the task requirements before finishing.',
-    '',
-    'After completing each logical step from your TODO list, consider staging and committing the change with a descriptive message (e.g. `bash(git add -A && git commit -m "step description")`). This creates natural rollback points and improves PR reviewability.',
     '',
     'When you discover a non-obvious repo fact (test command, flaky test, environment quirk, build trick), append a one-line note to LEARNED.md in the repo root. This file is auto-loaded on future runs so you don\'t rediscover the same thing.',
   ].join('\n');

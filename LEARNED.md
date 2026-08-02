@@ -1,0 +1,2 @@
+- Deps: npm workspaces repo — run `npm install --include=dev` from the repo ROOT (backend/ has no own node_modules; vitest only exists after root install).
+- Env quirk: `NODE_ENV=production` is set globally, so plain `npm ci` silently omits devDependencies — use `npm ci --include=dev`; it's an npm-workspaces repo, so deps land in the root `node_modules`, not `backend/node_modules`.
