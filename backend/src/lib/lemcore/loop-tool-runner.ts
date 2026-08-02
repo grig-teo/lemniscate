@@ -25,7 +25,9 @@ import {
   toolGraphSearch,
 } from './graph-tools.js';
 import type { LemcoreMessage, LemcoreStep } from './loop-types.js';
+import { assertFilePathArg } from './path-arg-guard.js';
 import { resolveSkillContent, type LemcoreSkill } from './skills.js';
+
 export async function executeTool(
   name: string,
   args: Record<string, unknown>,
@@ -34,6 +36,8 @@ export async function executeTool(
   skills: LemcoreSkill[] = [],
   multiSampleCtx?: { rt: LlmRuntime; taskId: string; toolCall: ChatToolCall },
 ): Promise<ToolResult> {
+  const pathError = assertFilePathArg(name, args);
+  if (pathError) return pathError;
   switch (name) {
     case 'read_file':
       return toolReadFile(

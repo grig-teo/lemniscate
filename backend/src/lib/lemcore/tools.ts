@@ -115,6 +115,27 @@ export function jailPath(workdir: string, relPath: string): string {
   return resolvedTarget;
 }
 
+// Reads a jailed path as UTF-8 text, rejecting directories with an actionable
+// error before Node throws its raw "EISDIR: illegal operation on a directory,
+// open '<abs path>'" (which leaks the workdir internals into the console and
+// tells the agent nothing about which argument was wrong). An empty relPath
+// resolves to the workdir root — a directory — so it is rejected here too.
+// Both file-content tools (read_file / write_file's prior-content snapshot)
+// and the edit pipeline (edit-helpers.prepareEditContent) share this helper
+// so the message is identical everywhere (AGENTS.md §6).
+export async function readFileTarget(
+  absPath: string,
+  relPath: string,
+  toolName: string,
+): Promise<string> {
+  const stat = await fs.stat(absPath);
+  if (stat.isDirectory()) {
+    const shown = relPath.trim() || '(empty path — resolves to the workdir root)';
+    throw new Error(`${toolName}: "${shown}" is a directory, not a file — pass a file path`);
+  }
+  return fs.readFile(absPath, 'utf8');
+}
+
 export async function toolReadFile(
   workdir: string,
   relPath: string,
@@ -124,7 +145,7 @@ export async function toolReadFile(
 ): Promise<ToolResult> {
   const startMs = Date.now();
   const absPath = jailPath(workdir, relPath);
-  const content = await fs.readFile(absPath, 'utf8');
+  const content = await readFileTarget(absPath, relPath, 'read_file');
   const lines = content.split('\n');
   const start = offset ?? 0;
   // Default cap (100 lines) so an unbounded read doesn't dump a whole file
@@ -150,13 +171,25 @@ export async function toolWriteFile(
   const startMs = Date.now();
   const absPath = jailPath(workdir, relPath);
   // Capture prior content (null when the file is new) so the console's
-  // "Show details" view can render an added/deleted line diff.
+  // "Show details" view can render an added/deleted line diff. Directories
+  // are NOT "new files": stat them first so writing over one fails below
+  // with the actionable message instead of a raw EISDIR.
   let priorContent: string | null = null;
   try {
-    priorContent = await fs.readFile(absPath, 'utf8');
-  } catch { /* new file — diff from /dev/null */ }
+    priorContent = await readFileTarget(absPath, relPath, 'write_file');
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
+    /* new file — diff from /dev/null */
+  }
   await fs.mkdir(path.dirname(absPath), { recursive: true });
-  await fs.writeFile(absPath, content, 'utf8');
+  try {
+    await fs.writeFile(absPath, content, 'utf8');
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'EISDIR') {
+      throw new Error(`write_file: "${relPath}" is a directory, not a file — pass a file path`);
+    }
+    throw err;
+  }
   return {
     tool: 'write_file',
     title: relPath,

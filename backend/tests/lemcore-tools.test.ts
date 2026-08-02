@@ -1,9 +1,10 @@
-import { mkdtemp, writeFile } from 'node:fs/promises';
+import { mkdtemp, writeFile, mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { toolBash, toolGrep, toolGlob, toolReadFile } from '../src/lib/lemcore/tools.js';
+import { toolBash, toolGrep, toolGlob, toolReadFile, toolWriteFile } from '../src/lib/lemcore/tools.js';
+import { prepareEditContent } from '../src/lib/lemcore/edit-helpers.js';
 import { executeTool } from '../src/lib/lemcore/loop-tool-runner.js';
 
 let workdir: string;
@@ -90,6 +91,62 @@ describe('toolGlob', () => {
     expect(result.outputPreview).toContain('a.ts');
     expect(result.outputPreview).toContain('b.ts');
     expect(result.outputPreview).not.toContain('c.md');
+  });
+});
+
+describe('file tools on a directory path — actionable error, not raw EISDIR', () => {
+  it('toolReadFile rejects a directory with the relPath in the message', async () => {
+    await mkdir(path.join(workdir, 'subdir'));
+    await expect(toolReadFile(workdir, 'subdir')).rejects.toThrow(
+      'read_file: "subdir" is a directory, not a file',
+    );
+  });
+
+  it('prepareEditContent rejects a directory (edit_file/multi_edit path)', async () => {
+    await mkdir(path.join(workdir, 'subdir'));
+    await expect(prepareEditContent(workdir, 'subdir', (o) => o)).rejects.toThrow(
+      'is a directory, not a file',
+    );
+  });
+
+  it('prepareEditContent rejects an empty path (resolves to the workdir root)', async () => {
+    await expect(prepareEditContent(workdir, '', (o) => o)).rejects.toThrow(
+      'is a directory, not a file',
+    );
+  });
+
+  it('toolWriteFile rejects writing over a directory', async () => {
+    await mkdir(path.join(workdir, 'adir'));
+    await expect(toolWriteFile(workdir, 'adir', 'x')).rejects.toThrow(
+      'write_file: "adir" is a directory, not a file',
+    );
+  });
+});
+
+describe('executeTool file-path guard — empty/missing path never reaches fs', () => {
+  it.each([
+    ['edit_file', { path: '', search: 'a', replace: 'b' }],
+    ['edit_file', { path: '   ', search: 'a', replace: 'b' }],
+    ['edit_file', { search: 'a', replace: 'b' }],
+    ['multi_edit', { path: '', edits: [{ search: 'a', replace: 'b' }] }],
+    ['read_file', { path: '' }],
+    ['write_file', { content: 'x' }],
+  ])('%s with %o returns a ToolResult error, not a thrown EISDIR', async (name, args) => {
+    const result = await executeTool(name, args, workdir, []);
+
+    expect(result.error).toBeDefined();
+    expect(result.error).not.toContain('EISDIR');
+    expect(result.error).toContain(`${name}: a non-empty "path" argument is required`);
+  });
+
+  it('a real edit_file still works through the guard', async () => {
+    await writeFile(path.join(workdir, 'ok.ts'), 'const a = 1;\n');
+    const result = await executeTool(
+      'edit_file', { path: 'ok.ts', search: 'a = 1', replace: 'a = 2' }, workdir, [],
+    );
+
+    expect(result.error).toBeUndefined();
+    expect(result.outputPreview).toContain('edited ok.ts');
   });
 });
 
