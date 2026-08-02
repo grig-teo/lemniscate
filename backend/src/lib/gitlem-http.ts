@@ -13,8 +13,9 @@ import { prisma } from './prisma.js';
 // gitlem stores repository state as a JSON document (gitlem-store.ts); on
 // the first fetch the document is materialized into a real git repository
 // on disk (gitlem-clone.ts) and the request is proxied to
-// `git http-backend` (smart HTTP, read-only — receive-pack is disabled on
-// the materialized clone).
+// `git http-backend` (smart HTTP). receive-pack is enabled on the
+// materialized clone and a post-receive hook ingests pushed refs back into
+// the JSON doc (gitlem-ingest.ts), so real git push works end to end.
 
 export interface GitlemGitAuth {
   accountId: string;

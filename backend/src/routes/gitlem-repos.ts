@@ -6,6 +6,7 @@ import {
   addBranch,
   openPullRequest,
   parseGitlemDoc,
+  pullRequestChanges,
   readFile,
   startCiRun,
   type GitlemRepoDoc,
@@ -37,6 +38,10 @@ const createPrBodySchema = z.object({
   body: z.string().max(10_000).default(''),
   head: z.string().min(1).max(200),
   base: z.string().min(1).max(200),
+});
+
+const prParamsSchema = nameParamsSchema.extend({
+  number: z.coerce.number().int().positive(),
 });
 
 interface OwnedRepo {
@@ -170,6 +175,20 @@ async function createPrHandler(request: FastifyRequest, reply: FastifyReply) {
   if (outcome) return reply.code(201).send(outcome);
 }
 
+// Single PR (any state) plus its file-level diff — backs the standalone
+// /gitlem/repos/:owner/:repo/pulls/:number page linked from task prUrls.
+async function prDetailHandler(request: FastifyRequest, reply: FastifyReply) {
+  const params = parseOrReply(prParamsSchema, request.params, reply, 'Invalid pull request number');
+  if (!params) return;
+  const repo = await ownedRepo(request, reply);
+  if (!repo) return;
+  const doc = parseGitlemDoc(repo.doc);
+  const pr = doc.prs.find((candidate) => candidate.number === params.number);
+  const files = pr ? pullRequestChanges(doc, pr.number) : null;
+  if (!pr || !files) return reply.code(404).send({ error: 'pull request not found' });
+  return { pr: { ...pr, repo: `${repo.owner.username}/${repo.name}` }, files };
+}
+
 async function ciRunsHandler(request: FastifyRequest, reply: FastifyReply) {
   const repo = await ownedRepo(request, reply);
   if (!repo) return;
@@ -193,6 +212,7 @@ export const gitlemRepoRoutes: FastifyPluginAsync = async (app) => {
   app.get('/repos/:name/readme/:branch', readmeHandler);
   app.get('/repos/:name/prs', prsHandler);
   app.post('/repos/:name/prs', createPrHandler);
+  app.get('/repos/:name/prs/:number', prDetailHandler);
   app.get('/repos/:name/ci-runs', ciRunsHandler);
   app.post('/repos/:name/ci/:branch', triggerCiHandler);
 };
