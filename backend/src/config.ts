@@ -111,6 +111,16 @@ const envSchema = z.object({
   // How many jobs the worker runs in parallel (tasks are I/O-bound: clones
   // and LLM calls), so several repos can be processed at once.
   AGENT_WORKER_CONCURRENCY: z.coerce.number().int().positive().default(4),
+  // Task executor: 'hermes' runs the Hermes Agent CLI; 'internal' uses
+  // the built-in propose/apply loop; 'lemcore' uses the structured
+  // TypeScript agent loop with per-step activity events.
+  AGENT_EXECUTOR: z.enum(['hermes', 'internal', 'lemcore']).default('hermes'),
+  // Hard kill for one `hermes chat` run; the job then fails the task.
+  AGENT_HERMES_TIMEOUT_MINUTES: z.coerce.number().int().positive().default(45),
+  // Hermes CLI stall watchdog: kills the child when nothing is printed for
+  // this long (typically a hung LLM provider) so the run fails fast instead
+  // of pinning a worker slot. 0 disables the watchdog.
+  AGENT_HERMES_STALL_TIMEOUT_MINUTES: z.coerce.number().int().nonnegative().default(15),
   // Hard wall-clock cap for one lemcore agent run; the job then fails
   // the task.
   LEMCORE_TIMEOUT_MINUTES: z.coerce.number().int().positive().default(45),
