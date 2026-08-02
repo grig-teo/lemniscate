@@ -197,10 +197,11 @@ describe('ConsolePane exclusive detail view', () => {
   });
 
   it('replaces the right-side Objective/Plan panel instead of stacking it', async () => {
-    // React keys must be unique among siblings. Two right-side overlays
-    // (ObjectiveTodoPanel + TaskStepsRail) were both keyed on the raw task id,
-    // so switching tasks could leave the previous task's panel mounted —
-    // exactly the "collecting in the column" bug.
+    // The right-side overlays (ObjectiveTodoPanel + TaskStepsRail) are keyed
+    // on a per-switch session id, not the raw task id: React leaks the old
+    // keyed fiber when 3+ same-type siblings swap back to an already-seen
+    // key, so the previous task's panel stayed mounted — exactly the
+    // "collecting in the column" bug.
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     renderPane();
 
