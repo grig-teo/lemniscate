@@ -31,6 +31,20 @@ export interface GitlemPr {
   state: 'open' | 'closed' | 'merged';
 }
 
+/** Full PR payload for the standalone PR page (any state, with body). */
+export interface GitlemPrDetail extends GitlemPr {
+  body: string;
+  createdAt: string;
+  repo: string;
+}
+
+export interface GitlemPrFileChange {
+  path: string;
+  status: 'added' | 'modified';
+  headLines: number;
+  baseLines: number;
+}
+
 export interface GitlemCiRun {
   id: string;
   branch: string;
@@ -65,6 +79,20 @@ export function useGitlemPrs(name: string | null) {
     queryKey: ['gitlem', 'repo', name, 'prs'],
     enabled: name !== null,
     queryFn: () => api.get<{ prs: GitlemPr[] }>(`/api/gitlem/repos/${name}/prs`).then((r) => r.prs),
+  });
+}
+
+/** GET /api/gitlem/repos/:name/prs/:number — one PR (any state) + changed files. */
+export function useGitlemPr(name: string | null, number: number | null) {
+  return useQuery({
+    queryKey: ['gitlem', 'repo', name, 'prs', number],
+    enabled: name !== null && number !== null,
+    queryFn: () =>
+      api.get<{ pr: GitlemPrDetail; files: GitlemPrFileChange[] }>(
+        `/api/gitlem/repos/${name}/prs/${number}`,
+      ),
+    // 404 = wrong owner or unknown PR; the page renders its own not-found state.
+    meta: SUPPRESS_ERROR_TOAST_META,
   });
 }
 

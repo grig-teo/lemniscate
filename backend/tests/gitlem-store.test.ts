@@ -9,6 +9,7 @@ import {
   mergePullRequest,
   openPullRequest,
   parseGitlemDoc,
+  pullRequestChanges,
   readFile,
   replaceBranchTree,
   startCiRun,
@@ -128,6 +129,31 @@ describe('mergePullRequest', () => {
 
   it('returns false for an unknown PR number', () => {
     expect(mergePullRequest(emptyGitlemDoc(), 42)).toBe(false);
+  });
+});
+
+describe('pullRequestChanges', () => {
+  it('lists added and modified files with line counts, sorted by path', () => {
+    const doc = emptyGitlemDoc();
+    upsertFile(doc, 'main', 'README.md', '# base');
+    upsertFile(doc, 'main', 'same.txt', 'identical');
+    upsertFile(doc, 'dev', 'README.md', '# head\nmore');
+    upsertFile(doc, 'dev', 'same.txt', 'identical');
+    upsertFile(doc, 'dev', 'feature.ts', 'new file');
+    const pr = openPullRequest(doc, { title: 't', body: '', head: 'dev', base: 'main' });
+    expect(pullRequestChanges(doc, pr.number)).toEqual([
+      { path: 'feature.ts', status: 'added', headLines: 1, baseLines: 0 },
+      { path: 'README.md', status: 'modified', headLines: 2, baseLines: 1 },
+    ]);
+  });
+
+  it('returns an empty diff when head matches base, null for unknown numbers', () => {
+    const doc = emptyGitlemDoc();
+    upsertFile(doc, 'main', 'a.txt', 'one');
+    addBranch(doc, 'dev', 'main');
+    const pr = openPullRequest(doc, { title: 't', body: '', head: 'dev', base: 'main' });
+    expect(pullRequestChanges(doc, pr.number)).toEqual([]);
+    expect(pullRequestChanges(doc, 999)).toBeNull();
   });
 });
 

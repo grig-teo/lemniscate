@@ -2,7 +2,7 @@ import { ExternalLink, GitBranch, Loader2, X } from 'lucide-react';
 
 import { useTask, type Task } from '@/lib/hooks';
 import { useWorkspaceSelection, type SelectedTask } from '@/lib/selection';
-import { isSafeHttpUrl } from '@/lib/url';
+import { prUrlHref } from '@/lib/url';
 import { StatusBadge } from '@/components/StatusBadge';
 import { TokensBadge } from '@/components/TokensBadge';
 import { Badge } from '@/components/ui/badge';
@@ -115,6 +115,8 @@ function formatTimestamp(iso: string): string {
 }
 
 function DetailMeta({ detail }: { detail: Task }) {
+  // gitlem PR URLs are root-relative; resolve them against the app base.
+  const prHref = detail.prUrl ? prUrlHref(detail.prUrl) : null;
   return (
     <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
       {detail.branchName && (
@@ -123,9 +125,9 @@ function DetailMeta({ detail }: { detail: Task }) {
           <span className="max-w-40 truncate font-mono">{detail.branchName}</span>
         </span>
       )}
-      {detail.prUrl && isSafeHttpUrl(detail.prUrl) && (
+      {prHref && (
         <a
-          href={detail.prUrl}
+          href={prHref}
           target="_blank"
           rel="noreferrer"
           className="flex items-center gap-1 text-blue-500 hover:underline"

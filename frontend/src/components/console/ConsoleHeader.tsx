@@ -3,7 +3,7 @@ import { ExternalLink, GitBranch, Loader2, Pause, Play, Smartphone, Square, X } 
 import { useCancelTask, usePauseTask, useResumeTask, useStartTask } from '@/lib/hooks';
 import { useWorkspaceSelection, type SelectedTask } from '@/lib/selection';
 import type { ChangeSummary } from '@/lib/session-changes';
-import { isSafeHttpUrl } from '@/lib/url';
+import { prUrlHref } from '@/lib/url';
 import { StatusBadge } from '@/components/StatusBadge';
 import { TokensBadge } from '@/components/TokensBadge';
 import { DiffStat } from '@/components/console/ChangesDialog';
@@ -70,6 +70,8 @@ export function ConsoleHeader({
   const startTask = useStartTask();
   const pauseTask = usePauseTask();
   const resumeTask = useResumeTask();
+  // gitlem PR URLs are root-relative; resolve them against the app base.
+  const prHref = task.prUrl ? prUrlHref(task.prUrl) : null;
   return (
     <div className="flex items-center gap-3 border-b px-4 py-2">
       <span className="min-w-0 flex-1 truncate text-sm font-medium" title={task.title}>
@@ -96,9 +98,9 @@ export function ConsoleHeader({
         </button>
       )}
       {changes && onOpenChanges && <ChangesBadge summary={changes} onOpen={onOpenChanges} />}
-      {task.prUrl && isSafeHttpUrl(task.prUrl) && (
+      {prHref && (
         <a
-          href={task.prUrl}
+          href={prHref}
           target="_blank"
           rel="noreferrer"
           className="flex items-center gap-1 text-xs text-blue-500 hover:underline"

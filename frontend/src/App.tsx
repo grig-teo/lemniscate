@@ -8,6 +8,7 @@ import { useHasActiveProcesses } from '@/lib/queries/tasks';
 import { LandingPage } from '@/pages/LandingPage';
 import { LoginPage } from '@/pages/LoginPage';
 import { GitlemConnectPage } from '@/pages/GitlemConnectPage';
+import { GitlemPrPage } from '@/pages/GitlemPrPage';
 import { ShellPage } from '@/pages/ShellPage';
 
 /** Gate for authenticated routes: spinner while the session loads, /login on 401. */
@@ -37,6 +38,15 @@ const router = createBrowserRouter(
     {
       path: '/connect/gitlem',
       element: <GitlemConnectPage />,
+    },
+    {
+      // Internal git host PR links (task prUrls) land here.
+      path: '/gitlem/repos/:owner/:repo/pulls/:number',
+      element: (
+        <RequireAuth>
+          <GitlemPrPage />
+        </RequireAuth>
+      ),
     },
     {
       path: '/dashboard',

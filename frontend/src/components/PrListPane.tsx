@@ -4,6 +4,7 @@ import { useMergeTask, useRepositories, useReviewTask, useTasks } from '@/lib/ho
 import { inFlightPollInterval } from '@/lib/running-tasks';
 import { selectPrTasks } from '@/lib/repo-tasks';
 import { useWorkspaceSelection } from '@/lib/selection';
+import { prUrlHref } from '@/lib/url';
 import { Button } from '@/components/ui/button';
 import { StatusBadge } from '@/components/StatusBadge';
 
@@ -64,6 +65,8 @@ function PrRow({
   reviewMutation: { isPending: boolean; mutate: (id: string) => void };
   mergeMutation: { isPending: boolean; mutate: (id: string) => void };
 }) {
+  // gitlem PR URLs are root-relative; resolve them against the app base.
+  const prHref = task.prUrl ? prUrlHref(task.prUrl) : null;
   return (
     <li className="flex items-center gap-2 rounded-md px-2 py-1.5 hover:bg-accent">
       <div className="min-w-0 flex-1">
@@ -72,9 +75,9 @@ function PrRow({
         </p>
         <div className="flex items-center gap-2">
           <span className="truncate text-xs text-muted-foreground">{task.branchName}</span>
-          {task.prUrl && (
+          {prHref && (
             <a
-              href={task.prUrl}
+              href={prHref}
               target="_blank"
               rel="noopener noreferrer"
               className="flex items-center gap-0.5 text-xs text-blue-500 hover:underline"

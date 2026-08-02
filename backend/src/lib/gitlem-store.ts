@@ -255,3 +255,37 @@ export function startCiRun(doc: GitlemRepoDoc, branchName: string): GitlemCiRun 
   doc.ciRuns.length = Math.min(doc.ciRuns.length, GITLEM_MAX_HISTORY);
   return run;
 }
+
+export interface GitlemPrFileChange {
+  path: string;
+  status: 'added' | 'modified';
+  headLines: number;
+  baseLines: number;
+}
+
+function lineCount(content: string): number {
+  return content === '' ? 0 : content.split('\n').length;
+}
+
+/**
+ * File-level diff of a PR: head files whose content differs from base,
+ * sorted by path. Merge semantics (head wins per path, base-only files are
+ * kept) mean deletions never apply, so only added/modified entries exist.
+ * Returns null when the PR number is unknown.
+ */
+export function pullRequestChanges(doc: GitlemRepoDoc, number: number): GitlemPrFileChange[] | null {
+  const pr = doc.prs.find((candidate) => candidate.number === number);
+  if (!pr) return null;
+  const baseFiles = new Map(
+    (findBranch(doc, pr.base)?.files ?? []).map((file) => [file.path, file.content]),
+  );
+  return (findBranch(doc, pr.head)?.files ?? [])
+    .filter((file) => baseFiles.get(file.path) !== file.content)
+    .map((file) => ({
+      path: file.path,
+      status: (baseFiles.has(file.path) ? 'modified' : 'added') as 'added' | 'modified',
+      headLines: lineCount(file.content),
+      baseLines: lineCount(baseFiles.get(file.path) ?? ''),
+    }))
+    .sort((a, b) => a.path.localeCompare(b.path));
+}

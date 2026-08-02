@@ -19,6 +19,7 @@ import { useFireBrowserNotifications } from '@/lib/browser-notifications';
 import type { Task } from '@/lib/hooks';
 import { useWorkspaceSelection } from '@/lib/selection';
 import { useCloseOnOutside } from '@/lib/use-close-on-outside';
+import { prUrlHref } from '@/lib/url';
 
 const QUERY_KEY = ['notifications'] as const;
 
@@ -145,8 +146,10 @@ function NotificationRow({
 
   const handleClick = async () => {
     if (isUnread(notification)) onRead(notification.id);
-    if (notification.prUrl) {
-      window.open(notification.prUrl, '_blank', 'noopener,noreferrer');
+    // gitlem PR URLs are root-relative; resolve them against the app base.
+    const prHref = notification.prUrl ? prUrlHref(notification.prUrl) : null;
+    if (prHref) {
+      window.open(prHref, '_blank', 'noopener,noreferrer');
     } else if (notification.taskId) {
       await openTaskConsole(notification.taskId, selectTask);
     }
