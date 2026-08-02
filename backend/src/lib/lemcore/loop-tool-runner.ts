@@ -25,19 +25,8 @@ import {
   toolGraphSearch,
 } from './graph-tools.js';
 import type { LemcoreMessage, LemcoreStep } from './loop-types.js';
+import { assertFilePathArg } from './path-arg-guard.js';
 import { resolveSkillContent, type LemcoreSkill } from './skills.js';
-// Tools whose first argument is a file/directory path. Guarded up-front so a
-// missing or blank `path` never reaches fs as the bare workdir — without this,
-// edit_file/read_file called with an empty path surface Node's raw
-// "EISDIR … open '<workdir>'" in the console instead of an actionable error.
-const PATH_TOOLS = new Set([
-  'read_file',
-  'write_file',
-  'edit_file',
-  'multi_edit',
-  'undo_edit',
-  'list_dir',
-]);
 
 export async function executeTool(
   name: string,
@@ -129,24 +118,6 @@ export async function executeTool(
       };
   }
 }
-// Rejects file-path tool calls whose `path` argument is missing or blank
-// (whitespace-only). Returns the error ToolResult, or null when the call is
-// fine — either a non-path tool or a path that is present.
-function assertFilePathArg(name: string, args: Record<string, unknown>): ToolResult | null {
-  if (!PATH_TOOLS.has(name)) return null;
-  const raw = args.path;
-  if (raw !== undefined && String(raw ?? '').trim() !== '') return null;
-  const shown = raw === undefined || raw === null ? '(missing)' : String(raw);
-  const msg = `${name}: a non-empty "path" argument is required (received ${shown}) — pass a path relative to the workdir`;
-  return {
-    tool: name as ToolName,
-    title: `${name}(${shown})`,
-    outputPreview: msg,
-    durationMs: 0,
-    error: msg,
-  };
-}
-
 function asStringArray(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
   return value.map((v) => String(v)).filter(Boolean);
