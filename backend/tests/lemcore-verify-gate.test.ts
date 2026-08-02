@@ -14,6 +14,7 @@ import {
   checkVerifyGate,
   MAX_GATE_FAILURES,
 } from '../src/lib/lemcore/verify-gate.js';
+import { setTodoList } from '../src/lib/lemcore/todo-store.js';
 import type { LemcoreMessage, LemcoreRunOptions } from '../src/lib/lemcore/loop-types.js';
 
 let workdir: string;
@@ -202,6 +203,54 @@ describe('buildReflexionCritique', () => {
   it('warns on the final attempt', () => {
     const msg = buildReflexionCritique('error', MAX_GATE_FAILURES);
     expect(msg).toMatch(/last allowed|final/i);
+  });
+});
+
+describe('checkVerifyGate — TODO gate: CI/review wait for a done list', () => {
+  it('blocks the finish while any TODO item is unchecked (even with the verify gate off)', async () => {
+    setTodoList(workdir, '- [ ] implement endpoint\n- [x] read the docs');
+    const messages: LemcoreMessage[] = [];
+
+    const outcome = await checkVerifyGate(
+      { verifyGate: false } as LemcoreRunOptions,
+      workdir, 'tg1', 0, messages, 'I am done',
+    );
+
+    expect(outcome.kind).toBe('fail');
+    if (outcome.kind === 'fail') {
+      expect(outcome.nextFailureCount).toBe(1);
+      expect(outcome.step.title).toMatch(/TODO list incomplete/);
+    }
+    expect(messages).toHaveLength(1);
+    expect(messages[0]!.role).toBe('user');
+    expect(messages[0]!.content).toContain('implement endpoint');
+    expect(messages[0]!.content).toMatch(/CI checks, code review and finishing are blocked/);
+  });
+
+  it('lets the finish through once every item is checked', async () => {
+    setTodoList(workdir, '- [x] implement endpoint\n- [x] read the docs');
+    const messages: LemcoreMessage[] = [];
+
+    const outcome = await checkVerifyGate(
+      { verifyGate: false } as LemcoreRunOptions,
+      workdir, 'tg2', 0, messages, 'I am done',
+    );
+
+    expect(outcome.kind).toBe('pass');
+    expect(messages).toHaveLength(0);
+  });
+
+  it('stops nudging once the shared failure budget is spent', async () => {
+    setTodoList(workdir, '- [ ] stuck item');
+    const messages: LemcoreMessage[] = [];
+
+    const outcome = await checkVerifyGate(
+      { verifyGate: false } as LemcoreRunOptions,
+      workdir, 'tg3', MAX_GATE_FAILURES, messages, 'I am done',
+    );
+
+    expect(outcome.kind).toBe('pass');
+    expect(messages).toHaveLength(0);
   });
 });
 

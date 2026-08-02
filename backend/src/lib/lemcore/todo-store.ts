@@ -49,6 +49,13 @@ export function parseTodoItems(raw: string): TodoItem[] {
     .filter((item) => item.text.length > 0);
 }
 
+/** Unchecked TODO items for a workdir (texts only) — the todo gate reads these. */
+export function openTodoItems(workdir: string): string[] {
+  return parseTodoItems(getTodoList(workdir))
+    .filter((item) => !item.done)
+    .map((item) => item.text);
+}
+
 export function toolTodoWrite(
   workdir: string,
   content: string,
