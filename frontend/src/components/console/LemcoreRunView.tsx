@@ -37,9 +37,30 @@ function DurationBadge({ ms }: { ms?: number }) {
   );
 }
 
+function DiffView({ diff }: { diff: string }) {
+  return (
+    <pre className="max-h-56 overflow-auto whitespace-pre-wrap break-words rounded-md border border-zinc-200 bg-zinc-50 p-2 font-mono text-[11px] leading-4 dark:border-zinc-700 dark:bg-zinc-900">
+      {diff.split('\n').map((line, index) => (
+        <div key={index} className={diffLineClass(line)}>
+          {line}
+        </div>
+      ))}
+    </pre>
+  );
+}
+
+function diffLineClass(line: string): string {
+  if (line.startsWith('---') || line.startsWith('+++') || line.startsWith('@@')) {
+    return 'text-muted-foreground';
+  }
+  if (line.startsWith('+')) return 'text-success';
+  if (line.startsWith('-')) return 'text-destructive';
+  return 'text-zinc-800 dark:text-zinc-200';
+}
+
 function ExpandableBody({ step }: { step: AgentStep }) {
   const [open, setOpen] = React.useState(step.status === 'error');
-  const hasBody = Boolean(step.detail || step.outputPreview);
+  const hasBody = Boolean(step.detail || step.outputPreview || step.diff);
   if (!hasBody) return null;
   return (
     <div className="mt-1.5">
@@ -67,6 +88,7 @@ function ExpandableBody({ step }: { step: AgentStep }) {
               {step.outputPreview}
             </pre>
           )}
+          {step.diff && <DiffView diff={step.diff} />}
         </div>
       )}
     </div>

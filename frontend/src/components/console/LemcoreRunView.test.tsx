@@ -19,7 +19,15 @@ describe('LemcoreRunView — edit diffs in "Show details"', () => {
   };
 
   it('renders the diff with added-line coloring instead of hiding it', () => {
-    render(<LemcoreRunView steps={[diffStep]} running={false} />);
+    render(
+      <LemcoreRunView
+        steps={[diffStep]}
+        running={false}
+        streamError={false}
+        isLoading={false}
+        isError={false}
+      />,
+    );
     fireEvent.click(screen.getByText('Show details'));
 
     const added = screen.getByText('+const a = 1;');

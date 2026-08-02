@@ -16,6 +16,8 @@ export interface LemcoreStep {
   title: string;
   detail?: string;
   outputPreview?: string;
+  /** Unified diff of a file write/edit; rendered in the console "Show details" view. */
+  diff?: string;
   durationMs?: number;
   tokensUsed?: number;
 }
