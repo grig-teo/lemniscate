@@ -10,6 +10,7 @@ import { execFile } from 'node:child_process';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { redactSecrets } from '../utils.js';
+import { buildEditDiff } from './edit-diff.js';
 import { jailPath, truncate, type ToolResult } from './tools.js';
 
 const execFileAsync = promisify(execFile);
@@ -88,6 +89,26 @@ async function detectLintCommand(workdir: string, relPath: string): Promise<stri
   return null;
 }
 
+// Build the Show-details diff payload for an accepted edit. No diff is
+// attached on reverts — the file's final state equals the original, so
+// there is no change to review.
+export function acceptedEditResult(
+  toolName: string,
+  relPath: string,
+  originalContent: string,
+  newContent: string,
+  outputPreview: string,
+  startMs: number,
+): ToolResult {
+  return {
+    tool: toolName as ToolResult['tool'],
+    title: relPath,
+    outputPreview,
+    durationMs: Date.now() - startMs,
+    diff: buildEditDiff({ relPath, oldContent: originalContent, newContent }),
+  };
+}
+
 // After an edit/multi_edit computes new content, write it, run the repo linter
 // on the edited file, and revert ONLY if the edit introduced NEW lint errors.
 // The before/after diff avoids reverting edits whose lint failures pre-existed.
@@ -107,12 +128,10 @@ export async function lintAndMaybeRevert(
     // No linter configured for this file type — still must persist the edit.
     // (Returning "edited" without writing silently dropped the change.)
     await fs.writeFile(absPath, newContent, 'utf8');
-    return {
-      tool: toolName as ToolResult['tool'],
-      title: relPath,
-      outputPreview: truncate(redactSecrets(`edited ${relPath}`, secrets)),
-      durationMs: Date.now() - startMs,
-    };
+    return acceptedEditResult(
+      toolName, relPath, originalContent, newContent,
+      truncate(redactSecrets(`edited ${relPath}`, secrets)), startMs,
+    );
   }
   // Write the NEW content first, then lint.
   await fs.writeFile(absPath, newContent, 'utf8');
@@ -121,12 +140,10 @@ export async function lintAndMaybeRevert(
       cwd: workdir, timeout: 30_000, maxBuffer: 4 * 1024 * 1024,
     });
     // Lint passed — accept.
-    return {
-      tool: toolName as ToolResult['tool'],
-      title: relPath,
-      outputPreview: truncate(redactSecrets(`edited ${relPath} (lint clean)`, secrets)),
-      durationMs: Date.now() - startMs,
-    };
+    return acceptedEditResult(
+      toolName, relPath, originalContent, newContent,
+      truncate(redactSecrets(`edited ${relPath} (lint clean)`, secrets)), startMs,
+    );
   } catch (err) {
     // Lint failed — check if these errors are NEW (weren't in the original).
     // Write original back and lint it to get baseline.
@@ -147,12 +164,10 @@ export async function lintAndMaybeRevert(
     const newLintOutput = (e.stdout || '') + (e.stderr || '');
     if (baselineErrors && baselineErrors.trim() === newLintOutput.trim()) {
       // Same errors as before — the edit introduced no new lint issues. Accept.
-      return {
-        tool: toolName as ToolResult['tool'],
-        title: relPath,
-        outputPreview: truncate(redactSecrets(`edited ${relPath}`, secrets)),
-        durationMs: Date.now() - startMs,
-      };
+      return acceptedEditResult(
+        toolName, relPath, originalContent, newContent,
+        truncate(redactSecrets(`edited ${relPath}`, secrets)), startMs,
+      );
     }
     // Genuinely new lint errors — revert.
     await fs.writeFile(absPath, originalContent, 'utf8');

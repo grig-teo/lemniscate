@@ -8,6 +8,7 @@ import * as fsSync from 'node:fs';
 import path from 'node:path';
 import { redactSecrets } from '../utils.js';
 import { enhanceErrorOutput } from './error-hints.js';
+import { buildEditDiff } from './edit-diff.js';
 
 export { enhanceErrorOutput } from './error-hints.js';
 
@@ -60,6 +61,8 @@ export interface ToolResult {
   outputPreview: string;
   durationMs: number;
   error?: string;
+  /** Unified before/after diff for file edit/write results (Show details). */
+  diff?: string;
 }
 
 // Cache the realpath of each workdir; realpathSync on every jail check would
@@ -146,6 +149,12 @@ export async function toolWriteFile(
 ): Promise<ToolResult> {
   const startMs = Date.now();
   const absPath = jailPath(workdir, relPath);
+  // Capture prior content (null when the file is new) so the console's
+  // "Show details" view can render an added/deleted line diff.
+  let priorContent: string | null = null;
+  try {
+    priorContent = await fs.readFile(absPath, 'utf8');
+  } catch { /* new file — diff from /dev/null */ }
   await fs.mkdir(path.dirname(absPath), { recursive: true });
   await fs.writeFile(absPath, content, 'utf8');
   return {
@@ -153,6 +162,7 @@ export async function toolWriteFile(
     title: relPath,
     outputPreview: truncate(redactSecrets(`wrote ${content.length} chars`, secrets)),
     durationMs: Date.now() - startMs,
+    diff: buildEditDiff({ relPath, oldContent: priorContent, newContent: content }),
   };
 }
 
