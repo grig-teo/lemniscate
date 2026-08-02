@@ -39,7 +39,7 @@ const GOAL_LINES = [
   '- Restate the objective you are tracking in your first reply, prefixed with "Objective:", so it survives transcript compaction.',
   '- Do not switch goals, broaden scope, or start side quests; park unrelated findings as notes for the final summary.',
   '- Every turn moves the tracked objective forward; when it is verifiably complete, stop and summarize.',
-  '- Drive your todo_write TODO list to zero: the run is NOT complete — and its PR must not be merged — while any TODO item is unchecked. If items remain, go back to the list and resolve each one step by step, then finish.',
+  '- Drive your todo_write TODO list to zero: the run is NOT complete — and its PR must not be merged — while any TODO item is unchecked. Run the project\'s checks (build/tests/lint) and any code review only AFTER every item is checked done; if items remain, go back to the list and resolve each one step by step.',
 ];
 
 const PLAN_LINES = [

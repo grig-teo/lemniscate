@@ -12,6 +12,7 @@ import { execFile } from 'node:child_process';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { truncate } from './tools.js';
+import { openTodoItems } from './todo-store.js';
 import { logEvent } from '../agent-git.js';
 import { config } from '../../config.js';
 import type { LemcoreMessage, LemcoreRunOptions, LemcoreStep } from './loop-types.js';
@@ -218,6 +219,30 @@ export async function checkVerifyGate(
   messages: LemcoreMessage[],
   finalContent: string,
 ): Promise<GateOutcome> {
+  // TODO gate (before everything, review runs included): CI verification,
+  // code review and finishing wait until every todo_write item is done.
+  // Shares the gate failure budget so a stubborn model can't loop forever.
+  const openTodos = openTodoItems(workdir);
+  if (openTodos.length > 0 && consecutiveFailures < MAX_GATE_FAILURES) {
+    const attempt = consecutiveFailures + 1;
+    const nudge = [
+      `Your TODO list still has ${openTodos.length} unchecked item(s):`,
+      ...openTodos.map((text) => `- [ ] ${text}`),
+      'CI checks, code review and finishing are blocked until every item is marked done. Go back to the list and resolve each one step by step, marking items with todo_write as you complete them.',
+    ].join('\n');
+    messages.push({ role: 'user', content: nudge });
+    return {
+      kind: 'fail',
+      nextFailureCount: attempt,
+      step: {
+        stepId: `todo-gate-${taskId}-${attempt}`,
+        status: 'done',
+        kind: 'assistant',
+        title: `TODO list incomplete (${openTodos.length} open) — CI/review waits`,
+        detail: nudge.slice(0, 500),
+      },
+    };
+  }
   if (!opts.verifyGate || !config.LEMCORE_VERIFY_GATE) {
     return { kind: 'pass', summary: finalContent };
   }
