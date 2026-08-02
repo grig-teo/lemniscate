@@ -15,6 +15,18 @@ vi.mock('../src/lib/workdir-scrub.js', () => ({ scrubAgentScratchFiles: mocks.sc
 
 import { hasMeaningfulChanges } from '../src/lib/workdir-changes.js';
 
+type GitCall = string[];
+
+// Mock git per subcommand: [0]=args. Returns a fn suitable for mockImplementation.
+function gitAnswers(answers: { status: string; remote?: string; ahead?: string }) {
+  return (args: GitCall) => {
+    if (args[0] === 'status') return Promise.resolve(answers.status);
+    if (args[0] === 'remote') return Promise.resolve(answers.remote ?? 'origin\n');
+    if (args[0] === 'rev-list') return Promise.resolve(answers.ahead ?? '0\n');
+    return Promise.resolve('');
+  };
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.scrub.mockResolvedValue(undefined);
@@ -22,7 +34,9 @@ beforeEach(() => {
 
 describe('hasMeaningfulChanges', () => {
   it('returns false when only pre-run attachments are dirty', async () => {
-    mocks.git.mockResolvedValue('?? .mcp.json\n?? AGENTS.md\n?? .agents/skills/deploy/SKILL.md\n');
+    mocks.git.mockImplementation(gitAnswers({
+      status: '?? .mcp.json\n?? AGENTS.md\n?? .agents/skills/deploy/SKILL.md\n',
+    }));
 
     expect(await hasMeaningfulChanges('/wd')).toBe(false);
     expect(mocks.scrub).toHaveBeenCalledWith('/wd');
@@ -40,8 +54,22 @@ describe('hasMeaningfulChanges', () => {
     expect(await hasMeaningfulChanges('/wd')).toBe(true);
   });
 
-  it('returns false on a clean workdir', async () => {
-    mocks.git.mockResolvedValue('');
+  it('returns false on a clean workdir with no local commits', async () => {
+    mocks.git.mockImplementation(gitAnswers({ status: '', ahead: '0\n' }));
+
+    expect(await hasMeaningfulChanges('/wd')).toBe(false);
+  });
+
+  it('returns true on a CLEAN workdir when the agent committed its changes', async () => {
+    // The lemcore prompt encourages committing per step; such a run has no
+    // dirty paths but real work on the branch (prod false-failure class).
+    mocks.git.mockImplementation(gitAnswers({ status: '', ahead: '3\n' }));
+
+    expect(await hasMeaningfulChanges('/wd')).toBe(true);
+  });
+
+  it('skips the local-commit check when the workdir has no remotes', async () => {
+    mocks.git.mockImplementation(gitAnswers({ status: '', remote: '' }));
 
     expect(await hasMeaningfulChanges('/wd')).toBe(false);
   });
