@@ -1,4 +1,4 @@
-import { Activity, ArrowDown, ArrowUp, Gauge } from 'lucide-react';
+import { Activity, ArrowDownToLine, Gauge, Send } from 'lucide-react';
 
 import {
   contextUsageLabel,
@@ -75,10 +75,10 @@ export function TokenSplitIndicator({ task }: { task: Task }) {
       title={title}
       data-testid="console-footer-token-split"
     >
-      <ArrowUp className="h-3.5 w-3.5" aria-hidden />
+      <Send className="h-3.5 w-3.5" aria-hidden />
       <span className="font-mono">{parts.sent}</span>
       <span className="text-muted-foreground/70">sent</span>
-      <ArrowDown className="h-3.5 w-3.5" aria-hidden />
+      <ArrowDownToLine className="h-3.5 w-3.5" aria-hidden />
       <span className="font-mono">{parts.received}</span>
       <span className="text-muted-foreground/70">received</span>
     </span>

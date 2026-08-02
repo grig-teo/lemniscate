@@ -1,8 +1,10 @@
 /**
  * Right-top panel showing the run's Objective (the task goal the agent is
  * tracking) and a live TODO checklist (from the agent's todo_write calls).
- * Hidden when both are empty. A hide/show toggle is persisted to localStorage
- * (same pattern as TaskStepsRail).
+ * Hidden when both are empty. Hiding via the close button removes the panel
+ * entirely (no "Plan" show handle or icon is left on the right edge); the
+ * preference is persisted to localStorage (same pattern as TaskStepsRail),
+ * so clearing it brings the panel back.
  *
  * Data flows from the backend: the lemcore loop emits agent_step events with
  * subtype:'objective' (when the model restates its goal) and subtype:'todo'
@@ -28,7 +30,7 @@ export interface ObjectiveTodoPanelProps {
 }
 
 export function ObjectiveTodoPanel({ objective, todoItems }: ObjectiveTodoPanelProps): React.ReactElement | null {
-  const { hidden, toggle } = usePanelHidden();
+  const { hidden, hide } = usePanelHidden();
   const [collapsed, setCollapsed] = React.useState(false);
 
   // Nothing to show — render nothing (no empty panel).
@@ -37,22 +39,8 @@ export function ObjectiveTodoPanel({ objective, todoItems }: ObjectiveTodoPanelP
   const doneCount = todoItems.filter((i) => i.done).length;
   const allDone = todoItems.length > 0 && doneCount === todoItems.length;
 
-  if (hidden) {
-    return (
-      <button
-        type="button"
-        onClick={toggle}
-        title="Show objective & TODO"
-        className={cn(
-          'absolute right-0 top-16 z-20 flex items-center gap-1 rounded-l-lg border border-r-0 bg-background/80 px-2 py-1.5',
-          'text-xs text-muted-foreground shadow-sm backdrop-blur-sm transition-colors hover:text-foreground',
-        )}
-      >
-        <ListTodo className="size-7" />
-        <span>Plan</span>
-      </button>
-    );
-  }
+  // Hidden: render nothing — no Plan show handle or icon on the right edge.
+  if (hidden) return null;
 
   return (
     <div
@@ -78,7 +66,7 @@ export function ObjectiveTodoPanel({ objective, todoItems }: ObjectiveTodoPanelP
           </button>
           <button
             type="button"
-            onClick={toggle}
+            onClick={hide}
             title="Hide panel"
             className="rounded p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
           >
@@ -103,42 +91,29 @@ export function ObjectiveTodoPanel({ objective, todoItems }: ObjectiveTodoPanelP
           {/* TODO checklist */}
           {todoItems.length > 0 && (
             <div>
-              <div className="mb-1.5 flex items-center justify-between text-[0.7rem] font-medium uppercase tracking-wide text-muted-foreground">
-                <span>Progress</span>
-                <span className={cn('tabular-nums', allDone && 'text-emerald-500')}>
+              <div className="mb-1 flex items-center justify-between text-[0.7rem] font-medium uppercase tracking-wide text-muted-foreground">
+                <span>Plan</span>
+                <span className={allDone ? 'text-emerald-600 dark:text-emerald-400' : undefined}>
                   {doneCount}/{todoItems.length}
                 </span>
-              </div>
-              {/* Progress bar */}
-              <div className="mb-2.5 h-1 overflow-hidden rounded-full bg-muted">
-                <div
-                  className={cn(
-                    'h-full rounded-full transition-all duration-300',
-                    allDone ? 'bg-emerald-500' : 'bg-primary',
-                  )}
-                  style={{ width: `${todoItems.length > 0 ? (doneCount / todoItems.length) * 100 : 0}%` }}
-                />
               </div>
               <ul className="space-y-1">
                 {todoItems.map((item, i) => (
                   <li
-                    key={i}
+                    key={`${i}-${item.text}`}
                     className={cn(
-                      'flex items-start gap-2 rounded-md px-1.5 py-1 text-sm transition-colors',
+                      'flex items-start gap-1.5 text-sm leading-snug',
                       item.done ? 'text-muted-foreground line-through' : 'text-foreground',
                     )}
                   >
-                    <span
-                      className={cn(
-                        'mt-0.5 flex size-4 shrink-0 items-center justify-center rounded border transition-colors',
-                        item.done
-                          ? 'border-emerald-500 bg-emerald-500 text-white'
-                          : 'border-muted-foreground/40',
+                    <span className="mt-0.5 shrink-0">
+                      {item.done ? (
+                        <Check className="size-3.5 text-emerald-600 dark:text-emerald-400" />
+                      ) : (
+                        <span className="block size-3.5 rounded-sm border border-muted-foreground/40" />
                       )}
-                    >
-                      {item.done && <Check className="size-3" />}
                     </span>
-                    <span className="leading-snug">{item.text}</span>
+                    <span>{item.text}</span>
                   </li>
                 ))}
               </ul>
@@ -150,14 +125,12 @@ export function ObjectiveTodoPanel({ objective, todoItems }: ObjectiveTodoPanelP
   );
 }
 
-function usePanelHidden(): { hidden: boolean; toggle: () => void } {
-  const [hidden, setHidden] = React.useState<boolean>(() => readPersisted(HIDDEN_STORAGE_KEY, false));
-  const toggle = React.useCallback(() => {
-    setHidden((prev) => {
-      const next = !prev;
-      writePersisted(HIDDEN_STORAGE_KEY, next);
-      return next;
-    });
+/** Hide preference persisted to localStorage (best-effort). */
+function usePanelHidden(): { hidden: boolean; hide: () => void } {
+  const [hidden, setHidden] = React.useState(() => readPersisted(HIDDEN_STORAGE_KEY, false));
+  const hide = React.useCallback(() => {
+    writePersisted(HIDDEN_STORAGE_KEY, true);
+    setHidden(true);
   }, []);
-  return { hidden, toggle };
+  return { hidden, hide };
 }

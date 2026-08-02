@@ -52,6 +52,16 @@ describe('TokenSplitIndicator', () => {
     expect(html).toContain('received');
   });
 
+  it('uses the new status-line icons (send/receive, not plain arrows)', () => {
+    const html = renderToStaticMarkup(
+      <TokenSplitIndicator task={makeTask({ llmPromptTokens: 12_500, llmCompletionTokens: 500 })} />,
+    );
+    expect(html).toContain('lucide-send');
+    expect(html).toContain('lucide-arrow-down-to-line');
+    expect(html).not.toContain('lucide-arrow-up"');
+    expect(html).not.toContain('lucide-arrow-down"');
+  });
+
   it('explains the split in the title tooltip with full, un-compacted counts', () => {
     const html = renderToStaticMarkup(
       <TokenSplitIndicator task={makeTask({ llmPromptTokens: 12_500, llmCompletionTokens: 500 })} />,
