@@ -50,6 +50,29 @@ const RUNNING_TASK = baseTask({ id: 'c3', kind: 'prompt', title: 'Task Gamma', s
 const ARCHIVED_TASK = baseTask({ id: 'd4', kind: 'prompt', title: 'Archived Delta', status: 'done' });
 const KNOWN_TASKS = [PROPOSAL_A, PROPOSAL_B, RUNNING_TASK, ARCHIVED_TASK];
 
+// The right-side Objective/Plan panel is driven by agent_step events with
+// subtype 'objective' (detail holds the goal text). Each proposal carries a
+// distinct objective so the test can tell one task's panel from the other.
+const OBJECTIVES: Record<string, string> = {
+  a1: 'Build the Alpha widget',
+  b2: 'Build the Beta widget',
+};
+
+function objectiveStep(taskId: string): { id: string; kind: string; payload: unknown } {
+  return {
+    id: `${taskId}-obj`,
+    kind: 'agent_step',
+    payload: {
+      stepId: `${taskId}-obj`,
+      kind: 'assistant',
+      status: 'done',
+      subtype: 'objective',
+      title: 'Objective',
+      detail: OBJECTIVES[taskId],
+    },
+  };
+}
+
 function toSelected(task: Task): SelectedTask {
   return {
     id: task.id,
@@ -74,7 +97,12 @@ function mockApiFetch() {
       const url = String(input);
       const task = KNOWN_TASKS.find((candidate) => url.endsWith(`/api/tasks/${candidate.id}`));
       if (task) return jsonResponse({ task });
-      if (url.includes('/api/tasks') && url.endsWith('/events')) return jsonResponse([]);
+      if (url.includes('/api/tasks') && url.endsWith('/events')) {
+        const taskId = KNOWN_TASKS.find((candidate) =>
+          url.includes(`/api/tasks/${candidate.id}/events`),
+        )?.id;
+        return jsonResponse(taskId && OBJECTIVES[taskId] ? [objectiveStep(taskId)] : []);
+      }
       if (url.endsWith('/api/repositories')) return jsonResponse({ repositories: [] });
       return jsonResponse({ error: 'not found' }, 404);
     }),
@@ -166,5 +194,28 @@ describe('ConsolePane exclusive detail view', () => {
     expect(visibleDetailSections()).toHaveLength(1);
     expect(await screen.findByDisplayValue('Proposal Alpha')).toBeTruthy();
     expect(screen.queryByLabelText('Archived task details')).toBeNull();
+  });
+
+  it('replaces the right-side Objective/Plan panel instead of stacking it', async () => {
+    // React keys must be unique among siblings. Two right-side overlays
+    // (ObjectiveTodoPanel + TaskStepsRail) were both keyed on the raw task id,
+    // so switching tasks could leave the previous task's panel mounted —
+    // exactly the "collecting in the column" bug.
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    renderPane();
+
+    await click('open-proposal-a');
+    expect(await screen.findByText('Build the Alpha widget')).toBeTruthy();
+
+    await click('open-proposal-b');
+    expect(await screen.findByText('Build the Beta widget')).toBeTruthy();
+    // The previous task's objective must be gone — replaced, not stacked.
+    expect(screen.queryByText('Build the Alpha widget')).toBeNull();
+
+    const duplicateKeyWarnings = errorSpy.mock.calls.filter((call) =>
+      String(call[0]).includes('Encountered two children with the same key'),
+    );
+    expect(duplicateKeyWarnings).toHaveLength(0);
+    errorSpy.mockRestore();
   });
 });
