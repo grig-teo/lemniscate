@@ -1,10 +1,9 @@
 /**
  * Right-top panel showing the run's Objective (the task goal the agent is
  * tracking) and a live TODO checklist (from the agent's todo_write calls).
- * Hidden when both are empty. Hiding via the close button removes the panel
- * entirely (no "Plan" show handle or icon is left on the right edge); the
- * preference is persisted to localStorage (same pattern as TaskStepsRail),
- * so clearing it brings the panel back.
+ * Hidden when both are empty. A hide/show toggle is persisted to localStorage
+ * (same pattern as TaskStepsRail); when hidden, only a small icon-only show
+ * handle remains on the right edge (no "Plan" label).
  *
  * Data flows from the backend: the lemcore loop emits agent_step events with
  * subtype:'objective' (when the model restates its goal) and subtype:'todo'
@@ -30,7 +29,7 @@ export interface ObjectiveTodoPanelProps {
 }
 
 export function ObjectiveTodoPanel({ objective, todoItems }: ObjectiveTodoPanelProps): React.ReactElement | null {
-  const { hidden, hide } = usePanelHidden();
+  const { hidden, toggle } = usePanelHidden();
   const [collapsed, setCollapsed] = React.useState(false);
 
   // Nothing to show — render nothing (no empty panel).
@@ -39,8 +38,22 @@ export function ObjectiveTodoPanel({ objective, todoItems }: ObjectiveTodoPanelP
   const doneCount = todoItems.filter((i) => i.done).length;
   const allDone = todoItems.length > 0 && doneCount === todoItems.length;
 
-  // Hidden: render nothing — no Plan show handle or icon on the right edge.
-  if (hidden) return null;
+  if (hidden) {
+    return (
+      <button
+        type="button"
+        onClick={toggle}
+        title="Show objective & TODO"
+        aria-label="Show objective & TODO"
+        className={cn(
+          'absolute right-0 top-16 z-20 flex items-center justify-center rounded-l-md border border-r-0 bg-background/40 px-0.5 py-2',
+          'text-muted-foreground backdrop-blur-sm transition-colors hover:text-foreground',
+        )}
+      >
+        <ListTodo className="h-6 w-6" aria-hidden />
+      </button>
+    );
+  }
 
   return (
     <div
@@ -66,7 +79,7 @@ export function ObjectiveTodoPanel({ objective, todoItems }: ObjectiveTodoPanelP
           </button>
           <button
             type="button"
-            onClick={hide}
+            onClick={toggle}
             title="Hide panel"
             className="rounded p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
           >
@@ -91,29 +104,42 @@ export function ObjectiveTodoPanel({ objective, todoItems }: ObjectiveTodoPanelP
           {/* TODO checklist */}
           {todoItems.length > 0 && (
             <div>
-              <div className="mb-1 flex items-center justify-between text-[0.7rem] font-medium uppercase tracking-wide text-muted-foreground">
-                <span>Plan</span>
-                <span className={allDone ? 'text-emerald-600 dark:text-emerald-400' : undefined}>
+              <div className="mb-1.5 flex items-center justify-between text-[0.7rem] font-medium uppercase tracking-wide text-muted-foreground">
+                <span>Progress</span>
+                <span className={cn('tabular-nums', allDone && 'text-emerald-500')}>
                   {doneCount}/{todoItems.length}
                 </span>
+              </div>
+              {/* Progress bar */}
+              <div className="mb-2.5 h-1 overflow-hidden rounded-full bg-muted">
+                <div
+                  className={cn(
+                    'h-full rounded-full transition-all duration-300',
+                    allDone ? 'bg-emerald-500' : 'bg-primary',
+                  )}
+                  style={{ width: `${todoItems.length > 0 ? (doneCount / todoItems.length) * 100 : 0}%` }}
+                />
               </div>
               <ul className="space-y-1">
                 {todoItems.map((item, i) => (
                   <li
-                    key={`${i}-${item.text}`}
+                    key={i}
                     className={cn(
-                      'flex items-start gap-1.5 text-sm leading-snug',
+                      'flex items-start gap-2 rounded-md px-1.5 py-1 text-sm transition-colors',
                       item.done ? 'text-muted-foreground line-through' : 'text-foreground',
                     )}
                   >
-                    <span className="mt-0.5 shrink-0">
-                      {item.done ? (
-                        <Check className="size-3.5 text-emerald-600 dark:text-emerald-400" />
-                      ) : (
-                        <span className="block size-3.5 rounded-sm border border-muted-foreground/40" />
+                    <span
+                      className={cn(
+                        'mt-0.5 flex size-4 shrink-0 items-center justify-center rounded border transition-colors',
+                        item.done
+                          ? 'border-emerald-500 bg-emerald-500 text-white'
+                          : 'border-muted-foreground/40',
                       )}
+                    >
+                      {item.done && <Check className="size-3" />}
                     </span>
-                    <span>{item.text}</span>
+                    <span className="leading-snug">{item.text}</span>
                   </li>
                 ))}
               </ul>
@@ -125,12 +151,14 @@ export function ObjectiveTodoPanel({ objective, todoItems }: ObjectiveTodoPanelP
   );
 }
 
-/** Hide preference persisted to localStorage (best-effort). */
-function usePanelHidden(): { hidden: boolean; hide: () => void } {
-  const [hidden, setHidden] = React.useState(() => readPersisted(HIDDEN_STORAGE_KEY, false));
-  const hide = React.useCallback(() => {
-    writePersisted(HIDDEN_STORAGE_KEY, true);
-    setHidden(true);
+function usePanelHidden(): { hidden: boolean; toggle: () => void } {
+  const [hidden, setHidden] = React.useState<boolean>(() => readPersisted(HIDDEN_STORAGE_KEY, false));
+  const toggle = React.useCallback(() => {
+    setHidden((prev) => {
+      const next = !prev;
+      writePersisted(HIDDEN_STORAGE_KEY, next);
+      return next;
+    });
   }, []);
-  return { hidden, hide };
+  return { hidden, toggle };
 }
