@@ -253,6 +253,9 @@ export async function runLemcoreLoop(opts: LemcoreRunOptions): Promise<string> {
       nextStepId,
       publishStepEvent,
       skills,
+      // rt is required for spawn_subagent and multi-sample edit verification;
+      // without it both features silently no-op.
+      rt,
     });
     saveTranscript(workdir, messages);
   }

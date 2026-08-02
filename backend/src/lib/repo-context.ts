@@ -156,7 +156,7 @@ export function selectAgentsMd(
   return null;
 }
 
-async function readRootAgentsMd(workdir: string): Promise<string | null> {
+export async function readRootAgentsMd(workdir: string): Promise<string | null> {
   try {
     return await fs.readFile(path.join(workdir, 'AGENTS.md'), 'utf8');
   } catch {

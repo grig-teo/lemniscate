@@ -102,7 +102,11 @@ export async function lintAndMaybeRevert(
   toolName: string,
 ): Promise<ToolResult> {
   const lintCmd = await detectLintCommand(workdir, relPath);
+  const absPath = jailPath(workdir, relPath);
   if (!lintCmd) {
+    // No linter configured for this file type — still must persist the edit.
+    // (Returning "edited" without writing silently dropped the change.)
+    await fs.writeFile(absPath, newContent, 'utf8');
     return {
       tool: toolName as ToolResult['tool'],
       title: relPath,
@@ -111,7 +115,6 @@ export async function lintAndMaybeRevert(
     };
   }
   // Write the NEW content first, then lint.
-  const absPath = jailPath(workdir, relPath);
   await fs.writeFile(absPath, newContent, 'utf8');
   try {
     await execFileAsync('sh', ['-c', lintCmd], {

@@ -2,10 +2,11 @@ import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { logEvent } from '../agent-git.js';
 import { hasMeaningfulChanges } from '../workdir-changes.js';
-import { loadTaskSkills } from '../task-skills.js';
+import { loadTaskSkills, loadAgentsMdTemplate } from '../task-skills.js';
 import { toLemcoreSkills, buildSkillsPromptSection, type LemcoreSkill } from './skills.js';
 import type { LlmRuntime, TaskWithRepo } from '../agent-runtime.js';
 import { buildLemcoreImplContext } from './graph-context.js';
+import { selectAgentsMd, readRootAgentsMd } from '../repo-context.js';
 import { clearGraphSession } from './graph/session.js';
 import { scanRepositoryGraph } from './graph-scan.js';
 import { runLemcoreLoop, loadTranscript, scrubLegacyInCloneTranscript, type LemcoreMessage } from './loop.js';
@@ -52,6 +53,26 @@ export function appendGraphContext(
     '',
     'Use the codebase graph summary above for navigation. Prefer graph_* tools and selective file reads over dumping large source corpora.',
   ].join('\n');
+}
+
+/**
+ * Build the AGENTS.md section for the lemcore prompt. The repo's own root
+ * AGENTS.md wins; otherwise an injected template (an 'agents_md' skill chosen
+ * for the repository) fills the gap. Mirrors selectAgentsMd from repo-context
+ * (single source of truth) so lemcore and the internal executor agree on which
+ * content applies.
+ */
+async function buildAgentsMdSection(
+  task: TaskWithRepo,
+  workdir: string,
+): Promise<string> {
+  const root = await readRootAgentsMd(workdir);
+  const template = await loadAgentsMdTemplate(task.repository);
+  const selected = selectAgentsMd(root, template);
+  if (!selected) return '';
+  const fromRoot = root !== null && root.trim().length > 0;
+  const label = fromRoot ? 'AGENTS.md' : 'AGENTS.md (template)';
+  return `# ${label}\n\n${selected.trim()}`;
 }
 
 /**
@@ -179,6 +200,13 @@ async function executeLemcoreTask(opts: {
     resume,
     promptOverride,
   );
+  // Repo coding standards: inject the AGENTS.md content (root file or the
+  // repository's agents_md template skill) so the agent can actually follow
+  // the repo's rules — a literal "respect AGENTS.md" instruction is useless
+  // when the agent never sees the file's contents. The internal executor has
+  // always done this via buildRepoContext; lemcore had the gap.
+  const agentsMdSection = await buildAgentsMdSection(task, workdir);
+  if (agentsMdSection) prompt = `${prompt}\n\n${agentsMdSection}`;
   // Cross-run learning memory: if a previous run on this repo recorded
   // non-obvious facts (test command, flaky test, build trick) in LEARNED.md,
   // surface them so the agent doesn't rediscover them. The file is written by

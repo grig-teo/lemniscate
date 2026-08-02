@@ -7,7 +7,7 @@ import { promises as fs } from 'node:fs';
 import * as fsSync from 'node:fs';
 import path from 'node:path';
 import { redactSecrets } from '../utils.js';
-import { checkpointEdit, lintAndMaybeRevert } from './edit-checkpoint.js';
+import { checkpointEdit } from './edit-checkpoint.js';
 import { enhanceErrorOutput } from './error-hints.js';
 
 export { enhanceErrorOutput } from './error-hints.js';
@@ -156,62 +156,68 @@ export async function toolWriteFile(
   };
 }
 
-export async function toolEditFile(
+/**
+ * Shared edit-content preparation for edit_file / multi_edit: reads the file,
+ * runs the caller's validation + content transform, and checkpoints the
+ * pre-edit content for undo_edit. Does NOT write — the caller (or
+ * verifyEditWithFallback) owns the write via lintAndMaybeRevert. Exported so
+ * executeTool can route through multi-sample verification when a runtime
+ * context is available, reusing the exact same validation logic.
+ */
+export async function prepareEditContent(
   workdir: string,
   relPath: string,
-  search: string,
-  replace: string,
-  secrets: string[] = [],
-): Promise<ToolResult> {
-  const startMs = Date.now();
+  compute: (original: string) => string,
+): Promise<{ originalContent: string; newContent: string }> {
   const absPath = jailPath(workdir, relPath);
   const originalContent = await fs.readFile(absPath, 'utf8');
-  if (!originalContent.includes(search)) {
-    const preview = originalContent.split('\n').filter(l => l.trim()).slice(0, 5).join('\n');
+  const newContent = compute(originalContent);
+  checkpointEdit(workdir, relPath, originalContent);
+  return { originalContent, newContent };
+}
+
+/** Compute the result of an edit_file search/replace, with full validation. */
+export function applySingleEdit(
+  relPath: string,
+  original: string,
+  search: string,
+  replace: string,
+): string {
+  if (!original.includes(search)) {
+    const preview = original.split('\n').filter((l) => l.trim()).slice(0, 5).join('\n');
     throw new Error(`edit_file: search string not found in ${relPath}. First lines:\n${preview}`);
   }
-  const count = (originalContent.match(new RegExp(search.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g')) ?? []).length;
+  const count = countOccurrences(original, search);
   if (count !== 1) {
     throw new Error(`edit_file: expected exactly 1 match, found ${count} in ${relPath}`);
   }
-  const updated = originalContent.replace(search, () => replace);
-  // Checkpoint the pre-edit content so undo_edit can restore it. The actual
-  // file write is owned by lintAndMaybeRevert (write → lint → maybe revert),
-  // so we must NOT pre-write here.
-  checkpointEdit(workdir, relPath, originalContent);
-  return lintAndMaybeRevert(workdir, relPath, originalContent, updated, secrets, startMs, 'edit_file');
+  // Replacer function so $ patterns (e.g. `$&`, `$1`) in `replace` are literal.
+  return original.replace(search, () => replace);
 }
 
-export async function toolMultiEdit(
-  workdir: string,
+/** Compute the result of a multi_edit sequence, with full validation. */
+export function applyMultiEdit(
   relPath: string,
+  original: string,
   edits: { search: string; replace: string }[],
-  secrets: string[] = [],
-): Promise<ToolResult> {
-  const startMs = Date.now();
-  const absPath = jailPath(workdir, relPath);
-  const originalContent = await fs.readFile(absPath, 'utf8');
-  let content = originalContent;
-  let applied = 0;
-  for (const { search, replace } of edits) {
+): string {
+  let content = original;
+  edits.forEach(({ search, replace }, i) => {
     if (!content.includes(search)) {
-      throw new Error(`multi_edit: search string not found in ${relPath} (edit ${applied + 1})`);
+      throw new Error(`multi_edit: search string not found in ${relPath} (edit ${i + 1})`);
     }
-    const escaped = search.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const count = (content.match(new RegExp(escaped, 'g')) ?? []).length;
+    const count = countOccurrences(content, search);
     if (count !== 1) {
-      throw new Error(`multi_edit: expected exactly 1 match for edit ${applied + 1}, found ${count}`);
+      throw new Error(`multi_edit: expected exactly 1 match for edit ${i + 1}, found ${count}`);
     }
-    // Use a replacer function instead of a replacement string so $ patterns
-    // (e.g. `$&`, `$1`) in `replace` are treated literally, not interpreted.
     content = content.replace(search, () => replace);
-    applied += 1;
-  }
-  // Checkpoint the pre-edit content so undo_edit can restore it. The actual
-  // file write is owned by lintAndMaybeRevert (write → lint → maybe revert),
-  // so we must NOT pre-write here.
-  checkpointEdit(workdir, relPath, originalContent);
-  return lintAndMaybeRevert(workdir, relPath, originalContent, content, secrets, startMs, 'multi_edit');
+  });
+  return content;
+}
+
+function countOccurrences(haystack: string, needle: string): number {
+  const escaped = needle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return (haystack.match(new RegExp(escaped, 'g')) ?? []).length;
 }
 
 // Only true infra failures (timeout, spawn error) are tool errors; a non-zero
