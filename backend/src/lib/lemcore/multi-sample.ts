@@ -100,10 +100,43 @@ function parsePathFromArgs(toolCall: ChatToolCall): string {
   }
 }
 
-function extractToolArgs(content: string): Record<string, unknown> | null {
-  const match = content.match(/\{[\s\S]*?"path"[\s\S]*?\}/);
-  if (!match) return null;
-  try { return JSON.parse(match[0]); } catch { return null; }
+/**
+ * Extract the first balanced JSON object containing "path" from the model's
+ * free-text response. Uses brace-depth tracking (not a regex) because the old
+ * regex stopped at the first `}` — which is frequently inside a string value
+ * or a nested array/object (multi_edit edits, write_file content with braces),
+ * silently disabling the fallback for the most common edit shapes.
+ */
+export function extractToolArgs(content: string): Record<string, unknown> | null {
+  const start = content.indexOf('{');
+  if (start === -1) return null;
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let i = start; i < content.length; i++) {
+    const ch = content[i]!;
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (ch === '\\') escaped = true;
+      else if (ch === '"') inString = false;
+      continue;
+    }
+    if (ch === '"') inString = true;
+    else if (ch === '{') depth++;
+    else if (ch === '}') {
+      depth--;
+      if (depth === 0) {
+        const candidate = content.slice(start, i + 1);
+        try {
+          const parsed = JSON.parse(candidate);
+          if (parsed && typeof parsed === 'object' && 'path' in parsed) return parsed;
+        } catch { /* not valid JSON — keep scanning */ }
+        // Not a valid path-bearing object — continue from the next `{`.
+        return extractToolArgs(content.slice(i + 1));
+      }
+    }
+  }
+  return null;
 }
 
 function computeEditContent(

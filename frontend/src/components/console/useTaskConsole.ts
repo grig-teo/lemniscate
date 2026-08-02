@@ -205,6 +205,13 @@ export function useTaskConsole(taskId: string | null) {
     [historySteps, stream.liveSteps],
   );
 
+  // Derive the Objective + TODO checklist from the step stream. The backend
+  // emits agent_step events with subtype:'objective' (when the model restates
+  // its goal) and subtype:'todo' (on every todo_write call, with the parsed
+  // items in `detail`). The panel shows the latest of each.
+  const objective = React.useMemo(() => extractLatestDetail(agentSteps, 'objective'), [agentSteps]);
+  const todoItems = React.useMemo(() => parseLatestTodoItems(agentSteps), [agentSteps]);
+
   // Session file changes (one row per touched file, +/− totals) for the
   // header's changes badge and the changes dialog. History comes from the
   // events query; diff events arriving over the live stream are folded in so
@@ -224,5 +231,38 @@ export function useTaskConsole(taskId: string | null) {
     agentSteps,
     hasAgentSteps: agentSteps.length > 0,
     changes,
+    objective,
+    todoItems,
   };
+}
+
+// Latest `detail` from an agent_step with the given subtype (the Objective).
+function extractLatestDetail(steps: AgentStep[], subtype: string): string | null {
+  for (let i = steps.length - 1; i >= 0; i--) {
+    if (steps[i]!.subtype === subtype && steps[i]!.detail) return steps[i]!.detail ?? null;
+  }
+  return null;
+}
+
+// Latest todo_write step's parsed items (detail is JSON: [{done, text}]).
+function parseLatestTodoItems(steps: AgentStep[]): { done: boolean; text: string }[] {
+  for (let i = steps.length - 1; i >= 0; i--) {
+    const step = steps[i]!;
+    if (step.subtype === 'todo' && step.detail) {
+      try {
+        const parsed = JSON.parse(step.detail);
+        if (Array.isArray(parsed)) {
+          return parsed
+            .filter((it): it is { done: boolean; text: string } =>
+              it != null && typeof it === 'object' && typeof (it as { text?: unknown }).text === 'string',
+            )
+            .map((it) => ({ done: Boolean(it.done), text: it.text }));
+        }
+      } catch {
+        // malformed detail — fall through to return []
+      }
+      return [];
+    }
+  }
+  return [];
 }

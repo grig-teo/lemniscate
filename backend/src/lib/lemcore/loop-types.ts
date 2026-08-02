@@ -8,8 +8,10 @@ export interface LemcoreStep {
   status: 'running' | 'done' | 'error' | 'awaiting_approval';
   kind: 'assistant' | 'tool';
   // 'plan' (first-turn step plan), 'skill' (load_skill), 'steer' (mid-run
-  // user message). Anything non-'tool' renders as a card, not a tool row.
-  subtype?: 'plan' | 'skill' | 'steer';
+  // user message), 'todo' (todo_write — surfaced to the ObjectiveTodoPanel),
+  // 'objective' (the run's goal line — surfaced to the ObjectiveTodoPanel).
+  // Anything non-'tool' renders as a card, not a tool row.
+  subtype?: 'plan' | 'skill' | 'steer' | 'todo' | 'objective';
   tool?: string;
   title: string;
   detail?: string;

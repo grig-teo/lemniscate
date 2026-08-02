@@ -23,6 +23,7 @@ import { TaskBoard } from '@/components/task-board/TaskBoard';
 import { GitlemRepoDetail } from '@/components/gitlem/GitlemRepoDetail';
 import { GitlemReposGrid } from '@/components/gitlem/GitlemReposGrid';
 import { useTaskConsole } from '@/components/console/useTaskConsole';
+import { ObjectiveTodoPanel } from '@/components/console/ObjectiveTodoPanel';
 import { RunTaskDialog } from '@/components/devices/RunTaskDialog';
 
 function EmptyConsole() {
@@ -202,6 +203,14 @@ export function ConsolePane() {
         onOpenChange={setChangesDialogOpen}
         branchName={selectedTask.branchName ?? null}
         summary={consoleState.changes}
+      />
+      {/* Objective + TODO checklist panel (top-right). Only shows when the
+          agent has emitted an objective or a todo_write. Keyed on the task so
+          switching tasks resets the derived state. */}
+      <ObjectiveTodoPanel
+        key={taskId ?? 'none'}
+        objective={consoleState.objective}
+        todoItems={consoleState.todoItems}
       />
       {/* Keyed on the task so opening another task remounts the rail and the
           auto-open effect treats an already-running status as a fresh
