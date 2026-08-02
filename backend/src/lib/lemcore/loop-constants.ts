@@ -37,6 +37,7 @@ const GOAL_LINES = [
 const PLAN_LINES = [
   'Plan before you implement:',
   '- Before starting implementation, present a plan: the tracked objective plus a TODO list (via todo_write) of the steps you will complete.',
+  '- Write the objective, the plan, and every TODO item in plain, everyday language a non-technical person can understand. Describe what the step means in simple human language, not in code or technical terms.',
   '- Keep the TODO list current with todo_write as work progresses; mark each item done only when its changes are in place and verified.',
 ];
 

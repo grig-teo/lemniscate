@@ -29,6 +29,7 @@ const GOAL_LINES = [
   '- Restate the objective you are tracking in your first reply, prefixed with "Objective:", so it survives transcript compaction.',
   '- Do not switch goals, broaden scope, or start side quests; park unrelated findings as notes for the final summary.',
   '- Every turn moves the tracked objective forward; when it is verifiably complete, stop and summarize.',
+  '- Write the objective, the plan, and every TODO item in plain, everyday language a non-technical person can understand. Describe what the step means in simple human language, not in code or technical terms.',
 ];
 
 const TOOL_LINES = [
