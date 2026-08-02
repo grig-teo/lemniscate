@@ -3,9 +3,10 @@ import cookie from '@fastify/cookie';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 // Settings route: GET /api/settings reports the effective core agent
-// executor (per-user override ?? AGENT_EXECUTOR env default) and
+// executor (per-user override ?? deployment default) and
 // PUT /api/settings/agent-executor stores the per-user override chosen in
-// Settings → Agent.
+// Settings → Agent. Lemcore is the only executor; a stale stored value from
+// the removed 'hermes'/'internal' executors is ignored (agent-executor.ts).
 
 const mocks = vi.hoisted(() => ({
   userFindUnique: vi.fn(),
@@ -56,7 +57,7 @@ describe('GET /api/settings', () => {
     expect(response.statusCode).toBe(401);
   });
 
-  it('reports the env default when the user has no override', async () => {
+  it('reports the deployment default when the user has no override', async () => {
     const app = await buildApp();
     const response = await app.inject({
       method: 'GET',
@@ -65,8 +66,8 @@ describe('GET /api/settings', () => {
     });
     expect(response.statusCode).toBe(200);
     expect(response.json()).toEqual({
-      agentExecutor: 'hermes',
-      defaultAgentExecutor: 'hermes',
+      agentExecutor: 'lemcore',
+      defaultAgentExecutor: 'lemcore',
       override: null,
     });
   });
@@ -75,7 +76,7 @@ describe('GET /api/settings', () => {
     mocks.userFindUnique.mockResolvedValue({
       id: 'user-1',
       sessionVersion: 0,
-      agentExecutor: 'internal',
+      agentExecutor: 'lemcore',
     });
     const app = await buildApp();
     const response = await app.inject({
@@ -84,9 +85,28 @@ describe('GET /api/settings', () => {
       cookies: authCookies(),
     });
     expect(response.json()).toEqual({
-      agentExecutor: 'internal',
-      defaultAgentExecutor: 'hermes',
-      override: 'internal',
+      agentExecutor: 'lemcore',
+      defaultAgentExecutor: 'lemcore',
+      override: 'lemcore',
+    });
+  });
+
+  it('ignores a stored value from a removed executor and falls back to lemcore', async () => {
+    mocks.userFindUnique.mockResolvedValue({
+      id: 'user-1',
+      sessionVersion: 0,
+      agentExecutor: 'hermes',
+    });
+    const app = await buildApp();
+    const response = await app.inject({
+      method: 'GET',
+      url: '/api/settings/',
+      cookies: authCookies(),
+    });
+    expect(response.json()).toEqual({
+      agentExecutor: 'lemcore',
+      defaultAgentExecutor: 'lemcore',
+      override: null,
     });
   });
 });
@@ -98,19 +118,31 @@ describe('PUT /api/settings/agent-executor', () => {
       method: 'PUT',
       url: '/api/settings/agent-executor',
       cookies: authCookies(),
-      payload: { agentExecutor: 'internal' },
+      payload: { agentExecutor: 'lemcore' },
     });
     expect(response.statusCode).toBe(200);
     expect(mocks.userUpdate).toHaveBeenCalledWith({
       where: { id: 'user-1' },
-      data: { agentExecutor: 'internal' },
+      data: { agentExecutor: 'lemcore' },
       select: { agentExecutor: true },
     });
     expect(response.json()).toEqual({
-      agentExecutor: 'internal',
-      defaultAgentExecutor: 'hermes',
-      override: 'internal',
+      agentExecutor: 'lemcore',
+      defaultAgentExecutor: 'lemcore',
+      override: 'lemcore',
     });
+  });
+
+  it('rejects a removed executor with 400', async () => {
+    const app = await buildApp();
+    const response = await app.inject({
+      method: 'PUT',
+      url: '/api/settings/agent-executor',
+      cookies: authCookies(),
+      payload: { agentExecutor: 'internal' },
+    });
+    expect(response.statusCode).toBe(400);
+    expect(mocks.userUpdate).not.toHaveBeenCalled();
   });
 
   it('rejects an unknown executor with 400', async () => {
