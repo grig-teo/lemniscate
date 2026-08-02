@@ -113,11 +113,17 @@ function goalReminders(messages: LemcoreMessage[]): LemcoreMessage[] {
   return goal ? [{ role: 'system', content: goal }] : [];
 }
 
-function latestGoalLine(content: string): string | null {
+/** Extract the latest "Objective:" line from an assistant reply (for the panel). */
+export function extractObjective(content: string): string | null {
   const goals = content
     .split('\n')
     .filter((line) => line.trimStart().toLowerCase().startsWith('objective:'));
   const goal = goals[goals.length - 1]?.trim();
+  return goal ? goal : null;
+}
+
+function latestGoalLine(content: string): string | null {
+  const goal = extractObjective(content);
   return goal ? `[goal] ${goal}` : null;
 }
 

@@ -169,6 +169,8 @@ export async function runToolCalls(opts: {
       kind: 'tool',
       tool: name,
       title: toolTitle(name, args),
+      // todo_write carries the parsed checklist in `detail` for the panel.
+      ...(name === 'todo_write' ? { subtype: 'todo' as const } : {}),
     };
     await opts.publishStepEvent(opts.taskId, toolStep);
     const toolStart = Date.now();

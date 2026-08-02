@@ -7,6 +7,7 @@ import { asRecord, firstStringField } from '@/lib/event-payload';
 
 export type AgentStepStatus = 'running' | 'done' | 'error';
 export type AgentStepKind = 'assistant' | 'tool';
+export type AgentStepSubtype = 'plan' | 'skill' | 'steer' | 'todo' | 'objective';
 
 export interface AgentStep {
   /** Stable id shared by start + finish events for the same step. */
@@ -15,6 +16,8 @@ export interface AgentStep {
   eventKey: string;
   status: AgentStepStatus;
   kind: AgentStepKind;
+  /** Optional subtype for special rendering (todo checklist, objective, …). */
+  subtype?: AgentStepSubtype;
   tool?: string;
   title: string;
   detail?: string;
@@ -25,6 +28,7 @@ export interface AgentStep {
 
 const STATUSES = new Set<string>(['running', 'done', 'error']);
 const KINDS = new Set<string>(['assistant', 'tool']);
+const SUBTYPES = new Set<string>(['plan', 'skill', 'steer', 'todo', 'objective']);
 
 export function parseAgentStep(payload: unknown, eventKey = ''): AgentStep | null {
   const record = asRecord(payload);
@@ -39,6 +43,8 @@ export function parseAgentStep(payload: unknown, eventKey = ''): AgentStep | nul
   const tool = firstStringField(record, ['tool'], { allowEmpty: false }) ?? undefined;
   const detail = firstStringField(record, ['detail']) ?? undefined;
   const outputPreview = firstStringField(record, ['outputPreview']) ?? undefined;
+  const subtypeRaw = firstStringField(record, ['subtype'], { allowEmpty: false });
+  const subtype = subtypeRaw && SUBTYPES.has(subtypeRaw) ? (subtypeRaw as AgentStepSubtype) : undefined;
   const durationMs = numberField(record, 'durationMs');
   const tokensUsed = numberField(record, 'tokensUsed');
 
@@ -47,6 +53,7 @@ export function parseAgentStep(payload: unknown, eventKey = ''): AgentStep | nul
     eventKey: eventKey || stepId,
     status: statusRaw as AgentStepStatus,
     kind: kindRaw as AgentStepKind,
+    ...(subtype ? { subtype } : {}),
     ...(tool ? { tool } : {}),
     title,
     ...(detail ? { detail } : {}),

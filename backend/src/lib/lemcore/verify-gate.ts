@@ -72,8 +72,27 @@ async function hasMakeTestTarget(workdir: string): Promise<boolean> {
 }
 
 /**
- * Run the detected verify command and return the outcome. The command runs
- * in the workdir with a hard timeout. Output is truncated for the LLM nudge.
+ * Detect the dependency-install command for Node projects (the only ecosystem
+ * where deps aren't fetched by the build/test itself). Returns null for Go,
+ * Cargo, etc. — `go test` and `cargo test` pull deps implicitly. The workdir
+ * is a fresh clone, so node_modules is typically absent; without an install
+ * step the gate would fail with "jest: not found" for every Node repo (C2).
+ */
+export async function detectInstallCommand(workdir: string): Promise<string | null> {
+  const hasPkg = await exists(path.join(workdir, 'package.json'));
+  if (!hasPkg) return null;
+  if (await exists(path.join(workdir, 'package-lock.json'))) return 'npm ci';
+  if (await exists(path.join(workdir, 'pnpm-lock.yaml'))) return 'pnpm install';
+  if (await exists(path.join(workdir, 'yarn.lock'))) return 'yarn install';
+  return 'npm install';
+}
+
+/**
+ * Run the detected verify command and return the outcome. For Node projects,
+ * installs dependencies first (npm ci/install) when node_modules is absent —
+ * a fresh clone otherwise fails with "test runner not found" (C2). Install
+ * failures (e.g. worker has no Node) skip the gate rather than failing, so an
+ * environment gap doesn't burn the retry budget.
  */
 export async function runVerifyGate(
   workdir: string,
@@ -84,6 +103,8 @@ export async function runVerifyGate(
   if (!command) {
     return { passed: true, skipped: true, command: null, output: '' };
   }
+  const installResult = await maybeInstall(workdir, taskId, timeoutMs);
+  if (installResult.skipped) return installResult;
   try {
     const { stdout, stderr } = await execFileAsync('sh', ['-c', command], {
       cwd: workdir,
@@ -102,6 +123,40 @@ export async function runVerifyGate(
       skipped: false,
       command,
       output: truncate(`${raw}${killed}`, FAILURE_OUTPUT_CHARS),
+    };
+  }
+}
+
+// Install deps when node_modules is absent. An install failure (no Node on
+// the worker, registry down) skips the gate — punishing the model for an
+// environment issue it can't fix would waste the retry budget.
+async function maybeInstall(
+  workdir: string,
+  taskId: string,
+  timeoutMs: number,
+): Promise<VerifyResult | { skipped: false }> {
+  const installCmd = await detectInstallCommand(workdir);
+  if (!installCmd) return { skipped: false as const };
+  if (await exists(path.join(workdir, 'node_modules'))) {
+    await logEvent(taskId, 'verify gate: node_modules present, skipping install');
+    return { skipped: false as const };
+  }
+  try {
+    await logEvent(taskId, `verify gate: installing dependencies (${installCmd})`);
+    await execFileAsync('sh', ['-c', installCmd], {
+      cwd: workdir,
+      timeout: Math.min(timeoutMs, 180_000),
+      maxBuffer: 4 * 1024 * 1024,
+    });
+    return { skipped: false as const };
+  } catch (err) {
+    const msg = (err as Error).message;
+    await logEvent(taskId, `verify gate: dependency install failed (${installCmd}) — skipping gate: ${msg}`);
+    return {
+      passed: true,
+      skipped: true,
+      command: null,
+      output: `dependency install failed (${installCmd}): ${msg}`,
     };
   }
 }
@@ -168,18 +223,22 @@ export async function checkVerifyGate(
   }
   const result = await runVerifyGate(workdir, taskId);
   if (result.passed) {
-    if (result.skipped) return { kind: 'pass', summary: finalContent };
-    return { kind: 'pass', summary: `${finalContent}\n\n[verify-gate: ${result.command} passed]` };
+    // Return the bare summary — appending a gate banner leaks into the PR body
+    // and the commit-message LLM prompt (H1). The pass/fail outcome is already
+    // logged to the task log via logEvent inside runVerifyGate.
+    return { kind: 'pass', summary: finalContent };
   }
   const attempt = consecutiveFailures + 1;
   const critique = buildReflexionCritique(result.output, attempt);
   messages.push({ role: 'user', content: critique });
-  // Cap reached — finish anyway so the run doesn't loop forever; surface the
-  // failure in the summary so the merge gate / reviewer sees it.
+  // Cap reached — finish anyway so the run doesn't loop forever. Surface a
+  // ONE-LINE marker so reviewers know tests failed, but do NOT dump the raw
+  // test log into the summary (it lands in the PR body / commit prompt). The
+  // full failure output already went to the task log via logEvent.
   if (attempt >= MAX_GATE_FAILURES) {
     return {
       kind: 'pass',
-      summary: `${finalContent}\n\n[verify-gate: ${result.command} still failing after ${attempt} attempts — fix manually]\n${result.output}`,
+      summary: `${finalContent}\n\n[verification incomplete: tests still failing after ${attempt} attempts — see task log, fix manually]`,
     };
   }
   return {

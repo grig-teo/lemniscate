@@ -17,6 +17,7 @@ export async function publishStepEvent(taskId: string, step: LemcoreStep): Promi
     status: step.status,
     kind: step.kind,
     tool: step.tool,
+    subtype: step.subtype,
     title: step.title,
     detail: step.detail,
     outputPreview: step.outputPreview ? step.outputPreview.slice(0, 2_000) : undefined,

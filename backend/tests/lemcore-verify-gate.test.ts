@@ -8,6 +8,7 @@ vi.mock('../src/lib/agent-git.js', () => ({ logEvent: vi.fn(async () => {}) }));
 
 import {
   detectVerifyCommand,
+  detectInstallCommand,
   runVerifyGate,
   buildReflexionCritique,
   checkVerifyGate,
@@ -72,6 +73,78 @@ describe('detectVerifyCommand', () => {
     await writeFile(path.join(workdir, 'README.md'), '# hello');
     const cmd = await detectVerifyCommand(workdir);
     expect(cmd).toBeNull();
+  });
+});
+
+describe('detectInstallCommand', () => {
+  it('detects npm ci when package-lock.json exists', async () => {
+    await writeFile(path.join(workdir, 'package.json'), '{}');
+    await writeFile(path.join(workdir, 'package-lock.json'), '{}');
+    expect(await detectInstallCommand(workdir)).toBe('npm ci');
+  });
+
+  it('detects npm install when only package.json exists (no lockfile)', async () => {
+    await writeFile(path.join(workdir, 'package.json'), '{}');
+    expect(await detectInstallCommand(workdir)).toBe('npm install');
+  });
+
+  it('returns null for non-Node projects (deps fetched by build/test)', async () => {
+    await writeFile(path.join(workdir, 'go.mod'), 'module x\n');
+    expect(await detectInstallCommand(workdir)).toBeNull();
+    await writeFile(path.join(workdir, 'Cargo.toml'), '[package]\n');
+    expect(await detectInstallCommand(workdir)).toBeNull();
+  });
+});
+
+describe('runVerifyGate — install-before-test (C2)', () => {
+  it('runs npm install before the test command when node_modules is absent', async () => {
+    // The install step must run before the test. We detect this by putting a
+    // fake `npm` on PATH that, on `npm ci`/`npm install`, creates the
+    // node_modules/INSTALLED marker. The test "command" is a direct shell
+    // check (not `npm test`, which would need the real npm to run the script).
+    await writeFile(
+      path.join(workdir, 'package.json'),
+      JSON.stringify({ scripts: { test: 'true' } }),
+    );
+    const fakeBinDir = path.join(workdir, '.fakebin');
+    await mkdir(fakeBinDir, { recursive: true });
+    await writeFile(
+      path.join(fakeBinDir, 'npm'),
+      [
+        '#!/bin/sh',
+        '# Fake npm: install creates the marker; test/run are no-ops (exit 0).',
+        'case "$1" in',
+        '  ci|install) mkdir -p node_modules && echo ok > node_modules/INSTALLED ;;',
+        '  test|run) exit 0 ;;',
+        '  *) exit 0 ;;',
+        'esac',
+      ].join('\n'),
+    );
+    await import('node:fs/promises').then((fs) => fs.chmod(path.join(fakeBinDir, 'npm'), 0o755));
+    const prevPath = process.env.PATH;
+    process.env.PATH = `${fakeBinDir}:${prevPath}`;
+    try {
+      const result = await runVerifyGate(workdir, 't-install');
+      expect(result.passed).toBe(true);
+      // The fake npm created node_modules/INSTALLED during the install step.
+      const installed = await import('node:fs/promises').then((fs) =>
+        fs.readFile(path.join(workdir, 'node_modules', 'INSTALLED'), 'utf8').catch(() => 'MISSING'),
+      );
+      expect(installed).toContain('ok');
+    } finally {
+      process.env.PATH = prevPath;
+    }
+  });
+
+  it('skips install when node_modules already exists', async () => {
+    await writeFile(
+      path.join(workdir, 'package.json'),
+      JSON.stringify({ scripts: { test: 'echo NO_INSTALL_RAN' } }),
+    );
+    await mkdir(path.join(workdir, 'node_modules'), { recursive: true });
+    const result = await runVerifyGate(workdir, 't-skip-install');
+    expect(result.passed).toBe(true);
+    expect(result.output).toContain('NO_INSTALL_RAN');
   });
 });
 
@@ -174,10 +247,10 @@ describe('checkVerifyGate — loop integration (Feature 1 + 2)', () => {
     expect(messages[0]!.content).toContain('AssertionError: 3 !== 5');
   });
 
-  it('finishes with a warning after MAX_GATE_FAILURES consecutive failures', async () => {
+  it('finishes with a ONE-LINE warning after MAX_GATE_FAILURES (no log dump in summary — H1)', async () => {
     await writeFile(
       path.join(workdir, 'package.json'),
-      JSON.stringify({ scripts: { test: 'exit 1' } }),
+      JSON.stringify({ scripts: { test: 'echo BIG_FAILURE_LOG && exit 1' } }),
     );
     const messages: LemcoreMessage[] = [];
 
@@ -188,17 +261,25 @@ describe('checkVerifyGate — loop integration (Feature 1 + 2)', () => {
     // Cap reached → must pass (finish) with a warning, not loop forever.
     expect(outcome.kind).toBe('pass');
     if (outcome.kind === 'pass') {
-      expect(outcome.summary).toMatch(/still failing|fix manually/i);
+      // The summary carries a one-line marker so reviewers know tests failed,
+      // but NOT the raw test log (that goes to the task log via logEvent).
+      expect(outcome.summary).toMatch(/tests still failing|fix manually/i);
+      expect(outcome.summary).not.toContain('BIG_FAILURE_LOG');
+      // The original finalContent is preserved.
+      expect(outcome.summary).toContain('I am done');
     }
   });
 
-  it('passes and appends a gate-passed note when tests are green', async () => {
+  it('returns a CLEAN summary (no gate banner) when tests are green (H1)', async () => {
     await writeFile(path.join(workdir, 'package.json'), JSON.stringify({ scripts: { test: 'true' } }));
     const messages: LemcoreMessage[] = [];
     const outcome = await checkVerifyGate(baseOpts, workdir, 't5', 0, messages, 'done');
     expect(outcome.kind).toBe('pass');
     if (outcome.kind === 'pass') {
-      expect(outcome.summary).toContain('npm test passed');
+      // The pass path must NOT append gate banners to the summary — they leak
+      // into the PR body and commit-message prompt.
+      expect(outcome.summary).toBe('done');
+      expect(outcome.summary).not.toContain('verify-gate');
     }
   });
 });

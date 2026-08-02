@@ -16,6 +16,7 @@ import type { LemcoreSkill } from './skills.js';
 import {
   compactTranscript,
   shouldCompactTranscript,
+  extractObjective,
 } from './loop-compact.js';
 import { classifyAssistantReply, EMPTY_REPLY_NUDGE } from './loop-reply.js';
 import { checkVerifyGate } from './verify-gate.js';
@@ -208,6 +209,20 @@ export async function runLemcoreLoop(opts: LemcoreRunOptions): Promise<string> {
     assistantStep.durationMs = Date.now() - startedMs;
     assistantStep.tokensUsed = result.usage?.totalTokens;
     await publishStepEvent(taskId, assistantStep);
+    // Surface the Objective to the console panel when the model restates it
+    // (the goal-pattern prompt asks for "Objective:" on the first reply). The
+    // panel keeps the latest; cheap to emit on every reply that has one.
+    const objective = extractObjective(result.content);
+    if (objective) {
+      await publishStepEvent(taskId, {
+        stepId: `objective-${turn}`,
+        status: 'done',
+        kind: 'assistant',
+        subtype: 'objective',
+        title: 'Objective',
+        detail: objective,
+      });
+    }
     messages.push({
       role: 'assistant',
       content: result.content,
@@ -267,6 +282,11 @@ export async function runLemcoreLoop(opts: LemcoreRunOptions): Promise<string> {
       // without it both features silently no-op.
       rt,
     });
+    // A successful tool batch means the model made real progress (fixed the
+    // issue, ran a command). Reset the gate-failure counter so a transient
+    // flake doesn't permanently cost a retry (H2) — same logic as the tool-
+    // failure counter above.
+    if (consecutiveToolFailures === 0) consecutiveGateFailures = 0;
     saveTranscript(workdir, messages);
   }
   // MAX_TURNS exhausted — surface a truncation signal so the run isn't mistaken for done.
