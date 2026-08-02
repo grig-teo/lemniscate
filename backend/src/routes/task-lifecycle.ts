@@ -112,6 +112,7 @@ const BACKLOG_RETURNABLE_STATUSES = [
   'running',
   'awaiting_review',
   'reviewing_code',
+  'waiting_ci',
 ] as const;
 
 export function backlogBlocker(task: { status: string }): string | null {
@@ -134,11 +135,11 @@ export function modelSwitchBlocker(task: { status: string }): string | null {
 }
 
 // Close-PR eligibility for POST /tasks/:id/close-pr: only awaiting_review
-// (or reviewing_code) tasks (an open PR exists on the git host) with a
-// branchName can be closed and have their branch deleted. The provider
+// (or reviewing_code / waiting_ci) tasks (an open PR exists on the git host)
+// with a branchName can be closed and have their branch deleted. The provider
 // calls happen in the handler.
 export function closePrBlocker(task: { status: string; branchName: string | null }): string | null {
-  if (task.status !== 'awaiting_review' && task.status !== 'reviewing_code') {
+  if (task.status !== 'awaiting_review' && task.status !== 'reviewing_code' && task.status !== 'waiting_ci') {
     return `task is ${task.status}, not awaiting_review`;
   }
   if (!task.branchName) {
@@ -150,9 +151,10 @@ export function closePrBlocker(task: { status: string; branchName: string | null
 // Manual review eligibility for POST /tasks/:id/review: only awaiting_review
 // tasks (an open PR exists) with a branch can be reviewed. reviewing_code is
 // accepted so a re-trigger while a review is already running is a no-op idempotent
-// re-enqueue (BullMQ jobId dedupes the same attempt).
+// re-enqueue (BullMQ jobId dedupes the same attempt); waiting_ci is accepted
+// because the PR already exists — the user just wants it re-reviewed now.
 export function reviewBlocker(task: { status: string; branchName: string | null }): string | null {
-  if (task.status !== 'awaiting_review' && task.status !== 'reviewing_code') {
+  if (task.status !== 'awaiting_review' && task.status !== 'reviewing_code' && task.status !== 'waiting_ci') {
     return `task is ${task.status}, not awaiting_review`;
   }
   if (!task.branchName) {
@@ -162,10 +164,12 @@ export function reviewBlocker(task: { status: string; branchName: string | null 
 }
 
 // Manual merge eligibility for POST /tasks/:id/merge: only awaiting_review
-// (or reviewing_code) tasks with a branch can be merged. 'done' tasks (already
-// merged) and terminal states are rejected — the PR no longer exists to merge.
+// (or reviewing_code / waiting_ci) tasks with a branch can be merged — a
+// waiting_ci task has an open PR the user may want to merge without waiting
+// for the checks. 'done' tasks (already merged) and terminal states are
+// rejected — the PR no longer exists to merge.
 export function mergeBlocker(task: { status: string; branchName: string | null }): string | null {
-  if (task.status !== 'awaiting_review' && task.status !== 'reviewing_code') {
+  if (task.status !== 'awaiting_review' && task.status !== 'reviewing_code' && task.status !== 'waiting_ci') {
     return `task is ${task.status}, not awaiting_review`;
   }
   if (!task.branchName) {

@@ -227,12 +227,14 @@ describe('reviewTask entry guards', () => {
 });
 
 describe('reviewTask on the internal executor', () => {
-  it('sets reviewing_code at the start and awaiting_review when the review finishes', async () => {
+  it('sets reviewing_code at the start and waiting_ci when the review finishes', async () => {
     await reviewTask('task-1');
     // Status set to reviewing_code at the start of execution.
     expect(mocks.setTaskStatus).toHaveBeenCalledWith('task-1', 'reviewing_code');
-    // Status flipped back to awaiting_review in finishReview.
-    expect(mocks.setTaskStatus).toHaveBeenCalledWith('task-1', 'awaiting_review');
+    // finishReview parks the task in waiting_ci: CI re-runs on the pushed
+    // code, and a ci_status webhook / merge-gate re-check flips it back to
+    // awaiting_review.
+    expect(mocks.setTaskStatus).toHaveBeenCalledWith('task-1', 'waiting_ci');
     expect(mocks.enqueueMergeGate).toHaveBeenCalledWith('task-1', 0, 0);
   });
 
@@ -242,8 +244,8 @@ describe('reviewTask on the internal executor', () => {
     );
     await reviewTask('task-1', 0);
     expect(mocks.setTaskStatus).toHaveBeenCalledWith('task-1', 'reviewing_code');
-    // Single review pass always finishes — awaiting_review is restored.
-    expect(mocks.setTaskStatus).toHaveBeenCalledWith('task-1', 'awaiting_review');
+    // Single review pass always finishes — the task waits for CI on the fix.
+    expect(mocks.setTaskStatus).toHaveBeenCalledWith('task-1', 'waiting_ci');
     expect(mocks.enqueueReviewTask).not.toHaveBeenCalled();
     expect(mocks.enqueueMergeGate).toHaveBeenCalledWith('task-1', 0, 0);
   });

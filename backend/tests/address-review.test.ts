@@ -18,6 +18,7 @@ const mocks = vi.hoisted(() => ({
   recordJobFailure: vi.fn().mockResolvedValue('error'),
   applyReviewFixes: vi.fn().mockResolvedValue(undefined),
   notify: vi.fn().mockResolvedValue(undefined),
+  setTaskStatus: vi.fn().mockResolvedValue(undefined),
   taskUpdate: vi.fn().mockResolvedValue({}),
   taskFindUnique: vi.fn(),
 }));
@@ -47,6 +48,7 @@ vi.mock('../src/lib/agent-review.js', () => ({
   applyReviewFixes: mocks.applyReviewFixes,
 }));
 vi.mock('../src/lib/notifications.js', () => ({ notify: mocks.notify }));
+vi.mock('../src/lib/task-events.js', () => ({ setTaskStatus: mocks.setTaskStatus }));
 vi.mock('../src/lib/logger.js', () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
@@ -147,6 +149,10 @@ describe('addressReviewTask — success path', () => {
       where: { id: TASK_ID },
       data: { lastAddressedReviewId: 'rc-99' },
     });
+    // The fix commit was pushed — CI re-runs on the git host, so the task
+    // waits for CI checks (a ci_status webhook / merge-gate re-check flips it
+    // back to awaiting_review).
+    expect(mocks.setTaskStatus).toHaveBeenCalledWith(TASK_ID, 'waiting_ci');
     expect(mocks.notify).toHaveBeenCalledWith(
       'user-1',
       'review_addressed',

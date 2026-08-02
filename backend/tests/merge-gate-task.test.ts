@@ -237,6 +237,32 @@ describe('mergeGateTask entry guards', () => {
   });
 });
 
+describe('mergeGateTask waiting_ci re-checks', () => {
+  it('accepts a waiting_ci task (the gate own wait/fix-ci state)', async () => {
+    mocks.loadTaskWithRepo.mockResolvedValue(stubTask({ status: 'waiting_ci' }));
+    await mergeGateTask('task-1');
+    expect(mocks.pullRequestChecksStatus).toHaveBeenCalledTimes(1);
+  });
+
+  it('flips waiting_ci back to awaiting_review before merging on green CI', async () => {
+    mocks.loadTaskWithRepo.mockResolvedValue(stubTask({ status: 'waiting_ci' }));
+    await mergeGateTask('task-1');
+    expect(mocks.setTaskStatus).toHaveBeenCalledWith('task-1', 'awaiting_review');
+    expect(mocks.setTaskStatus).toHaveBeenCalledWith('task-1', 'done');
+    expect(mocks.mergePullRequest).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps waiting_ci while checks are still pending and re-enqueues', async () => {
+    mocks.loadTaskWithRepo.mockResolvedValue(stubTask({ status: 'waiting_ci' }));
+    mocks.pullRequestChecksStatus.mockResolvedValue(pending);
+    await mergeGateTask('task-1', 1, 0);
+    expect(mocks.setTaskStatus).toHaveBeenCalledWith('task-1', 'awaiting_review');
+    expect(mocks.setTaskStatus).toHaveBeenCalledWith('task-1', 'waiting_ci');
+    expect(mocks.enqueueMergeGate).toHaveBeenCalledWith('task-1', 2, 0, MERGE_GATE_DELAY_MS);
+    expect(mocks.mergePullRequest).not.toHaveBeenCalled();
+  });
+});
+
 describe('mergeGateTask pending CI (bounded self re-enqueue)', () => {
   it('re-enqueues itself with the delay and bumped attempt while CI runs', async () => {
     mocks.pullRequestChecksStatus.mockResolvedValue(pending);
@@ -246,6 +272,8 @@ describe('mergeGateTask pending CI (bounded self re-enqueue)', () => {
     // Waiting must not burn an LLM runtime.
     expect(mocks.prepareAgentRuntime).not.toHaveBeenCalled();
     expect(mocks.mergePullRequest).not.toHaveBeenCalled();
+    // While CI runs the task shows waiting_ci.
+    expect(mocks.setTaskStatus).toHaveBeenCalledWith('task-1', 'waiting_ci');
   });
 
   it('stops re-enqueueing after ~30 minutes of pending checks', async () => {
@@ -256,6 +284,10 @@ describe('mergeGateTask pending CI (bounded self re-enqueue)', () => {
       'task-1',
       expect.stringContaining('still running after ~30 minutes'),
     );
+    // The gate gave up: nothing re-triggers it, so the task must NOT park in
+    // waiting_ci — it is awaiting_review so the user can still merge/close.
+    expect(mocks.setTaskStatus).toHaveBeenCalledWith('task-1', 'awaiting_review');
+    expect(mocks.setTaskStatus).not.toHaveBeenCalledWith('task-1', 'waiting_ci');
   });
 });
 

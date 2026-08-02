@@ -234,7 +234,10 @@ function TaskEditorInner({
       <div className="flex shrink-0 items-center gap-2">
         {task.status === 'pending' && <PendingTaskModelSelect task={task} />}
         {task.status === 'pending' && <FollowUpTaskSelect task={task} />}
-        {(task.status === 'awaiting_review' || task.status === 'reviewing_code') && task.branchName && (
+        {(task.status === 'awaiting_review' ||
+          task.status === 'reviewing_code' ||
+          task.status === 'waiting_ci') &&
+          task.branchName && (
           <Button
             size="sm"
             variant="destructive"

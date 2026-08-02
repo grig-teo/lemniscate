@@ -38,7 +38,7 @@ export function useTaskDrop() {
         startTask.mutate(task.id);
         return null;
       case 'review':
-        // Review/merge require an open PR (awaiting_review/reviewing_code).
+        // Review/merge require an open PR (awaiting_review/reviewing_code/waiting_ci).
         if (source !== 'review') {
           return 'Open a PR first — review needs an awaiting-review task.';
         }

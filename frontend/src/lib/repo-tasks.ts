@@ -78,7 +78,7 @@ export function toSelectedTask(task: Task): SelectedTask {
 }
 
 /** Statuses that mean a PR exists on the git host for this task. */
-const PR_STATUSES = new Set(['awaiting_review', 'reviewing_code', 'done', 'closed']);
+const PR_STATUSES = new Set(['awaiting_review', 'reviewing_code', 'waiting_ci', 'done', 'closed']);
 
 /** True when a task has an open or merged PR (a branch was pushed). */
 export function hasPullRequest(task: Task): boolean {

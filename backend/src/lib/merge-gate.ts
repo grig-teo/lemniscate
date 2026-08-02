@@ -290,10 +290,11 @@ async function dispatchGateAction(
   }
   if (action === 'manual') {
     const reason = manualGateMessage(checks, ciFixes);
-    // The gate stops here, but the task was waiting on CI, not on review —
+    // The gate stops here and nothing re-triggers it, so the task must NOT
+    // stay in waiting_ci (nothing would flip it back). It is awaiting_review:
     // a human merging (or a ci_status webhook) still routes through the
-    // awaiting_review pipeline, which review-pr guards by freshness anyway.
-    await setTaskStatus(task.id, 'waiting_ci');
+    // awaiting pipeline, which review-pr guards by freshness anyway.
+    await setTaskStatus(task.id, 'awaiting_review');
     await logEvent(task.id, reason);
     await notifyOncePerTask(task.repository.connection.userId, 'merge_gate_failed', {
       title: `Merge gate gave up: ${task.title}`,
