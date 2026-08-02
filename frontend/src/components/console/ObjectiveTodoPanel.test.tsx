@@ -2,7 +2,8 @@
 /**
  * Locking tests for the ObjectiveTodoPanel: shows the run's objective and a
  * live TODO checklist (done/pending items), hides when empty, and supports a
- * hide/show toggle persisted to localStorage.
+ * hide/show toggle persisted to localStorage. When hidden, only a small
+ * icon-only show handle remains on the right edge (no "Plan" label).
  */
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -58,18 +59,20 @@ describe('ObjectiveTodoPanel', () => {
     expect(screen.getByText('2/2').className).toContain('emerald');
   });
 
-  it('hides via the toggle and leaves a show handle', () => {
+  it('hides via the toggle and leaves an icon-only show handle (no "Plan" label)', () => {
     render(<ObjectiveTodoPanel objective="x" todoItems={ITEMS} />);
     fireEvent.click(screen.getByRole('button', { name: /hide panel/i }));
-    // Panel hidden, show-handle visible (the "Plan" button)
+    // Panel hidden; a small show handle remains, but without the "Plan" label.
     expect(screen.queryByText('Set up project')).toBeNull();
-    expect(screen.getByRole('button', { name: /plan/i })).toBeTruthy();
+    expect(screen.queryByText('Plan')).toBeNull();
+    const handle = screen.getByRole('button', { name: /show objective & todo/i });
+    expect(handle.textContent).not.toContain('Plan');
   });
 
   it('docks the hidden show-handle flush to the right edge like the status-line rail', () => {
     render(<ObjectiveTodoPanel objective="x" todoItems={ITEMS} />);
     fireEvent.click(screen.getByRole('button', { name: /hide panel/i }));
-    const handle = screen.getByRole('button', { name: /plan/i });
+    const handle = screen.getByRole('button', { name: /show objective & todo/i });
     const classes = handle.className;
     // Flush to the right edge (not inset), rounded only on the left, and with
     // no right border — mirroring the TaskStepsRail edge-docked show handle.
@@ -79,13 +82,13 @@ describe('ObjectiveTodoPanel', () => {
     expect(classes).toContain('border-r-0');
   });
 
-  it('makes the plan show-handle icon 2x bigger', () => {
+  it('restores the panel via the show handle', () => {
     render(<ObjectiveTodoPanel objective="x" todoItems={ITEMS} />);
     fireEvent.click(screen.getByRole('button', { name: /hide panel/i }));
-    const handle = screen.getByRole('button', { name: /plan/i });
-    const icon = handle.querySelector('svg')!;
-    // 2x of size-3.5 → size-7
-    expect(icon.getAttribute('class')).toContain('size-7');
+    expect(screen.queryByText('Set up project')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: /show objective & todo/i }));
+    expect(screen.getByText('Set up project')).toBeTruthy();
+    expect(window.localStorage.getItem('lemniscate.objective-todo-hidden')).toBe('false');
   });
 
   it('collapses content via the chevron without hiding the panel', () => {

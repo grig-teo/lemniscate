@@ -2,7 +2,8 @@
  * Right-top panel showing the run's Objective (the task goal the agent is
  * tracking) and a live TODO checklist (from the agent's todo_write calls).
  * Hidden when both are empty. A hide/show toggle is persisted to localStorage
- * (same pattern as TaskStepsRail).
+ * (same pattern as TaskStepsRail); when hidden, only a small icon-only show
+ * handle remains on the right edge (no "Plan" label).
  *
  * Data flows from the backend: the lemcore loop emits agent_step events with
  * subtype:'objective' (when the model restates its goal) and subtype:'todo'
@@ -43,13 +44,13 @@ export function ObjectiveTodoPanel({ objective, todoItems }: ObjectiveTodoPanelP
         type="button"
         onClick={toggle}
         title="Show objective & TODO"
+        aria-label="Show objective & TODO"
         className={cn(
-          'absolute right-0 top-16 z-20 flex items-center gap-1 rounded-l-lg border border-r-0 bg-background/80 px-2 py-1.5',
-          'text-xs text-muted-foreground shadow-sm backdrop-blur-sm transition-colors hover:text-foreground',
+          'absolute right-0 top-16 z-20 flex items-center justify-center rounded-l-md border border-r-0 bg-background/40 px-0.5 py-2',
+          'text-muted-foreground backdrop-blur-sm transition-colors hover:text-foreground',
         )}
       >
-        <ListTodo className="size-7" />
-        <span>Plan</span>
+        <ListTodo className="h-6 w-6" aria-hidden />
       </button>
     );
   }
