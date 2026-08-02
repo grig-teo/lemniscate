@@ -14,6 +14,7 @@ import { useWorkspaceSelection } from '@/lib/selection';
 import { cn, hoverReveal } from '@/lib/utils';
 import { ArchivedTaskRow } from '@/components/repo-tree/ArchivedTaskRow';
 import { GenerateProposalsButton } from '@/components/repo-tree/GenerateProposalsButton';
+import { TaskTitle } from '@/components/repo-tree/TaskTitle';
 import { PriorityBadge } from '@/components/PriorityBadge';
 import { StatusBadge } from '@/components/StatusBadge';
 import { TokensBadge } from '@/components/TokensBadge';
@@ -154,9 +155,7 @@ function TaskRow({ task }: { task: Task }) {
           selectedTask?.id === task.id && 'bg-accent font-medium',
         )}
       >
-        <span className="min-w-0 flex-1 truncate" title={task.title}>
-          {task.title}
-        </span>
+        <TaskTitle title={task.title} className="flex-1" />
         {task.kind === 'proposal' && (
           <PriorityBadge priority={task.priority} className={cn('px-1.5 py-0 text-[10px]', hoverReveal)} />
         )}
