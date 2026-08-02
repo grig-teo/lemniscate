@@ -134,7 +134,7 @@ function openEventStream(
 function useTaskEventStream(
   taskId: string | null,
   seenEventIds: SeenEventIds,
-  setLiveStatus: (status: string | null) => void,
+  setLiveStatus: (status: string | null, taskId?: string) => void,
 ) {
   const queryClient = useQueryClient();
   const [liveLogs, setLiveLogs] = React.useState<LogLine[]>([]);
@@ -146,7 +146,9 @@ function useTaskEventStream(
   React.useEffect(() => {
     if (!taskId) return;
     const onStatus = (status: string) => {
-      setLiveStatus(status);
+      // Tag the status with its task so a late event from a previously
+      // selected task cannot leak into the new selection's view.
+      setLiveStatus(status, taskId);
       applyTaskStatusToCaches(queryClient, taskId, status);
     };
     const dispatch = createEventDispatcher(logCounter, setLiveLogs, setLiveSteps, setLiveDiffs, onStatus);

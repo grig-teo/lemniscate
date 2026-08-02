@@ -54,7 +54,9 @@ interface WorkspaceSelectionValue {
   closeTaskBoard: () => void;
   /** Live status from SSE `status` events; overrides selectedTask.status. */
   liveStatus: string | null;
-  setLiveStatus: (status: string | null) => void;
+  /** Push a live status; tagged with the task it belongs to so a late event
+   * from a previously selected task's stream cannot leak into the new view. */
+  setLiveStatus: (status: string | null, taskId?: string) => void;
 }
 
 const WorkspaceSelectionContext = React.createContext<WorkspaceSelectionValue | null>(null);
@@ -64,7 +66,6 @@ export function WorkspaceSelectionProvider({ children }: { children: React.React
   const [selectedTask, setSelectedTask] = React.useState<SelectedTask | null>(() =>
     readPersisted<SelectedTask | null>(SELECTED_TASK_STORAGE_KEY, null),
   );
-  const [liveStatus, setLiveStatus] = React.useState<string | null>(null);
   const [selectedRepositoryId, setSelectedRepositoryId] = React.useState<string | null>(() =>
     readPersisted<string | null>(SELECTED_REPO_STORAGE_KEY, null),
   );
@@ -76,89 +77,95 @@ export function WorkspaceSelectionProvider({ children }: { children: React.React
   );
   const [gitlemView, setGitlemView] = React.useState<null | 'grid' | string>(null);
   const [taskBoardRepoId, setTaskBoardRepoId] = React.useState<string | null>(null);
+  // Live status is stored with the task it came from: an SSE event that
+  // arrives after the user already clicked another task must not override
+  // the new selection's view (e.g. flipping a pending proposal out of its
+  // editor into the log view).
+  const [liveStatusEvent, setLiveStatusEvent] = React.useState<{
+    taskId: string;
+    status: string;
+  } | null>(null);
 
-  const selectTask = React.useCallback((task: SelectedTask | null) => {
-    setSelectedTask(task);
-    writePersisted(SELECTED_TASK_STORAGE_KEY, task);
-    setLiveStatus(null);
-    // Selecting a task takes over the center pane: close any other center-pane
-    // view (PR review, task board, gitlem, archived, service) so the console
-    // syncs with the clicked task. Without this, the pane's early-return in
-    // ConsolePane would keep showing the stale PR/TaskBoard view.
+  const setLiveStatus = React.useCallback((status: string | null, taskId?: string) => {
+    setLiveStatusEvent(status !== null && taskId ? { taskId, status } : null);
+  }, []);
+
+  // Every opener routes through this: only one center-pane view (console,
+  // archived, PR list, service, gitlem, task board) may be active at a time.
+  const clearOtherPanes = React.useCallback(() => {
+    setSelectedTask(null);
+    writePersisted(SELECTED_TASK_STORAGE_KEY, null);
     setArchivedRepoId(null);
     setArchivedTask(null);
+    setLiveStatusEvent(null);
     setSelectedServiceId(null);
     writePersisted(SELECTED_SERVICE_STORAGE_KEY, null);
     setPrReviewRepoId(null);
-    setTaskBoardRepoId(null);
     setGitlemView(null);
+    setTaskBoardRepoId(null);
   }, []);
+
+  const selectTask = React.useCallback(
+    (task: SelectedTask | null) => {
+      clearOtherPanes();
+      setSelectedTask(task);
+      writePersisted(SELECTED_TASK_STORAGE_KEY, task);
+    },
+    [clearOtherPanes],
+  );
 
   const selectRepository = React.useCallback((id: string | null) => {
     setSelectedRepositoryId(id);
     writePersisted(SELECTED_REPO_STORAGE_KEY, id);
   }, []);
 
-  const openArchived = React.useCallback((repoId: string) => {
-    setArchivedRepoId(repoId);
-    setArchivedTask(null);
-  }, []);
+  const openArchived = React.useCallback(
+    (repoId: string) => {
+      clearOtherPanes();
+      setArchivedRepoId(repoId);
+    },
+    [clearOtherPanes],
+  );
   const closeArchived = React.useCallback(() => {
     setArchivedRepoId(null);
     setArchivedTask(null);
   }, []);
 
-  const openPrReview = React.useCallback((repoId: string) => {
-    setPrReviewRepoId(repoId);
-    setSelectedTask(null);
-    writePersisted(SELECTED_TASK_STORAGE_KEY, null);
-    setArchivedRepoId(null);
-    setArchivedTask(null);
-    setLiveStatus(null);
-    setSelectedServiceId(null);
-    writePersisted(SELECTED_SERVICE_STORAGE_KEY, null);
-  }, []);
+  const openPrReview = React.useCallback(
+    (repoId: string) => {
+      clearOtherPanes();
+      setPrReviewRepoId(repoId);
+    },
+    [clearOtherPanes],
+  );
   const closePrReview = React.useCallback(() => setPrReviewRepoId(null), []);
 
-  // The archived detail replaces the live console/service views but keeps the
+  // The archived detail replaces every other center-pane view but keeps the
   // archived list (archivedRepoId) open underneath for the way back.
   const openArchivedTask = React.useCallback((task: SelectedTask) => {
-    setArchivedTask(task);
     setSelectedTask(null);
     writePersisted(SELECTED_TASK_STORAGE_KEY, null);
-    setLiveStatus(null);
-    setSelectedServiceId(null);
-    writePersisted(SELECTED_SERVICE_STORAGE_KEY, null);
-  }, []);
-  const closeArchivedTask = React.useCallback(() => setArchivedTask(null), []);
-
-  const selectService = React.useCallback((id: string | null) => {
-    setSelectedServiceId(id);
-    writePersisted(SELECTED_SERVICE_STORAGE_KEY, id);
-    if (id !== null) {
-      // The service detail replaces the console — clear task/archived views.
-      setSelectedTask(null);
-      writePersisted(SELECTED_TASK_STORAGE_KEY, null);
-      setArchivedRepoId(null);
-      setArchivedTask(null);
-      setLiveStatus(null);
-    }
-  }, []);
-
-  // A center-pane view (gitlem grid/detail, task board) replaces the console —
-  // clear the other pane selections so only one is active at a time.
-  const clearOtherPanes = React.useCallback(() => {
-    setSelectedTask(null);
-    writePersisted(SELECTED_TASK_STORAGE_KEY, null);
-    setArchivedRepoId(null);
-    setArchivedTask(null);
-    setLiveStatus(null);
+    setLiveStatusEvent(null);
     setSelectedServiceId(null);
     writePersisted(SELECTED_SERVICE_STORAGE_KEY, null);
     setPrReviewRepoId(null);
     setGitlemView(null);
     setTaskBoardRepoId(null);
+    setArchivedTask(task);
   }, []);
+  const closeArchivedTask = React.useCallback(() => setArchivedTask(null), []);
+
+  const selectService = React.useCallback(
+    (id: string | null) => {
+      // A service detail replaces every other center-pane view; clearing the
+      // selection (null) only closes the service view itself.
+      if (id !== null) clearOtherPanes();
+      setSelectedServiceId(id);
+      writePersisted(SELECTED_SERVICE_STORAGE_KEY, id);
+    },
+    [clearOtherPanes],
+  );
+
   const openGitlemGrid = React.useCallback(() => {
     clearOtherPanes();
     setGitlemView('grid');
@@ -179,6 +186,12 @@ export function WorkspaceSelectionProvider({ children }: { children: React.React
     [clearOtherPanes],
   );
   const closeTaskBoard = React.useCallback(() => setTaskBoardRepoId(null), []);
+
+  // Exposed live status: only when it belongs to the currently selected task.
+  const liveStatus =
+    liveStatusEvent && liveStatusEvent.taskId === selectedTask?.id
+      ? liveStatusEvent.status
+      : null;
 
   const value = React.useMemo<WorkspaceSelectionValue>(
     () => ({
