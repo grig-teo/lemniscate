@@ -10,7 +10,7 @@ import {
 import type { LlmRuntime, TaskWithRepo } from '../agent-runtime.js';
 import { continueOrFinishReview } from '../review-finish.js';
 import { fetchReviewDiff, requestReview } from '../agent-review.js';
-import { runLemcoreLoop } from './loop.js';
+import { loadTranscript, runLemcoreLoop } from './loop.js';
 import {
   buildHermesReviewPrompt,
   buildHermesFixPrompt,
@@ -48,6 +48,13 @@ export async function runLemcoreReview(
     systemPromptExtra: rt.cfg.systemPromptExtra,
   });
 
+  // A re-enqueued review (worker restart, stuck-review recovery) continues
+  // from the saved transcript instead of re-exploring from zero — reusing
+  // one workdir + transcript across review loops, not three fresh ones.
+  const resumeTranscript = loadTranscript(workdir) ?? undefined;
+  if (resumeTranscript) {
+    await logEvent(task.id, `resuming review from transcript (${resumeTranscript.length} messages)`);
+  }
   await runLemcoreLoop({
     taskId: task.id,
     task,
@@ -55,6 +62,7 @@ export async function runLemcoreReview(
     rt,
     prompt,
     secrets,
+    resumeTranscript,
     // The default lemcoreSystemPrompt says "Implement the task completely,
     // including tests..." — contradictory during a review pass. Use a
     // review-specific system prompt so the agent only examines and writes its

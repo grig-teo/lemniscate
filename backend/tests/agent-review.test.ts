@@ -179,6 +179,16 @@ beforeEach(() => {
   mocks.prismaTaskEventCount.mockResolvedValue(0);
 });
 
+// taskEvent.count serves two queries: the review-loop cap (string_contains
+// 'reviewing pull request') and the rate-limit defer counter (starts_with).
+// This mock answers `defers` for the defer query and 0 (uncapped) for the cap.
+function deferCountOnly(defers: number) {
+  return (args: unknown) => {
+    const payload = (args as { where?: { payload?: Record<string, unknown> } })?.where?.payload ?? {};
+    return Promise.resolve('string_contains' in payload ? 0 : defers);
+  };
+}
+
 afterEach(async () => {
   await fs.rm(mocks.config.AGENT_WORKDIR, { recursive: true, force: true });
 });
@@ -223,6 +233,22 @@ describe('reviewTask entry guards', () => {
       expect.stringContaining('no branch'),
     );
     expect(mocks.llmCall).not.toHaveBeenCalled();
+  });
+
+  it('stops at the review-loop cap and hands the PR back to awaiting_review', async () => {
+    // MAX_REVIEW_LOOPS prior 'reviewing pull request' log events — the cap
+    // query (string_contains) hits its budget; the defer query is untouched.
+    mocks.prismaTaskEventCount.mockImplementation((args: unknown) => {
+      const payload = (args as { where?: { payload?: Record<string, unknown> } })?.where?.payload ?? {};
+      return Promise.resolve('string_contains' in payload ? 3 : 0);
+    });
+    await reviewTask('task-1');
+    expect(mocks.llmCall).not.toHaveBeenCalled();
+    expect(mocks.setTaskStatus).toHaveBeenCalledWith('task-1', 'awaiting_review');
+    expect(mocks.logEvent).toHaveBeenCalledWith(
+      'task-1',
+      expect.stringContaining('review loop cap reached'),
+    );
   });
 });
 
@@ -398,7 +424,7 @@ describe('reviewTask rate-limit deferral', () => {
   });
 
   it('sequences defer jobIds so repeated pauses are never deduped away', async () => {
-    mocks.prismaTaskEventCount.mockResolvedValue(3);
+    mocks.prismaTaskEventCount.mockImplementation(deferCountOnly(3));
     mocks.llmCall.mockRejectedValue(quotaError());
     await reviewTask('task-1');
     expect(mocks.enqueueReviewTask).toHaveBeenCalledWith(
@@ -410,7 +436,7 @@ describe('reviewTask rate-limit deferral', () => {
   });
 
   it('rethrows once the defer budget is exhausted', async () => {
-    mocks.prismaTaskEventCount.mockResolvedValue(12);
+    mocks.prismaTaskEventCount.mockImplementation(deferCountOnly(12));
     const boom = quotaError();
     mocks.llmCall.mockRejectedValue(boom);
     await expect(reviewTask('task-1')).rejects.toBe(boom);

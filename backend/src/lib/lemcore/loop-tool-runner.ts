@@ -24,6 +24,7 @@ import {
   toolGraphQuery,
   toolGraphSearch,
 } from './graph-tools.js';
+import { checkToolCallLoop } from './loop-detector.js';
 import type { LemcoreMessage, LemcoreStep } from './loop-types.js';
 import { assertFilePathArg } from './path-arg-guard.js';
 import { resolveSkillContent, type LemcoreSkill } from './skills.js';
@@ -166,6 +167,12 @@ export async function runToolCalls(opts: {
       });
       continue;
     }
+    // Loop detection: identical read-only calls are blocked past the repeat budget.
+    const loopCheck = checkToolCallLoop(opts.workdir, name, args);
+    if (loopCheck.blocked) {
+      failures = await pushToolError({ opts, tc, name, toolStepId, failures, msg: loopCheck.note! });
+      continue;
+    }
     const toolStep: LemcoreStep = {
       stepId: toolStepId,
       status: 'running',
@@ -210,7 +217,7 @@ export async function runToolCalls(opts: {
         await opts.publishStepEvent(opts.taskId, toolStep);
         opts.messages.push({
           role: 'tool',
-          content: `Error: ${result.error}\n${result.outputPreview}`,
+          content: `Error: ${result.error}\n${result.outputPreview}${loopCheck.note ?? ''}`,
           toolCallId: tc.id,
           toolName: name,
         });
@@ -224,7 +231,7 @@ export async function runToolCalls(opts: {
         await opts.publishStepEvent(opts.taskId, toolStep);
         opts.messages.push({
           role: 'tool',
-          content: result.outputPreview,
+          content: `${result.outputPreview}${loopCheck.note ?? ''}`,
           toolCallId: tc.id,
           toolName: name,
         });

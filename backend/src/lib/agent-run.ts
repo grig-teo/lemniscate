@@ -14,6 +14,7 @@ import {
 } from './agent-git.js';
 import { hasMeaningfulChanges } from './workdir-changes.js';
 import { pushTaskBranch, recordChangedPaths } from './agent-publish.js';
+import { closeIfAlreadyDone } from './preflight-check.js';
 import { ensureRepoDigest, withRepoDigest } from './repo-digest.js';
 import { buildPrBody, generateBranchName } from './agent-naming.js';
 import {
@@ -135,8 +136,6 @@ async function proposeTaskChanges(
   );
   await logContextManifest(task.id, files, repoContext.length);
   const skillsSection = await taskSkillsSection(task);
-  // Repo context digest (one per default-branch HEAD): the model starts with
-  // an architecture map instead of exploring from zero.
   const context = withRepoDigest(repoContext, task.repository.contextDigest);
   const result = await requestChanges(rt, task, context, undefined, skillsSection);
   await logEvent(task.id, `LLM proposed ${result.changes.length} change(s): ${result.summary}`);
@@ -291,6 +290,8 @@ async function executeRunTask(
         emptyRepo: task.branchName === task.repository.defaultBranch,
       }
     : await prepareFreshRun(task, workdir, cloneUrl, secrets, gitAuth, rt);
+  // Pre-flight: a digest verdict of ALREADY_DONE closes the task with no run.
+  if (!resume && !emptyRepo && (await closeIfAlreadyDone(task, rt))) return { rt, outcome: 'final' };
   await writeTaskAttachments(task, workdir);
   const summary = await implementTask(task, rt, workdir, secrets, resume, attempt);
   if (summary === null) {

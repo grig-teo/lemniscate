@@ -36,6 +36,7 @@ const mocks = vi.hoisted(() => ({
   setTaskStatus: vi.fn(),
   runHermesTask: vi.fn(),
   runLemcoreTask: vi.fn(),
+  closeIfAlreadyDone: vi.fn(async () => false),
   resolveAgentExecutor: vi.fn(),
   notify: vi.fn(),
   notifyTaskCompleted: vi.fn(),
@@ -99,6 +100,10 @@ vi.mock('../src/lib/repo-context.js', () => ({ buildRepoContext: mocks.buildRepo
 vi.mock('../src/lib/repo-digest.js', () => ({
   ensureRepoDigest: vi.fn(async () => null),
   withRepoDigest: (context: string) => context,
+}));
+// The pre-flight already-done check is mocked per test (default: implement).
+vi.mock('../src/lib/preflight-check.js', () => ({
+  closeIfAlreadyDone: (...a: unknown[]) => mocks.closeIfAlreadyDone(...a),
 }));
 vi.mock('../src/lib/task-events.js', () => ({ setTaskStatus: mocks.setTaskStatus }));
 vi.mock('../src/lib/hermes-runner.js', () => ({ runHermesTask: mocks.runHermesTask }));
@@ -337,6 +342,19 @@ describe('runTask with resolveAgentExecutor=lemcore', () => {
     expect(mocks.requestChanges).not.toHaveBeenCalled();
     expect(mocks.commitAndPush).toHaveBeenCalled();
     expect(mocks.openPullRequest).toHaveBeenCalled();
+  });
+
+  it('closes immediately when the pre-flight check says ALREADY_DONE', async () => {
+    mocks.closeIfAlreadyDone.mockResolvedValueOnce(true);
+    await runTask('task-1');
+
+    expect(mocks.closeIfAlreadyDone).toHaveBeenCalledTimes(1);
+    // No executor, no commits, no PR — the whole implementation is skipped.
+    expect(mocks.runLemcoreTask).not.toHaveBeenCalled();
+    expect(mocks.runHermesTask).not.toHaveBeenCalled();
+    expect(mocks.requestChanges).not.toHaveBeenCalled();
+    expect(mocks.commitAndPush).not.toHaveBeenCalled();
+    expect(mocks.openPullRequest).not.toHaveBeenCalled();
   });
 });
 

@@ -157,6 +157,30 @@ describe('runToolCalls → unlimited tool failures', () => {
   });
 });
 
+describe('runToolCalls → loop detection', () => {
+  it('nudges at 3 and blocks at 5 identical read-only calls', async () => {
+    await writeFile(path.join(workdir, 'a.txt'), 'x');
+    const messages: import('../src/lib/lemcore/loop-types.js').LemcoreMessage[] = [];
+
+    await runToolCalls({
+      taskId: 't7',
+      workdir,
+      secrets: [],
+      toolCalls: Array.from({ length: 5 }, () => tc('read_file', { path: 'a.txt' })),
+      messages,
+      consecutiveToolFailures: 0,
+      nextStepId,
+      publishStepEvent: noopPublish,
+    });
+
+    const contents = messages.filter((m) => m.role === 'tool').map((m) => m.content);
+    // 3rd identical call carries the nudge; the 5th is blocked with an error.
+    expect(contents[2]).toContain('loop-detection');
+    expect(contents[4]).toContain('blocked');
+    expect(contents[4]).toContain('Error:');
+  });
+});
+
 describe('runToolCalls → multi-sample edit verification wiring', () => {
   it('routes edit_file through verifyEditWithFallback when rt is present', async () => {
     verifyEditMock.mockResolvedValue({

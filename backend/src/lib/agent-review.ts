@@ -1,4 +1,5 @@
 import path from 'node:path';
+import fs from 'node:fs/promises';
 import type { Task } from '@prisma/client';
 import { config } from '../config.js';
 import { logger } from './logger.js';
@@ -36,6 +37,8 @@ import {
 import { requestReviewWithRetry } from './review-request.js';
 import { isTaskPaused, TaskPausedError } from './task-pause.js';
 import { buildRepoContext } from './repo-context.js';
+import { prisma } from './prisma.js';
+import { transcriptPath } from './lemcore/loop-constants.js';
 import { loadAgentsMdTemplate, loadTaskSkills } from './task-skills.js';
 
 // Job: review-pr — review → fix iterations → hand-off to the merge gate.
@@ -44,6 +47,11 @@ import { loadAgentsMdTemplate, loadTaskSkills } from './task-skills.js';
 // direct structured LLM calls. Merging lives in merge-gate.ts (CI-gated).
 
 const MAX_REVIEW_DIFF_CHARS = 24_000;
+// Full review loops per PR (re-enqueues from restarts/recovery included —
+// counted via the 'reviewing pull request' log events, no schema counter
+// needed). Each loop can run 60 turns; beyond the cap the PR goes back to
+// the merge gate / manual review instead of burning more tokens.
+export const MAX_REVIEW_LOOPS = 3;
 
 // Direct structured review call. Empty/invalid replies (a z.ai GLM quirk)
 // are retried with a nudge inside review-request.ts. When repoContext is
@@ -272,6 +280,20 @@ export async function reviewTask(taskId: string, attempt = 0): Promise<void> {
     await logEvent(taskId, 'cannot review: the task has no branch');
     return;
   }
+  // Bound full review loops per PR; past the cap the PR goes back to the
+  // merge gate instead of re-reviewing forever on every recovery re-enqueue.
+  const priorReviews = await prisma.taskEvent.count({
+    where: {
+      taskId,
+      kind: 'log',
+      payload: { path: ['line'], string_contains: 'reviewing pull request' },
+    },
+  });
+  if (priorReviews >= MAX_REVIEW_LOOPS) {
+    await logEvent(taskId, `review loop cap reached (${MAX_REVIEW_LOOPS}) — handing the PR back to review/merge flow`);
+    await setTaskStatus(taskId, 'awaiting_review');
+    return;
+  }
 
   const secrets: string[] = [];
   const workdir = path.join(config.AGENT_WORKDIR, `review-${taskId}-${attempt}`);
@@ -303,6 +325,11 @@ export async function reviewTask(taskId: string, attempt = 0): Promise<void> {
     );
     // Paused reviews keep the workdir (and transcript) for the resume.
     const paused = await isTaskPaused(taskId);
-    if (!paused) await cleanupWorkdir(workdir, taskId);
+    if (!paused) {
+      await cleanupWorkdir(workdir, taskId);
+      // The transcript lives beside the workdir — drop it too, or a later
+      // review of NEW commits would resume a stale conversation.
+      await fs.rm(transcriptPath(workdir), { force: true }).catch(() => undefined);
+    }
   }
 }
