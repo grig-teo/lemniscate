@@ -23,6 +23,7 @@
 # Env knobs:
 #   E2E_HEALTH_TIMEOUT_SECONDS  (default 360) per-service health wait budget
 #   E2E_TASK_TIMEOUT_SECONDS    (default 300) task queued->done budget
+#   E2E_REVIEW_TIMEOUT_SECONDS  (default 360) address-review follow-up budget
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -204,6 +205,7 @@ if ! docker run --rm \
   -e NODE_TLS_REJECT_UNAUTHORIZED=0 \
   -e E2E_SEED="$E2E_SEED" \
   -e E2E_TASK_TIMEOUT_SECONDS="${E2E_TASK_TIMEOUT_SECONDS:-300}" \
+  -e E2E_REVIEW_TIMEOUT_SECONDS="${E2E_REVIEW_TIMEOUT_SECONDS:-360}" \
   "$RUNNER_IMAGE"; then
   FAILED=1
   exit 1
