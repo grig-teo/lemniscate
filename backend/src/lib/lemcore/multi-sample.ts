@@ -5,7 +5,6 @@
 import type { ChatToolCall } from '../llm-client.js';
 import { chatCompletion } from '../llm-dispatch.js';
 import { resolveLlmAccessToken } from '../llm-access-token.js';
-import { parseToolCallArguments } from '../llm-client.js';
 import { config } from '../../config.js';
 import { logEvent } from '../agent-git.js';
 import { lintAndMaybeRevert, checkpointEdit } from './edit-checkpoint.js';
@@ -19,14 +18,15 @@ interface MultiSampleOpts {
   rt: LlmRuntime;
   taskId: string;
   toolCall: ChatToolCall;
+  /** File being edited, already validated by the caller (edit-router). */
+  relPath: string;
   originalContent: string;
   primaryNewContent: string;
   secrets: string[];
 }
 
 export async function verifyEditWithFallback(opts: MultiSampleOpts): Promise<ToolResult> {
-  const { workdir, rt, taskId, toolCall, originalContent, primaryNewContent, secrets } = opts;
-  const relPath = parsePathFromArgs(toolCall);
+  const { workdir, rt, taskId, toolCall, relPath, originalContent, primaryNewContent, secrets } = opts;
 
   const primary = await lintAndMaybeRevert(
     workdir, relPath, originalContent, primaryNewContent, secrets, Date.now(),
@@ -48,8 +48,7 @@ async function tryFallbackEdit(
   opts: MultiSampleOpts,
   primaryError: string,
 ): Promise<ToolResult | null> {
-  const { workdir, rt, toolCall, originalContent, secrets } = opts;
-  const relPath = parsePathFromArgs(toolCall);
+  const { workdir, rt, toolCall, relPath, originalContent, secrets } = opts;
   if (!relPath) return null;
 
   try {
@@ -88,15 +87,6 @@ async function tryFallbackEdit(
     );
   } catch {
     return null;
-  }
-}
-
-function parsePathFromArgs(toolCall: ChatToolCall): string {
-  try {
-    const args = parseToolCallArguments(toolCall);
-    return args.path ? String(args.path) : '';
-  } catch {
-    return '';
   }
 }
 

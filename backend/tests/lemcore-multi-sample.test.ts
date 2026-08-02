@@ -11,7 +11,13 @@ import { describe, expect, it } from 'vitest';
 // FIRST `}` after "path" — breaking for any payload with a nested `}` (a
 // multi_edit edits array, or a write_file/edit_file whose content has braces).
 
-import { extractToolArgs } from '../src/lib/lemcore/multi-sample.js';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+
+import type { ChatToolCall } from '../src/lib/llm-client.js';
+import type { LlmRuntime } from '../src/lib/agent-runtime.js';
+import { extractToolArgs, verifyEditWithFallback } from '../src/lib/lemcore/multi-sample.js';
 
 describe('extractToolArgs — balanced-brace JSON extraction', () => {
   it('parses a simple edit_file payload', () => {
@@ -59,5 +65,44 @@ describe('extractToolArgs — balanced-brace JSON extraction', () => {
 
   it('returns null for malformed JSON', () => {
     expect(extractToolArgs('{path: missing quotes}')).toBeNull();
+  });
+});
+
+// Regression for the prod EISDIR storm (Aug 2026): verifyEditWithFallback
+// re-derived the edit path via parsePathFromArgs(toolCall) — which passed the
+// WHOLE tool call object to parseToolCallArguments, so args.path was always
+// undefined, relPath collapsed to '' and lintAndMaybeRevert wrote to the
+// workdir root: "EISDIR: illegal operation on a directory, open '<workdir>'".
+// The relPath now comes from the caller (edit-router), never re-parsed.
+describe('verifyEditWithFallback — edit path is honored', () => {
+  function tc(name: string, args: Record<string, unknown>): ChatToolCall {
+    return {
+      id: 'call_1',
+      type: 'function',
+      function: { name, arguments: JSON.stringify(args) },
+    };
+  }
+  const fakeRt = { cfg: { contextWindow: 32_000 } } as unknown as LlmRuntime;
+
+  it('writes the edit to the target file — never to the workdir root', async () => {
+    const workdir = await mkdtemp(path.join(tmpdir(), 'lemcore-ms-'));
+    try {
+      await writeFile(path.join(workdir, 'a.txt'), 'hello\n');
+      const result = await verifyEditWithFallback({
+        workdir,
+        rt: fakeRt,
+        taskId: 't1',
+        toolCall: tc('edit_file', { path: 'a.txt', search: 'hello', replace: 'bye' }),
+        relPath: 'a.txt',
+        originalContent: 'hello\n',
+        primaryNewContent: 'bye\n',
+        secrets: [],
+      });
+      expect(result.error).toBeUndefined();
+      expect(result.title).toBe('a.txt');
+      expect(await readFile(path.join(workdir, 'a.txt'), 'utf8')).toBe('bye\n');
+    } finally {
+      await rm(workdir, { recursive: true, force: true });
+    }
   });
 });
