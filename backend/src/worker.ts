@@ -46,6 +46,7 @@ const mergeGateDataSchema = z.object({
   taskId: z.string().min(1),
   attempt: z.number().int().min(0).default(0),
   ciFixes: z.number().int().min(0).default(0),
+  rebaseRetries: z.number().int().min(0).default(0),
 });
 const deployServiceDataSchema = z.object({ deploymentId: z.string().min(1) });
 const addressReviewDataSchema = z.object({
@@ -131,8 +132,8 @@ async function processJob(job: Job): Promise<void> {
       return;
     }
     case 'merge-gate': {
-      const { taskId, attempt, ciFixes } = mergeGateDataSchema.parse(job.data);
-      await mergeGateTask(taskId, attempt, ciFixes);
+      const { taskId, attempt, ciFixes, rebaseRetries } = mergeGateDataSchema.parse(job.data);
+      await mergeGateTask(taskId, attempt, ciFixes, rebaseRetries);
       return;
     }
     case 'deploy-service': {

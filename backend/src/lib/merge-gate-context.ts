@@ -10,6 +10,8 @@ export interface GateContext {
   headBranch: string;
   attempt: number;
   ciFixes: number;
+  /** Forced rebase-and-fresh-budget rounds already used (bounded by MAX_REBASE_RETRIES). */
+  rebaseRetries: number;
   workdir: string;
   cloneUrl: string;
   secrets: string[];
