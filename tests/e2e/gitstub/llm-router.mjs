@@ -56,7 +56,13 @@ export function completionResponse(messages, hasTools, changesFixture, fixFixtur
   if (hasTools) {
     const done = (messages ?? []).some((message) => message?.role === 'tool');
     if (done) return { type: 'content', content: LEMCORE_DONE_REPLY };
-    const isFix = text.includes('# Code review feedback');
+    // Review-fix prompts: buildFixUserPrompt's '# Code review feedback'
+    // heading (internal executor, kept for the fixture path) and
+    // buildAgentFixPrompt's 'requested changes' line (lemcore fix iteration,
+    // used by the review loop AND the address-review job).
+    const isFix =
+      text.includes('# Code review feedback') ||
+      text.includes('requested changes');
     return {
       type: 'tool_calls',
       name: 'write_file',

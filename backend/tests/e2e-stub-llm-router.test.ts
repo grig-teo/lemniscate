@@ -105,6 +105,19 @@ describe('e2e mock LLM lemcore routing (function-calling)', () => {
     expect(routed.arguments.content).toContain('addressing a human review comment');
   });
 
+  it('routes buildAgentFixPrompt (review loop + address-review) to the fix file', () => {
+    // The lemcore fix iteration's prompt has no '# Code review feedback'
+    // heading — its marker is the 'requested changes' line.
+    const routed = completionResponse(
+      [userMessage('# Original task\nx\n\nThe review of your implementation requested changes. Address every issue below.')],
+      true,
+      fixture,
+      fixFixture,
+    );
+    expect(routed.type).toBe('tool_calls');
+    expect(routed.arguments.path).toBe('E2E_REVIEW_FIX.md');
+  });
+
   it('answers with plain content once a tool result is in the transcript', () => {
     const routed = completionResponse(
       [userMessage('Add the file'), { role: 'tool', content: 'wrote 42 chars' }],
