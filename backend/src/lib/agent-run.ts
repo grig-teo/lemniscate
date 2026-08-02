@@ -15,10 +15,9 @@ import {
 import { hasMeaningfulChanges } from './workdir-changes.js';
 import { pushTaskBranch, recordChangedPaths } from './agent-publish.js';
 import { ensureRepoDigest, withRepoDigest } from './repo-digest.js';
+import { buildPrBody, generateBranchName } from './agent-naming.js';
 import {
-  buildPrBody,
   buildSkillsSection,
-  generateBranchName,
   requestChanges,
   type LlmChangesResponse,
 } from './agent-prompts.js';

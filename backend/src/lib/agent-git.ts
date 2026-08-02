@@ -4,7 +4,7 @@ import path from 'node:path';
 import { promisify } from 'node:util';
 import type { Task } from '@prisma/client';
 import type { LlmChange } from './agent-prompts.js';
-import { generateCommitMessage } from './agent-prompts.js';
+import { generateCommitMessage } from './agent-naming.js';
 import type { LlmRuntime, TokenSplit } from './agent-runtime.js';
 import { prisma } from './prisma.js';
 import { errorKind, logJobFailure } from './job-failure-log.js';

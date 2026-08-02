@@ -1,20 +1,21 @@
 import type { Repository, Task } from '@prisma/client';
 import { z } from 'zod';
-import { config } from '../config.js';
-import {
-  llmCall,
-  TokenBudgetExceededError,
-  type LlmRuntime,
-} from './agent-runtime.js';
+import { llmCall, type LlmRuntime } from './agent-runtime.js';
 import { extractJsonArray, parseLlmJson } from './llm-json.js';
 import type { ChatMessage } from './llm-client.js';
+import {
+  AMBIGUITY_ESCAPE,
+  DESTRUCTIVE_ACTION_GUARDS,
+  PROMPT_INJECTION_GUARD,
+} from './prompt-guards.js';
 import { truncateKeyFile } from './repo-context.js';
 import { imageContentPart, parseTaskAttachments } from './task-attachments.js';
 import { errorMessage } from './utils.js';
 
-// Prompt builders, response schemas, and slug/message helpers for the agent
-// loop's LLM calls. Extracted from agent-loop.ts; the pure builders are
-// unit-tested in tests/agent-prompts.test.ts.
+// Prompt builders and response schemas for the agent loop's LLM calls.
+// Extracted from agent-loop.ts; branch-name/commit-message/PR-body helpers
+// live in agent-naming.ts. The pure builders are unit-tested in
+// tests/agent-prompts.test.ts.
 
 // ---------------------------------------------------------------------------
 // Change-set requests (run-task + review-fix share this contract)
@@ -72,6 +73,7 @@ export function agentSystemPrompt(
   return [
     'You are Lemniscate, an autonomous coding agent working inside a git repository.',
     'You are given the repository file tree, the contents of its key files, and a task.',
+    PROMPT_INJECTION_GUARD,
     'Respond with STRICT JSON only — no markdown fences, no commentary — matching exactly:',
     '{"summary": string, "changes": [{"path": string, "action": "create"|"modify"|"delete", "content"?: string}]}',
     'Rules:',
@@ -80,6 +82,8 @@ export function agentSystemPrompt(
     '- Keep changes minimal and focused on the task; do not reformat unrelated code.',
     '- Paths are relative to the repository root.',
     '- Never include secrets, tokens, or credentials.',
+    DESTRUCTIVE_ACTION_GUARDS,
+    AMBIGUITY_ESCAPE,
     ...(systemPromptExtra
       ? ['', 'Additional instructions from the repository owner:', systemPromptExtra]
       : []),
@@ -142,107 +146,6 @@ export async function requestChanges(
     const repaired = await llmCall(rt, [...messages, ...repair]);
     return parseLlmJson(llmChangesResponseSchema, repaired, 'an invalid change set');
   }
-}
-
-// ---------------------------------------------------------------------------
-// Branch names + commit messages
-// ---------------------------------------------------------------------------
-
-export function slugify(text: string, maxLength: number): string {
-  return text
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/-{2,}/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, maxLength)
-    .replace(/-+$/g, '');
-}
-
-// Branch name: LLM-proposed slug, sanitized, prefix + slug ≤ 40 chars.
-export function maxBranchSlugLength(prefix: string): number {
-  return Math.max(8, 40 - prefix.length);
-}
-
-export function fallbackBranchSlug(taskId: string, maxSlugLength: number): string {
-  return slugify(`task-${taskId.slice(0, 8)}`, maxSlugLength);
-}
-
-function branchSlugUserPrompt(maxSlugLength: number, task: Task): string {
-  return [
-    `Propose a short kebab-case git branch slug (max ${maxSlugLength} characters) for this task.`,
-    'Reply with ONLY the slug, nothing else.',
-    '',
-    `Title: ${task.title}`,
-    task.prompt ?? '',
-  ].join('\n');
-}
-
-export async function generateBranchName(rt: LlmRuntime, task: Task): Promise<string> {
-  const prefix = config.AGENT_BRANCH_PREFIX;
-  const maxSlugLength = maxBranchSlugLength(prefix);
-  const fallback = fallbackBranchSlug(task.id, maxSlugLength);
-  try {
-    const content = await llmCall(rt, [
-      { role: 'user', content: branchSlugUserPrompt(maxSlugLength, task) },
-    ]);
-    return `${prefix}${slugify(content, maxSlugLength) || fallback}`;
-  } catch (err) {
-    if (err instanceof TokenBudgetExceededError) throw err;
-    return `${prefix}${fallback}`;
-  }
-}
-
-const COMMIT_MESSAGE_FALLBACK = 'chore: apply lemniscate agent changes';
-
-function commitMessageUserPrompt(task: Task, summary: string): string {
-  return [
-    'Write a concise conventional-commit message (single line, max 72 characters) for these changes.',
-    'Reply with ONLY the commit message, nothing else.',
-    '',
-    `Task: ${task.title}`,
-    `Summary: ${summary}`,
-  ].join('\n');
-}
-
-export function commitMessageFromResponse(content: string, fallback: string): string {
-  const firstLine =
-    content
-      .split('\n')
-      .map((line) => line.trim())
-      .find((line) => line.length > 0) ?? '';
-  const cleaned = firstLine.replace(/^["'`]+|["'`]+$/g, '').slice(0, 72).trim();
-  return cleaned || fallback;
-}
-
-export async function generateCommitMessage(
-  rt: LlmRuntime,
-  task: Task,
-  summary: string,
-): Promise<string> {
-  try {
-    const content = await llmCall(rt, [
-      { role: 'user', content: commitMessageUserPrompt(task, summary) },
-    ]);
-    return commitMessageFromResponse(content, COMMIT_MESSAGE_FALLBACK);
-  } catch (err) {
-    if (err instanceof TokenBudgetExceededError) throw err;
-    return COMMIT_MESSAGE_FALLBACK;
-  }
-}
-
-export function buildPrBody(task: Task, summary: string): string {
-  return [
-    '## Task',
-    '',
-    task.prompt?.trim() || task.title,
-    '',
-    '## Summary of changes',
-    '',
-    summary,
-    '',
-    '---',
-    '_Generated by the Lemniscate agent_',
-  ].join('\n');
 }
 
 // ---------------------------------------------------------------------------

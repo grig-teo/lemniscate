@@ -8,14 +8,14 @@ import {
   sanitizeRelativePath,
 } from './agent-git.js';
 import { llmCall, type LlmRuntime } from './agent-runtime.js';
-import { runHermesTask } from './hermes-runner.js';
-import type { GateContext } from './merge-gate-context.js';
 import {
   buildConflictResolutionMessages,
-  buildHermesConflictPrompt,
   hasConflictMarkers,
   parseResolvedFile,
-} from './pr-review.js';
+} from './conflict-resolve.js';
+import { runHermesTask } from './hermes-runner.js';
+import type { GateContext } from './merge-gate-context.js';
+import { buildHermesConflictPrompt } from './pr-review.js';
 import { publishTaskEvent } from './task-events.js';
 
 // Rebase machinery for the merge-gate job: staleness checkout, the rebase
@@ -120,7 +120,7 @@ async function resolveConflictedFile(
   if (conflictedContent.length > MAX_CONFLICT_FILE_CHARS) {
     throw new Error(`conflicted file ${rel} is too large for LLM resolution`);
   }
-  const resolved = parseResolvedFile(
+  const result = parseResolvedFile(
     await llmCall(
       rt,
       buildConflictResolutionMessages({
@@ -132,7 +132,12 @@ async function resolveConflictedFile(
       }),
     ),
   );
-  await fs.writeFile(abs, resolved, 'utf8');
+  // Semantically incompatible sides: the LLM declined to force a merge —
+  // abort the rebase so the merge gate hands the PR to a human.
+  if (result.status === 'unresolved') {
+    throw new Error(`merge conflict in ${rel} needs human resolution: ${result.reason}`);
+  }
+  await fs.writeFile(abs, result.content, 'utf8');
   await git(['add', '--', rel], { cwd: workdir });
   await publishTaskEvent(task.id, 'diff', { path: rel, action: 'conflict-resolved' });
   await logEvent(task.id, `resolved conflict in ${rel}`);

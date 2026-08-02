@@ -5,6 +5,7 @@
 import { chatCompletion } from '../llm-dispatch.js';
 import { config } from '../../config.js';
 import { logEvent } from '../agent-git.js';
+import { PROMPT_INJECTION_GUARD } from '../prompt-guards.js';
 import { getReadOnlyTools } from './tool-catalog.js';
 import { runToolCalls } from './loop-tool-runner.js';
 import { classifyAssistantReply, EMPTY_REPLY_NUDGE } from './loop-reply.js';
@@ -21,6 +22,7 @@ const SUBAGENT_SYSTEM_PROMPT = [
   'You CANNOT modify files, run bash, or write code — you are investigating only.',
   'Be thorough: search, read, and explore until you have a confident answer.',
   'Finish with a concise, factual summary of your findings. Do not speculate.',
+  PROMPT_INJECTION_GUARD,
 ].join('\n');
 
 export interface SubagentCtx {

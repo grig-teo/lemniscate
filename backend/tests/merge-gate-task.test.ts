@@ -94,8 +94,9 @@ vi.mock('../src/lib/notifications.js', () => ({
   notifyOncePerTask: vi.fn().mockResolvedValue(undefined),
 }));
 
-// pr-review.js (parseResolvedFile, hasConflictMarkers, prompt builders) is
-// intentionally NOT mocked: conflict-marker safety is behavior under test.
+// pr-review.js + conflict-resolve.js (parseResolvedFile, hasConflictMarkers,
+// prompt builders) are intentionally NOT mocked: conflict-marker safety is
+// behavior under test.
 import {
   MAX_CI_FIX_ATTEMPTS,
   MERGE_GATE_DELAY_MS,

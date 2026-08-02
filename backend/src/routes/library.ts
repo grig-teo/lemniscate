@@ -23,6 +23,8 @@ const SYSTEM_PROMPT = [
   'Reply with JSON only: {"folders": ["src", "src/api", "docs", ...]}.',
   'Directories only (no files), at most two levels deep, at most 30 entries,',
   'relative paths without leading slash. No explanations.',
+  'If the repository already contains files or folders, respect and extend that',
+  'existing structure rather than proposing a layout that ignores it.',
 ].join(' ');
 
 // Normalizes the LLM's folder list: slash-prefixed, deduped, root first,

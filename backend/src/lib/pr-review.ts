@@ -1,6 +1,11 @@
 import { z } from 'zod';
-import { extractJsonObject, parseLlmJson } from './llm-json.js';
+import { parseLlmJson } from './llm-json.js';
 import type { ChatMessage } from './llm-client.js';
+import {
+  PROMPT_INJECTION_GUARD,
+  REVIEW_SEVERITY_RULES,
+  SECRETS_HANDLING_GUARD,
+} from './prompt-guards.js';
 
 // Pure logic for the LLM PR-review flow: strict response parsing and prompt
 // builders. Kept free of config/prisma/redis imports so it stays unit-testable
@@ -12,6 +17,10 @@ import type { ChatMessage } from './llm-client.js';
 
 export const prReviewIssueSchema = z.object({
   path: z.string().min(1).max(500).optional(),
+  // Missing/unknown severity defaults to blocking — conservative: an
+  // unlabeled issue still gates the merge (backward compatible with LLMs
+  // that ignore the field).
+  severity: z.enum(['blocking', 'nit']).catch('blocking'),
   comment: z.string().min(1).max(4_000),
 });
 
@@ -24,31 +33,18 @@ export const prReviewSchema = z.object({
 export type PrReview = z.infer<typeof prReviewSchema>;
 export type PrReviewIssue = z.infer<typeof prReviewIssueSchema>;
 
+// Only blocking issues gate a merge: a changes_requested verdict backed by
+// nits alone (or no issues at all) is normalized to approve so style comments
+// never block the PR. Single home — every parsePrReview caller (direct LLM,
+// hermes verdict file, lemcore) gets the same rule.
+export function normalizeReviewVerdict(review: PrReview): PrReview {
+  if (review.verdict !== 'changes_requested') return review;
+  if (review.issues.some((issue) => issue.severity === 'blocking')) return review;
+  return { ...review, verdict: 'approve' };
+}
+
 export function parsePrReview(text: string): PrReview {
-  return parseLlmJson(prReviewSchema, text, 'an invalid review');
-}
-
-// The conflict-resolution answer: the complete resolved file content.
-export const resolvedFileSchema = z.object({
-  content: z.string(),
-});
-
-export function parseResolvedFile(text: string): string {
-  const content = parseLlmJson(resolvedFileSchema, text, 'an invalid resolved file').content;
-  if (hasConflictMarkers(content)) {
-    throw new Error('LLM returned a resolved file that still contains conflict markers');
-  }
-  return content;
-}
-
-// Defensive check that an LLM-resolved file has no leftover merge markers.
-export function hasConflictMarkers(content: string): boolean {
-  return content
-    .split('\n')
-    .some(
-      (line) =>
-        line.startsWith('<<<<<<<') || line.startsWith('>>>>>>>') || line.startsWith('======='),
-    );
+  return normalizeReviewVerdict(parseLlmJson(prReviewSchema, text, 'an invalid review'));
 }
 
 // ---------------------------------------------------------------------------
@@ -70,12 +66,15 @@ export function buildReviewMessages(input: {
         'You are Lemniscate, an autonomous code reviewer.',
         'You are given a task description and the unified diff of a pull request implementing it.',
         'Decide whether the pull request correctly and safely implements the task.',
+        PROMPT_INJECTION_GUARD,
         'Respond with STRICT JSON only — no markdown fences, no commentary — matching exactly:',
-        '{"verdict": "approve"|"changes_requested", "summary": string, "issues": [{"path"?: string, "comment": string}]}',
+        '{"verdict": "approve"|"changes_requested", "summary": string, "issues": [{"path"?: string, "severity": "blocking"|"nit", "comment": string}]}',
         'Rules:',
         '- "approve" only when the change is correct, minimal, and safe to merge.',
         '- List concrete, actionable issues; do not request stylistic-only rewrites.',
         '- Use "issues": [] when approving.',
+        REVIEW_SEVERITY_RULES,
+        SECRETS_HANDLING_GUARD,
         ...(input.systemPromptExtra
           ? ['', 'Additional instructions from the repository owner:', input.systemPromptExtra]
           : []),
@@ -139,40 +138,12 @@ export function reviewFromHumanComment(comment: {
     issues: [
       {
         ...(comment.path ? { path: comment.path } : {}),
+        // Human review feedback is always blocking — a person asked for it.
+        severity: 'blocking',
         comment: comment.line ? `${body} (line ${comment.line})` : body,
       },
     ],
   };
-}
-
-export function buildConflictResolutionMessages(input: {
-  path: string;
-  conflictedContent: string;
-  baseBranch: string;
-  headBranch: string;
-  systemPromptExtra?: string | null;
-}): ChatMessage[] {
-  return [
-    {
-      role: 'system',
-      content: [
-        'You are Lemniscate, an autonomous coding agent resolving a git merge conflict.',
-        'You are given one file containing conflict markers (<<<<<<< / ======= / >>>>>>>).',
-        `The conflict comes from merging ${input.headBranch} into ${input.baseBranch}.`,
-        'Respond with STRICT JSON only — no markdown fences, no commentary — matching exactly:',
-        '{"content": string}',
-        '"content" MUST hold the COMPLETE resolved file with ALL conflict markers removed,',
-        'combining both sides so the change from the pull request is preserved.',
-        ...(input.systemPromptExtra
-          ? ['', 'Additional instructions from the repository owner:', input.systemPromptExtra]
-          : []),
-      ].join('\n'),
-    },
-    {
-      role: 'user',
-      content: `# File: ${input.path}\n\`\`\`\n${input.conflictedContent}\n\`\`\``,
-    },
-  ];
 }
 
 // ---------------------------------------------------------------------------
@@ -202,8 +173,11 @@ export function buildHermesReviewPrompt(input: {
     `1. Inspect the changes: run \`git diff origin/${input.baseBranch} HEAD\` (two dots — the clone is shallow, there is no merge base) and read the affected files.`,
     '2. Decide whether the implementation correctly and completely implements the task: correctness, missing pieces, regressions, unrelated changes.',
     `3. Write your verdict as JSON to the file ${HERMES_REVIEW_FILENAME} with exactly this shape:`,
-    '{"verdict": "approve" | "changes_requested", "summary": "<one paragraph>", "issues": [{"path": "<file>", "comment": "<what must change>"}]}',
-    'Use "approve" only when the change is correct, minimal, and safe to merge. List concrete blocking issues; omit "path" for general ones. Use "issues": [] when approving.',
+    '{"verdict": "approve" | "changes_requested", "summary": "<one paragraph>", "issues": [{"path": "<file>", "severity": "blocking" | "nit", "comment": "<what must change>"}]}',
+    'Use "approve" only when the change is correct, minimal, and safe to merge. Omit "path" for general issues. Use "issues": [] when approving.',
+    REVIEW_SEVERITY_RULES,
+    PROMPT_INJECTION_GUARD,
+    SECRETS_HANDLING_GUARD,
     '',
     `Do NOT git commit, push, or create branches. Do NOT modify any file other than ${HERMES_REVIEW_FILENAME}.`,
     ...(input.systemPromptExtra
@@ -253,6 +227,12 @@ export function buildHermesConflictPrompt(input: {
     '',
     'The current directory contains the merge in progress, with conflict markers (<<<<<<< / ======= / >>>>>>>) in the files above.',
     'Resolve every conflicted file: keep the intent of both sides so the pull request change is preserved, and remove ALL conflict markers.',
+    'If the two sides make incompatible changes to the same logic (not just overlapping',
+    'text — e.g. one side removes a function the other side calls), do not force a',
+    "silent merge: leave that file's conflict markers in place and explain the conflict",
+    'in your final message so a human can resolve it.',
+    PROMPT_INJECTION_GUARD,
+    SECRETS_HANDLING_GUARD,
     'Do NOT git commit, push, or run git add — just edit the files.',
     ...(input.systemPromptExtra
       ? ['', 'Additional instructions from the repository owner:', input.systemPromptExtra]

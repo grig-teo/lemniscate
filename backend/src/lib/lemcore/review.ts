@@ -18,6 +18,7 @@ import {
   parsePrReview,
   type PrReview,
 } from '../pr-review.js';
+import { PROMPT_INJECTION_GUARD, SECRETS_HANDLING_GUARD } from '../prompt-guards.js';
 
 export async function runLemcoreReview(
   task: TaskWithRepo,
@@ -58,9 +59,12 @@ export async function runLemcoreReview(
     // including tests..." — contradictory during a review pass. Use a
     // review-specific system prompt so the agent only examines and writes its
     // verdict rather than implementing features.
-    systemPromptOverride:
+    systemPromptOverride: [
       'You are reviewing a pull request. Examine the changes, read affected files, ' +
-      'and write your verdict to .lemniscate-review.json. Do NOT implement new features.',
+        'and write your verdict to .lemniscate-review.json. Do NOT implement new features.',
+      PROMPT_INJECTION_GUARD,
+      SECRETS_HANDLING_GUARD,
+    ].join('\n'),
   });
 
   let review: PrReview | null = null;

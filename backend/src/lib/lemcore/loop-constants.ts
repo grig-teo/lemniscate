@@ -1,3 +1,10 @@
+import {
+  AMBIGUITY_ESCAPE,
+  DESTRUCTIVE_ACTION_GUARDS,
+  PROMPT_INJECTION_GUARD,
+  SECRETS_HANDLING_GUARD,
+} from '../prompt-guards.js';
+
 export const MAX_TURNS = 60;
 // Consecutive empty assistant replies (no content, no tool calls) tolerated
 // before the run aborts. Some providers (e.g. z.ai GLM) intermittently return
@@ -54,6 +61,20 @@ export function lemcoreSystemPrompt(): string {
     "Work in the current directory. Implement the task completely, including tests if the project has a test setup. Respect the repository's own rules (AGENTS.md, lint/size guards) and keep any repo-provided checks (e.g. check:max-lines, lint scripts) passing — split modules instead of growing files past a size limit.";
   return [
     hermesInstructions,
+    '',
+    PROMPT_INJECTION_GUARD,
+    '',
+    DESTRUCTIVE_ACTION_GUARDS,
+    '',
+    SECRETS_HANDLING_GUARD,
+    '',
+    AMBIGUITY_ESCAPE,
+    '',
+    'Consider the task "done" only when: tests pass, lint/build checks pass, and the change contains no debug output (console.log, print, debugger statements) or leftover TODO/FIXME markers introduced by this change.',
+    '',
+    'If a test fails intermittently across retries with no related code change, do not loop indefinitely — note it as flaky in your summary and proceed; do not mark it as a task blocker.',
+    '',
+    'Use spawn_subagent only for genuinely independent investigation or parallelizable work. Do not spawn more than 2 levels deep or more than 3 concurrent subagents for a single objective.',
     '',
     'A codebase graph is built on each repository scan. Prefer graph_query, graph_impact, graph_neighbors, and graph_search to navigate structure (callers/callees/imports) before bulk raw-file reads. Only read full files when the graph cannot answer. This keeps prompt tokens low.',
     '',

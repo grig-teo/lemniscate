@@ -300,7 +300,9 @@ describe('reviewTask on the internal executor', () => {
   });
 
   it('skips the push when the LLM produces no fix changes, but still finishes', async () => {
-    mocks.llmCall.mockResolvedValue(reviewJson('changes_requested'));
+    mocks.llmCall.mockResolvedValue(
+      reviewJson('changes_requested', [{ path: 'src/a.ts', comment: 'fix' }]),
+    );
     mocks.applyChanges.mockResolvedValue(0);
     await reviewTask('task-1');
     expect(mocks.commitAndPush).not.toHaveBeenCalled();
@@ -494,7 +496,11 @@ describe('reviewTask on the hermes executor', () => {
 
   it('skips the push when hermes leaves a clean workdir, but still finishes', async () => {
     mocks.runHermesTask
-      .mockImplementationOnce(hermesWritesReviewFile(reviewJson('changes_requested')))
+      .mockImplementationOnce(
+        hermesWritesReviewFile(
+          reviewJson('changes_requested', [{ path: 'src/a.ts', comment: 'fix' }]),
+        ),
+      )
       .mockImplementationOnce(async () => {});
     mocks.hasMeaningfulChanges.mockResolvedValue(false);
     await reviewTask('task-1');

@@ -62,9 +62,11 @@ vi.mock('../src/lib/workdir-changes.js', () => ({
   hasMeaningfulChanges: mocks.hasMeaningfulChanges,
 }));
 vi.mock('../src/lib/agent-prompts.js', () => ({
+  requestChanges: mocks.requestChanges,
+}));
+vi.mock('../src/lib/agent-naming.js', () => ({
   buildPrBody: mocks.buildPrBody,
   generateBranchName: mocks.generateBranchName,
-  requestChanges: mocks.requestChanges,
 }));
 vi.mock('../src/lib/agent-runtime.js', () => ({
   loadTaskWithRepo: mocks.loadTaskWithRepo,
