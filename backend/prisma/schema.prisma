@@ -40,6 +40,11 @@ enum TaskStatus {
   awaiting_plan_approval
   awaiting_review
   reviewing_code
+  // PR open and CI checks running (or being fixed) on the git host. The
+  // review/merge-gate tail, address-review and CI-fix pushes land here; a
+  // ci_status webhook or a merge-gate re-check flips the task back to
+  // awaiting_review (which re-runs review-pr before the merge gate merges).
+  waiting_ci
   done
   failed
   closed

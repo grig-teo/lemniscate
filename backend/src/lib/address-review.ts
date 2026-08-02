@@ -21,6 +21,7 @@ import {
 } from './agent-runtime.js';
 import { reviewFromHumanComment } from './pr-review.js';
 import { reviewFeedbackSkipReason, type ReviewFeedbackComment } from './review-feedback.js';
+import { setTaskStatus } from './task-events.js';
 import { prisma } from './prisma.js';
 import { notify } from './notifications.js';
 
@@ -90,6 +91,11 @@ async function executeAddressReview(
   const review = reviewFromHumanComment(comment);
   await applyReviewFixes(task, rt, review, headBranch, workdir, cloneUrl, secrets, gitAuth);
   await markAddressed(task.id, comment);
+  // A follow-up commit was just pushed — CI re-runs on the git host. Mirror
+  // the review tail (review-finish.ts): the task waits for CI checks until a
+  // ci_status webhook (or the merge-gate re-check) flips it back to
+  // awaiting_review.
+  await setTaskStatus(task.id, 'waiting_ci');
   await logEvent(task.id, `addressed review comment ${comment.id}`);
   await notify(task.repository.connection.userId, 'review_addressed', {
     title: `Review feedback addressed: ${task.title}`,
@@ -146,7 +152,7 @@ export async function addressReviewTask(
     // reached a terminal state gets it cleaned up here.
     const status = (await prisma.task.findUnique({ where: { id: taskId }, select: { status: true } }))
       ?.status;
-    if (status !== 'awaiting_review' && status !== 'reviewing_code') {
+    if (status !== 'awaiting_review' && status !== 'reviewing_code' && status !== 'waiting_ci') {
       await cleanupWorkdir(workdir, taskId);
     }
   }

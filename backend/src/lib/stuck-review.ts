@@ -122,7 +122,7 @@ export async function recoverStuckReviews(): Promise<void> {
       OR: [
         { status: 'running' },
         {
-          status: { in: ['awaiting_review', 'reviewing_code'] },
+          status: { in: ['awaiting_review', 'reviewing_code', 'waiting_ci'] },
           branchName: { not: null },
         },
       ],

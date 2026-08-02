@@ -260,7 +260,10 @@ export async function reviewTask(taskId: string, attempt = 0): Promise<void> {
   }
   // Only review PRs still waiting for review on an opted-in repository.
   // 'reviewing_code' is accepted so re-enqueued review iterations (fix
-  // loop) and BullMQ retries don't bounce on the guard.
+  // loop) and BullMQ retries don't bounce on the guard. 'waiting_ci' is
+  // NOT accepted: its fixture carries the agent's own push, so an early
+  // ci_status webhook / merge-gate re-check must flip the task back to
+  // awaiting_review first, arming a fresh review pass on the final code.
   const inReview = task.status === 'awaiting_review' || task.status === 'reviewing_code';
   if (!inReview || !task.repository.autoReviewPr) {
     return;

@@ -254,6 +254,7 @@ async function runCiFixAndRequeue(ctx: GateContext): Promise<void> {
     }
     await persistTokenUsage(task.id, rt.usedTokens, tokenSplit(rt));
     await logEvent(task.id, 'pushed the rebased branch; waiting for CI before the next merge attempt');
+    await setTaskStatus(task.id, 'waiting_ci');
     await enqueueMergeGate(task.id, ctx.attempt + 1, ctx.ciFixes, MERGE_GATE_DELAY_MS);
     return;
   }
@@ -263,6 +264,8 @@ async function runCiFixAndRequeue(ctx: GateContext): Promise<void> {
   );
   await runCiFixViaHermes(ctx);
   await persistTokenUsage(task.id, rt.usedTokens, tokenSplit(rt));
+  // The CI fix was pushed — the task waits for checks on the fix commit.
+  await setTaskStatus(task.id, 'waiting_ci');
   await enqueueMergeGate(task.id, ctx.attempt + 1, ctx.ciFixes + 1, MERGE_GATE_DELAY_MS);
 }
 
@@ -278,12 +281,19 @@ async function dispatchGateAction(
   ciFixes: number,
 ): Promise<boolean> {
   if (action === 'wait') {
+    // CI is running on the git host — show it. The next re-check (or the
+    // ci_status webhook) flips the task back to awaiting_review.
+    await setTaskStatus(task.id, 'waiting_ci');
     await logEvent(task.id, `CI checks are running — re-checking in ${MERGE_GATE_DELAY_MS / 1000}s`);
     await enqueueMergeGate(task.id, attempt + 1, ciFixes, MERGE_GATE_DELAY_MS);
     return false;
   }
   if (action === 'manual') {
     const reason = manualGateMessage(checks, ciFixes);
+    // The gate stops here, but the task was waiting on CI, not on review —
+    // a human merging (or a ci_status webhook) still routes through the
+    // awaiting_review pipeline, which review-pr guards by freshness anyway.
+    await setTaskStatus(task.id, 'waiting_ci');
     await logEvent(task.id, reason);
     await notifyOncePerTask(task.repository.connection.userId, 'merge_gate_failed', {
       title: `Merge gate gave up: ${task.title}`,
@@ -303,8 +313,15 @@ export async function mergeGateTask(taskId: string, attempt = 0, ciFixes = 0): P
     return;
   }
   // Only merge PRs still waiting on an auto-merge repository. Merged/closed
-  // tasks (pr-state-sync) and manual-merge repositories stop here.
-  if (task.status !== 'awaiting_review' || !task.repository.autoMergePr || !task.branchName) {
+  // tasks (pr-state-sync) and manual-merge repositories stop here. A
+  // waiting_ci task re-checks too: it is the merge-gate's own wait/fix-ci
+  // state, and this poll doubles as the flip-back to awaiting_review when
+  // the ci_status webhook never arrives (GitVerse/Gitee have no webhooks).
+  if (
+    (task.status !== 'awaiting_review' && task.status !== 'waiting_ci') ||
+    !task.repository.autoMergePr ||
+    !task.branchName
+  ) {
     return;
   }
   const headBranch = task.branchName;
@@ -317,6 +334,14 @@ export async function mergeGateTask(taskId: string, attempt = 0, ciFixes = 0): P
       headBranch,
       baseBranch: task.repository.defaultBranch,
     });
+    // The merge gate only ever runs on pushed code — CI activity (or its
+    // absence) is settled by the time the checks status reads green/failing/
+    // pending. Flip a waiting_ci task back to awaiting_review first: the
+    // re-enqueued review-pr pass then reviews the final code and hands the
+    // PR back to this gate, so nothing merges unreviewed.
+    if (task.status === 'waiting_ci') {
+      await setTaskStatus(taskId, 'awaiting_review');
+    }
     const executor = await resolveAgentExecutor(task.repository.connection.userId);
     const action = mergeGateAction(checks, attempt, ciFixes, executor);
     if (!(await dispatchGateAction(action, checks, task, attempt, ciFixes))) return;

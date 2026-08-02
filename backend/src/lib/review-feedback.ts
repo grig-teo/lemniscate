@@ -55,7 +55,11 @@ export function reviewFeedbackSkipReason(input: {
   comment: ReviewFeedbackComment;
 }): string | null {
   if (!input.autoAddressReview) return 'flag_off';
-  if (input.taskStatus !== 'awaiting_review' && input.taskStatus !== 'reviewing_code') {
+  if (
+    input.taskStatus !== 'awaiting_review' &&
+    input.taskStatus !== 'reviewing_code' &&
+    input.taskStatus !== 'waiting_ci'
+  ) {
     return 'not_awaiting_review';
   }
   if (!input.branchName) return 'no_branch';
