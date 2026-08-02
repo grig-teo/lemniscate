@@ -7,6 +7,36 @@ import type { AgentStep } from '@/lib/agent-step';
 
 afterEach(() => cleanup());
 
+describe('LemcoreRunView — edit diffs in "Show details"', () => {
+  const diffStep: AgentStep = {
+    stepId: 't1',
+    eventKey: 'e2',
+    status: 'done',
+    kind: 'tool',
+    tool: 'write_file',
+    title: 'write_file(app.ts)',
+    diff: ['--- /dev/null', '+++ b/app.ts', '@@ -0,0 +1,2 @@', '+const a = 1;', '+const b = 2;'].join('\n'),
+  };
+
+  it('renders the diff with added-line coloring instead of hiding it', () => {
+    render(
+      <LemcoreRunView
+        steps={[diffStep]}
+        running={false}
+        streamError={false}
+        isLoading={false}
+        isError={false}
+      />,
+    );
+    fireEvent.click(screen.getByText('Show details'));
+
+    const added = screen.getByText('+const a = 1;');
+    expect(added).toBeTruthy();
+    expect(added.className).toContain('text-success');
+    expect(screen.getByText('--- /dev/null').className).toContain('text-muted-foreground');
+  });
+});
+
 const steps: AgentStep[] = [
   {
     stepId: 'a1',

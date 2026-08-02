@@ -193,7 +193,11 @@ export async function toolWriteFile(
   return {
     tool: 'write_file',
     title: relPath,
-    outputPreview: truncate(redactSecrets(`wrote ${content.length} chars`, secrets)),
+    // The summary leads with the byte count, then shows the actual content
+    // written so the console "Show details" view isn't a bare "wrote N chars".
+    outputPreview: truncate(
+      redactSecrets(`wrote ${content.length} chars to ${relPath}\n\n${content}`, secrets),
+    ),
     durationMs: Date.now() - startMs,
     diff: buildEditDiff({ relPath, oldContent: priorContent, newContent: content }),
   };

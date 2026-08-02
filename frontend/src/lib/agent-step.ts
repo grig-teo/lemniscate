@@ -22,6 +22,8 @@ export interface AgentStep {
   title: string;
   detail?: string;
   outputPreview?: string;
+  /** Unified diff of a file write/edit (rendered in "Show details"). */
+  diff?: string;
   durationMs?: number;
   tokensUsed?: number;
 }
@@ -43,6 +45,7 @@ export function parseAgentStep(payload: unknown, eventKey = ''): AgentStep | nul
   const tool = firstStringField(record, ['tool'], { allowEmpty: false }) ?? undefined;
   const detail = firstStringField(record, ['detail']) ?? undefined;
   const outputPreview = firstStringField(record, ['outputPreview']) ?? undefined;
+  const diff = firstStringField(record, ['diff']) ?? undefined;
   const subtypeRaw = firstStringField(record, ['subtype'], { allowEmpty: false });
   const subtype = subtypeRaw && SUBTYPES.has(subtypeRaw) ? (subtypeRaw as AgentStepSubtype) : undefined;
   const durationMs = numberField(record, 'durationMs');
@@ -58,6 +61,7 @@ export function parseAgentStep(payload: unknown, eventKey = ''): AgentStep | nul
     title,
     ...(detail ? { detail } : {}),
     ...(outputPreview ? { outputPreview } : {}),
+    ...(diff ? { diff } : {}),
     ...(durationMs !== undefined ? { durationMs } : {}),
     ...(tokensUsed !== undefined ? { tokensUsed } : {}),
   };

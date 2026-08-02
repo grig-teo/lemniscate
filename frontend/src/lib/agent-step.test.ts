@@ -30,8 +30,15 @@ describe('parseAgentStep', () => {
       tool: 'read_file',
       title: 'read_file(a.ts)',
       outputPreview: 'hi',
+      diff: undefined,
       durationMs: 12,
     });
+  });
+
+  it('keeps the diff payload so "Show details" can render it', () => {
+    const diff = ['--- a/a.ts', '+++ b/a.ts', '@@ -1 +1 @@', '-old', '+new'].join('\n');
+    const step = parseAgentStep({ ...base, status: 'done', diff }, 'ev-2');
+    expect(step?.diff).toBe(diff);
   });
 
   it('rejects incomplete or unknown shapes', () => {
