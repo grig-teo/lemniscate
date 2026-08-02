@@ -23,7 +23,6 @@ import { checkVerifyGate } from './verify-gate.js';
 import { throwIfPaused } from '../task-pause.js';
 export {
   MAX_TURNS,
-  MAX_TOOL_FAILURES,
   MAX_EMPTY_ASSISTANT_REPLIES,
   TRANSCRIPT_FILE,
   REVIEW_FILENAME,

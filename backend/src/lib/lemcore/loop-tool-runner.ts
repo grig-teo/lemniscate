@@ -24,7 +24,6 @@ import {
   toolGraphQuery,
   toolGraphSearch,
 } from './graph-tools.js';
-import { MAX_TOOL_FAILURES } from './loop-constants.js';
 import type { LemcoreMessage, LemcoreStep } from './loop-types.js';
 import { resolveSkillContent, type LemcoreSkill } from './skills.js';
 export async function executeTool(
@@ -185,19 +184,20 @@ export async function runToolCalls(opts: {
       const result = await executeTool(name, args, opts.workdir, opts.secrets, opts.skills ?? [], multiSampleCtx);
       const durationMs = Date.now() - toolStart;
       if (result.error) {
-        // web_search is best-effort: a flaky DDG page should never count
-        // toward MAX_TOOL_FAILURES and abort a coding task. The model still
-        // receives the error message and can retry or proceed. Graph tools are
-        // likewise soft failures: a repo with no built graph (the common case)
-        // would otherwise exhaust MAX_TOOL_FAILURES in two calls even though
-        // the system prompt actively says to "Prefer graph_query...".
+        // Tool failures never abort the run — the model sees the error and
+        // can retry or reroute. The counter is kept only so the loop can
+        // detect a fully-successful batch (it resets other nudge counters).
+        // web_search is best-effort: a flaky DDG page shouldn't count as a
+        // failure. Graph tools are likewise soft: a repo with no built graph
+        // (the common case) would otherwise look like repeated failures even
+        // though the system prompt actively says to "Prefer graph_query...".
         const graphTools = new Set([
           'graph_query',
           'graph_impact',
           'graph_neighbors',
           'graph_search',
         ]);
-        // spawn_subagent is also soft: a child failure shouldn't burn the parent's budget.
+        // spawn_subagent is also soft: a child failure shouldn't count against the parent.
         if (name !== 'web_search' && !graphTools.has(name) && name !== 'spawn_subagent') failures += 1;
         toolStep.status = 'error';
         toolStep.outputPreview = result.outputPreview || result.error;
@@ -236,9 +236,8 @@ export async function runToolCalls(opts: {
         toolStep,
       });
     }
-    if (failures >= MAX_TOOL_FAILURES) {
-      throw new Error(`Too many consecutive tool failures (${failures}); aborting lemcore run`);
-    }
+    // No abort on repeated failures — tools may fail an unlimited number of
+    // times; the model keeps seeing the errors and can reroute.
   }
   return failures;
 }
@@ -282,8 +281,5 @@ async function pushToolError(input: {
     toolCallId: input.tc.id,
     toolName: input.name,
   });
-  if (failures >= MAX_TOOL_FAILURES) {
-    throw new Error(`Too many consecutive tool failures (${failures}); aborting lemcore run`);
-  }
   return failures;
 }
