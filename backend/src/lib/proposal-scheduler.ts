@@ -241,11 +241,11 @@ export async function enqueueMergeGate(
   taskId: string,
   attempt = 0,
   ciFixes = 0,
-  delayMs = 0,
+  delayMs = 0, rebaseRetries = 0,
 ): Promise<void> {
   await getAgentTasksQueue().add(
     'merge-gate',
-    { taskId, attempt, ciFixes },
+    { taskId, attempt, ciFixes, rebaseRetries },
     {
       jobId: `merge-gate-${taskId}-${attempt}-${ciFixes}`,
       removeOnComplete: true,

@@ -26,6 +26,7 @@ vi.mock('../src/lib/notifications.js', () => ({
 
 import {
   MAX_CI_FIX_ATTEMPTS,
+  MAX_REBASE_RETRIES,
   MERGE_GATE_MAX_ATTEMPTS,
   mergeGateAction,
 } from '../src/lib/merge-gate.js';
@@ -58,11 +59,17 @@ describe('mergeGateAction', () => {
     expect(mergeGateAction(failing, 0, MAX_CI_FIX_ATTEMPTS - 1, 'hermes')).toBe('fix-ci');
   });
 
-  it('gives up to manual after too many CI fixes', () => {
-    expect(mergeGateAction(failing, 0, MAX_CI_FIX_ATTEMPTS, 'hermes')).toBe('manual');
+  it('forces one rebase + fresh fix budget when CI fixes are exhausted', () => {
+    expect(mergeGateAction(failing, 0, MAX_CI_FIX_ATTEMPTS, 'hermes')).toBe('rebase-retry');
+    expect(mergeGateAction(failing, 0, MAX_CI_FIX_ATTEMPTS, 'lemcore')).toBe('rebase-retry');
+  });
+
+  it('gives up to manual only after the rebase retry is spent too', () => {
+    expect(mergeGateAction(failing, 0, MAX_CI_FIX_ATTEMPTS, 'hermes', MAX_REBASE_RETRIES)).toBe('manual');
   });
 
   it('never CI-fixes on the internal executor', () => {
     expect(mergeGateAction(failing, 0, 0, 'internal')).toBe('manual');
+    expect(mergeGateAction(failing, 0, MAX_CI_FIX_ATTEMPTS, 'internal')).toBe('manual');
   });
 });

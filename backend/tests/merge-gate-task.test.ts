@@ -99,6 +99,7 @@ vi.mock('../src/lib/notifications.js', () => ({
 // behavior under test.
 import {
   MAX_CI_FIX_ATTEMPTS,
+  MAX_REBASE_RETRIES,
   MERGE_GATE_DELAY_MS,
   MERGE_GATE_MAX_ATTEMPTS,
   mergeGateTask,
@@ -259,7 +260,7 @@ describe('mergeGateTask waiting_ci re-checks', () => {
     await mergeGateTask('task-1', 1, 0);
     expect(mocks.setTaskStatus).toHaveBeenCalledWith('task-1', 'awaiting_review');
     expect(mocks.setTaskStatus).toHaveBeenCalledWith('task-1', 'waiting_ci');
-    expect(mocks.enqueueMergeGate).toHaveBeenCalledWith('task-1', 2, 0, MERGE_GATE_DELAY_MS);
+    expect(mocks.enqueueMergeGate).toHaveBeenCalledWith('task-1', 2, 0, MERGE_GATE_DELAY_MS, 0);
     expect(mocks.mergePullRequest).not.toHaveBeenCalled();
   });
 });
@@ -269,7 +270,7 @@ describe('mergeGateTask pending CI (bounded self re-enqueue)', () => {
     mocks.pullRequestChecksStatus.mockResolvedValue(pending);
     await mergeGateTask('task-1', 2, 1);
     expect(mocks.enqueueMergeGate).toHaveBeenCalledTimes(1);
-    expect(mocks.enqueueMergeGate).toHaveBeenCalledWith('task-1', 3, 1, MERGE_GATE_DELAY_MS);
+    expect(mocks.enqueueMergeGate).toHaveBeenCalledWith('task-1', 3, 1, MERGE_GATE_DELAY_MS, 0);
     // Waiting must not burn an LLM runtime.
     expect(mocks.prepareAgentRuntime).not.toHaveBeenCalled();
     expect(mocks.mergePullRequest).not.toHaveBeenCalled();
@@ -319,7 +320,7 @@ describe('mergeGateTask failing CI', () => {
       [],
       { headers: {} },
     );
-    expect(mocks.enqueueMergeGate).toHaveBeenCalledWith('task-1', 1, 2, MERGE_GATE_DELAY_MS);
+    expect(mocks.enqueueMergeGate).toHaveBeenCalledWith('task-1', 1, 2, MERGE_GATE_DELAY_MS, 0);
     expect(mocks.mergePullRequest).not.toHaveBeenCalled(); // never merge on red CI
   });
 
@@ -344,14 +345,31 @@ describe('mergeGateTask failing CI', () => {
       expect.stringContaining('rebasing the task branch onto it before diagnosing further'),
     );
     // Re-enqueued WITHOUT consuming a ciFix — the rebase is not a fix attempt.
-    expect(mocks.enqueueMergeGate).toHaveBeenCalledWith('task-1', 1, 1, MERGE_GATE_DELAY_MS);
+    expect(mocks.enqueueMergeGate).toHaveBeenCalledWith('task-1', 1, 1, MERGE_GATE_DELAY_MS, 0);
     expect(mocks.mergePullRequest).not.toHaveBeenCalled();
   });
 
-  it('gives up to manual after MAX_CI_FIX_ATTEMPTS fixes', async () => {
+  it('forces a rebase retry with a fresh fix budget after MAX_CI_FIX_ATTEMPTS fixes', async () => {
     mocks.config.AGENT_EXECUTOR = 'hermes';
     mocks.pullRequestChecksStatus.mockResolvedValue(failing);
+    mocks.git.mockImplementation(async (args: string[]) => {
+      if (args[0] === 'merge-base') throw new Error('not an ancestor');
+      return '';
+    });
     await mergeGateTask('task-1', 0, MAX_CI_FIX_ATTEMPTS);
+    expect(mocks.runHermesTask).not.toHaveBeenCalled();
+    expect(mocks.logEvent).toHaveBeenCalledWith(
+      'task-1',
+      expect.stringContaining('rebasing onto main and retrying with a fresh fix budget'),
+    );
+    // ciFixes reset to 0, the single rebase retry consumed.
+    expect(mocks.enqueueMergeGate).toHaveBeenCalledWith('task-1', 1, 0, MERGE_GATE_DELAY_MS, 1);
+  });
+
+  it('gives up to manual only after the rebase retry is spent', async () => {
+    mocks.config.AGENT_EXECUTOR = 'hermes';
+    mocks.pullRequestChecksStatus.mockResolvedValue(failing);
+    await mergeGateTask('task-1', 0, MAX_CI_FIX_ATTEMPTS, MAX_REBASE_RETRIES);
     expect(mocks.runHermesTask).not.toHaveBeenCalled();
     expect(mocks.enqueueMergeGate).not.toHaveBeenCalled();
     expect(mocks.logEvent).toHaveBeenCalledWith(
@@ -466,7 +484,7 @@ describe('mergeGateTask rebase of a stale branch (internal executor)', () => {
       action: 'conflict-resolved',
     });
     // CI must pass on the rebased head before the next merge attempt.
-    expect(mocks.enqueueMergeGate).toHaveBeenCalledWith('task-1', 1, 0, MERGE_GATE_DELAY_MS);
+    expect(mocks.enqueueMergeGate).toHaveBeenCalledWith('task-1', 1, 0, MERGE_GATE_DELAY_MS, 0);
   });
 
   it('rebases without any LLM calls when the rebase applies cleanly', async () => {
@@ -475,7 +493,7 @@ describe('mergeGateTask rebase of a stale branch (internal executor)', () => {
     expect(mocks.mergePullRequest).not.toHaveBeenCalled();
     expect(mocks.llmCall).not.toHaveBeenCalled();
     expect(gitCalls('push')).toHaveLength(1);
-    expect(mocks.enqueueMergeGate).toHaveBeenCalledWith('task-1', 1, 0, MERGE_GATE_DELAY_MS);
+    expect(mocks.enqueueMergeGate).toHaveBeenCalledWith('task-1', 1, 0, MERGE_GATE_DELAY_MS, 0);
   });
 
   it('treats an LLM resolution that keeps conflict markers as a retryable failure', async () => {
@@ -515,7 +533,7 @@ describe('mergeGateTask rebase of a stale branch (internal executor)', () => {
     expect(mocks.mergePullRequest).toHaveBeenCalledTimes(1);
     expect(gitCalls('checkout')).toHaveLength(1);
     expect(gitCalls('push')).toHaveLength(1);
-    expect(mocks.enqueueMergeGate).toHaveBeenCalledWith('task-1', 1, 0, MERGE_GATE_DELAY_MS);
+    expect(mocks.enqueueMergeGate).toHaveBeenCalledWith('task-1', 1, 0, MERGE_GATE_DELAY_MS, 0);
   });
 });
 
@@ -541,7 +559,7 @@ describe('mergeGateTask rebase of a stale branch (hermes executor)', () => {
       ['push', '--force-with-lease', 'origin', `HEAD:${BRANCH}`],
       expect.objectContaining({ cwd: gateWorkdir() }),
     );
-    expect(mocks.enqueueMergeGate).toHaveBeenCalledWith('task-1', 1, 0, MERGE_GATE_DELAY_MS);
+    expect(mocks.enqueueMergeGate).toHaveBeenCalledWith('task-1', 1, 0, MERGE_GATE_DELAY_MS, 0);
   });
 
   it('refuses to push when hermes leaves conflict markers behind', async () => {

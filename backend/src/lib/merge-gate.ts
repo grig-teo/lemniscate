@@ -50,6 +50,9 @@ export const MERGE_GATE_DELAY_MS = 60_000;
 // ~30 minutes of pending CI at the 60s re-check cadence.
 export const MERGE_GATE_MAX_ATTEMPTS = 30;
 export const MAX_CI_FIX_ATTEMPTS = 3;
+// Forced rebase + fresh fix-budget rounds granted after the CI-fix budget is
+// spent — the agent (never a human) gets one more shot on rebased code.
+export const MAX_REBASE_RETRIES = 1;
 
 // ---------------------------------------------------------------------------
 // CI fix (hermes or lemcore)
@@ -178,7 +181,16 @@ async function mergeWithConflictResolution(ctx: GateContext): Promise<void> {
       ? 'main moved since the branch started — rebasing the task branch onto it'
       : 'merge conflict — rebasing the task branch onto main',
   );
-  const executor = await resolveAgentExecutor(task.repository.connection.userId);
+  await rebaseHeadBranchForExecutor(ctx);
+  await persistTokenUsage(task.id, rt.usedTokens, tokenSplit(rt));
+  await logEvent(task.id, 'pushed the rebased branch; waiting for CI before the next merge attempt');
+  await enqueueMergeGate(task.id, attempt + 1, ciFixes, MERGE_GATE_DELAY_MS, ctx.rebaseRetries);
+}
+
+// Executor dispatch for the rebase-and-resolve-conflicts step, shared by the
+// merge path and the rebase-retry fallback.
+async function rebaseHeadBranchForExecutor(ctx: GateContext): Promise<void> {
+  const executor = await resolveAgentExecutor(ctx.task.repository.connection.userId);
   if (executor === 'hermes') {
     await rebaseHeadBranchViaHermes(ctx);
   } else if (executor === 'lemcore') {
@@ -187,9 +199,24 @@ async function mergeWithConflictResolution(ctx: GateContext): Promise<void> {
   } else {
     await rebaseHeadBranchWithLlm(ctx);
   }
+}
+
+// rebase-retry: the CI-fix budget is spent. Red CI after several fix rounds
+// is usually main-drift the branch-local patches can't cure, so force a
+// rebase onto main (stale or not) and hand the fix agent a FRESH budget on
+// the rebased branch — the agent resolves it, not a human. Bounded once.
+async function runRebaseRetryAndRequeue(ctx: GateContext): Promise<void> {
+  const { task, rt } = ctx;
+  await logEvent(
+    task.id,
+    `CI fixes exhausted (${MAX_CI_FIX_ATTEMPTS}) — rebasing onto main and retrying with a fresh fix budget`,
+  );
+  await prepareMergeCheckout(ctx);
+  await rebaseHeadBranchForExecutor(ctx);
   await persistTokenUsage(task.id, rt.usedTokens, tokenSplit(rt));
-  await logEvent(task.id, 'pushed the rebased branch; waiting for CI before the next merge attempt');
-  await enqueueMergeGate(task.id, attempt + 1, ciFixes, MERGE_GATE_DELAY_MS);
+  await logEvent(task.id, 'pushed the rebased branch; waiting for CI before the fresh fix round');
+  await setTaskStatus(task.id, 'waiting_ci');
+  await enqueueMergeGate(task.id, ctx.attempt + 1, 0, MERGE_GATE_DELAY_MS, ctx.rebaseRetries + 1);
 }
 
 // The gate cannot (or may no longer) merge: log + one notification per task.
@@ -207,20 +234,26 @@ async function stopForManualMerge(task: TaskWithRepo): Promise<void> {
 // The job
 // ---------------------------------------------------------------------------
 
-export type MergeGateAction = 'merge' | 'wait' | 'fix-ci' | 'manual';
+export type MergeGateAction = 'merge' | 'wait' | 'fix-ci' | 'rebase-retry' | 'manual';
 
 // Pure gate decision, unit-tested in tests/merge-gate.test.ts. Unsupported
-// providers merge unverified; pending waits (bounded); failing triggers a
-// hermes CI fix (bounded, hermes executor only); anything else is manual.
+// providers merge unverified; pending waits (bounded); failing triggers an
+// agent CI fix (bounded); when the fix budget is spent, ONE forced rebase
+// onto main with a fresh fix budget (stale-branch drift is the usual reason
+// fixes produce nothing); only then manual.
 export function mergeGateAction(
   checks: PrChecksStatus,
   attempt: number,
   ciFixes: number,
   executor: string,
+  rebaseRetries = 0,
 ): MergeGateAction {
   if (!checks.supported || checks.state === 'green') return 'merge';
   if (checks.state === 'pending') return attempt >= MERGE_GATE_MAX_ATTEMPTS ? 'manual' : 'wait';
-  if (ciFixes >= MAX_CI_FIX_ATTEMPTS || (executor !== 'hermes' && executor !== 'lemcore')) return 'manual';
+  if (executor !== 'hermes' && executor !== 'lemcore') return 'manual';
+  if (ciFixes >= MAX_CI_FIX_ATTEMPTS) {
+    return rebaseRetries >= MAX_REBASE_RETRIES ? 'manual' : 'rebase-retry';
+  }
   return 'fix-ci';
 }
 
@@ -247,15 +280,11 @@ async function runCiFixAndRequeue(ctx: GateContext): Promise<void> {
       task.id,
       'CI is failing and main moved — rebasing the task branch onto it before diagnosing further',
     );
-    if ((await resolveAgentExecutor(task.repository.connection.userId)) === 'hermes') {
-      await rebaseHeadBranchViaHermes(ctx);
-    } else {
-      await rebaseHeadBranchWithLlm(ctx);
-    }
+    await rebaseHeadBranchForExecutor(ctx);
     await persistTokenUsage(task.id, rt.usedTokens, tokenSplit(rt));
     await logEvent(task.id, 'pushed the rebased branch; waiting for CI before the next merge attempt');
     await setTaskStatus(task.id, 'waiting_ci');
-    await enqueueMergeGate(task.id, ctx.attempt + 1, ctx.ciFixes, MERGE_GATE_DELAY_MS);
+    await enqueueMergeGate(task.id, ctx.attempt + 1, ctx.ciFixes, MERGE_GATE_DELAY_MS, ctx.rebaseRetries);
     return;
   }
   await logEvent(
@@ -266,7 +295,7 @@ async function runCiFixAndRequeue(ctx: GateContext): Promise<void> {
   await persistTokenUsage(task.id, rt.usedTokens, tokenSplit(rt));
   // The CI fix was pushed — the task waits for checks on the fix commit.
   await setTaskStatus(task.id, 'waiting_ci');
-  await enqueueMergeGate(task.id, ctx.attempt + 1, ctx.ciFixes + 1, MERGE_GATE_DELAY_MS);
+  await enqueueMergeGate(task.id, ctx.attempt + 1, ctx.ciFixes + 1, MERGE_GATE_DELAY_MS, ctx.rebaseRetries);
 }
 
 // Dispatches the decided action. Returns false when the gate is done for
@@ -279,13 +308,14 @@ async function dispatchGateAction(
   task: TaskWithRepo,
   attempt: number,
   ciFixes: number,
+  rebaseRetries: number,
 ): Promise<boolean> {
   if (action === 'wait') {
     // CI is running on the git host — show it. The next re-check (or the
     // ci_status webhook) flips the task back to awaiting_review.
     await setTaskStatus(task.id, 'waiting_ci');
     await logEvent(task.id, `CI checks are running — re-checking in ${MERGE_GATE_DELAY_MS / 1000}s`);
-    await enqueueMergeGate(task.id, attempt + 1, ciFixes, MERGE_GATE_DELAY_MS);
+    await enqueueMergeGate(task.id, attempt + 1, ciFixes, MERGE_GATE_DELAY_MS, rebaseRetries);
     return false;
   }
   if (action === 'manual') {
@@ -307,7 +337,12 @@ async function dispatchGateAction(
   return true;
 }
 
-export async function mergeGateTask(taskId: string, attempt = 0, ciFixes = 0): Promise<void> {
+export async function mergeGateTask(
+  taskId: string,
+  attempt = 0,
+  ciFixes = 0,
+  rebaseRetries = 0,
+): Promise<void> {
   const task = await loadTaskWithRepo(taskId);
   if (!task) {
     logger.error({ taskId }, 'merge-gate: task not found');
@@ -344,20 +379,24 @@ export async function mergeGateTask(taskId: string, attempt = 0, ciFixes = 0): P
       await setTaskStatus(taskId, 'awaiting_review');
     }
     const executor = await resolveAgentExecutor(task.repository.connection.userId);
-    const action = mergeGateAction(checks, attempt, ciFixes, executor);
-    if (!(await dispatchGateAction(action, checks, task, attempt, ciFixes))) return;
+    const action = mergeGateAction(checks, attempt, ciFixes, executor, rebaseRetries);
+    if (!(await dispatchGateAction(action, checks, task, attempt, ciFixes, rebaseRetries))) return;
     if (!checks.supported) {
       await logEvent(task.id, 'provider check statuses unavailable; merging on the review verdict alone');
     }
     const prepared = await prepareAgentRuntime(task, task.repository, secrets, task.llmTokensUsed);
     rt = prepared.rt;
     const ctx: GateContext = {
-      task, rt, headBranch, attempt, ciFixes, workdir,
+      task, rt, headBranch, attempt, ciFixes, rebaseRetries, workdir,
       cloneUrl: prepared.cloneUrl, secrets, auth: prepared.gitAuth,
       failingChecks: checks.failingChecks,
     };
     if (action === 'fix-ci') {
       await runCiFixAndRequeue(ctx);
+      return;
+    }
+    if (action === 'rebase-retry') {
+      await runRebaseRetryAndRequeue(ctx);
       return;
     }
     await mergeWithConflictResolution(ctx);
