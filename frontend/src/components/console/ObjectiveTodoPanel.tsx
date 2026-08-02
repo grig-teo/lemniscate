@@ -11,10 +11,12 @@
  * the latest of each.
  */
 import * as React from 'react';
-import { Check, ChevronDown, ChevronUp, ListTodo, Target, X } from 'lucide-react';
+import { ChevronDown, ChevronUp, ListTodo, Target, X } from 'lucide-react';
 
 import { readPersisted, writePersisted } from '@/lib/persist';
 import { cn } from '@/lib/utils';
+
+import { TimelineTodoList } from '@/components/console/TimelineTodoList';
 
 const HIDDEN_STORAGE_KEY = 'lemniscate.objective-todo-hidden';
 
@@ -120,29 +122,7 @@ export function ObjectiveTodoPanel({ objective, todoItems }: ObjectiveTodoPanelP
                   style={{ width: `${todoItems.length > 0 ? (doneCount / todoItems.length) * 100 : 0}%` }}
                 />
               </div>
-              <ul className="space-y-1">
-                {todoItems.map((item, i) => (
-                  <li
-                    key={i}
-                    className={cn(
-                      'flex items-start gap-2 rounded-md px-1.5 py-1 text-sm transition-colors',
-                      item.done ? 'text-muted-foreground line-through' : 'text-foreground',
-                    )}
-                  >
-                    <span
-                      className={cn(
-                        'mt-0.5 flex size-4 shrink-0 items-center justify-center rounded border transition-colors',
-                        item.done
-                          ? 'border-emerald-500 bg-emerald-500 text-white'
-                          : 'border-muted-foreground/40',
-                      )}
-                    >
-                      {item.done && <Check className="size-3" />}
-                    </span>
-                    <span className="leading-snug">{item.text}</span>
-                  </li>
-                ))}
-              </ul>
+              <TimelineTodoList items={todoItems} />
             </div>
           )}
         </div>
