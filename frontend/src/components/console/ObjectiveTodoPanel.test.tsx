@@ -66,6 +66,28 @@ describe('ObjectiveTodoPanel', () => {
     expect(screen.getByRole('button', { name: /plan/i })).toBeTruthy();
   });
 
+  it('docks the hidden show-handle flush to the right edge like the status-line rail', () => {
+    render(<ObjectiveTodoPanel objective="x" todoItems={ITEMS} />);
+    fireEvent.click(screen.getByRole('button', { name: /hide panel/i }));
+    const handle = screen.getByRole('button', { name: /plan/i });
+    const classes = handle.className;
+    // Flush to the right edge (not inset), rounded only on the left, and with
+    // no right border — mirroring the TaskStepsRail edge-docked show handle.
+    expect(classes).toContain('right-0');
+    expect(classes).not.toContain('right-3');
+    expect(classes).toContain('rounded-l');
+    expect(classes).toContain('border-r-0');
+  });
+
+  it('makes the plan show-handle icon 2x bigger', () => {
+    render(<ObjectiveTodoPanel objective="x" todoItems={ITEMS} />);
+    fireEvent.click(screen.getByRole('button', { name: /hide panel/i }));
+    const handle = screen.getByRole('button', { name: /plan/i });
+    const icon = handle.querySelector('svg')!;
+    // 2x of size-3.5 → size-7
+    expect(icon.getAttribute('class')).toContain('size-7');
+  });
+
   it('collapses content via the chevron without hiding the panel', () => {
     render(<ObjectiveTodoPanel objective="x" todoItems={ITEMS} />);
     fireEvent.click(screen.getByRole('button', { name: /collapse/i }));

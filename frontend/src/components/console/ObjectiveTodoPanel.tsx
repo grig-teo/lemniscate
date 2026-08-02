@@ -44,11 +44,11 @@ export function ObjectiveTodoPanel({ objective, todoItems }: ObjectiveTodoPanelP
         onClick={toggle}
         title="Show objective & TODO"
         className={cn(
-          'absolute right-3 top-16 z-20 flex items-center gap-1 rounded-lg border bg-background/80 px-2 py-1.5',
+          'absolute right-0 top-16 z-20 flex items-center gap-1 rounded-l-lg border border-r-0 bg-background/80 px-2 py-1.5',
           'text-xs text-muted-foreground shadow-sm backdrop-blur-sm transition-colors hover:text-foreground',
         )}
       >
-        <ListTodo className="size-3.5" />
+        <ListTodo className="size-7" />
         <span>Plan</span>
       </button>
     );

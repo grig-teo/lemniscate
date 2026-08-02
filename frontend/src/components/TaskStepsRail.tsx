@@ -80,7 +80,7 @@ function RailPanel({ status, onHide }: { status: string; onHide: () => void }) {
   return (
     <div className="flex items-stretch">
       <button type="button" aria-label="Hide implementation steps" onClick={onHide} className={TOGGLE_CLASSES}>
-        <PanelRightClose className="h-3.5 w-3.5" aria-hidden />
+        <PanelRightClose className="h-7 w-7" aria-hidden />
       </button>
       <ol
         aria-label="Implementation steps"
@@ -100,7 +100,7 @@ export function TaskStepsRail({ status }: { status: string }) {
     <div className="absolute right-0 top-1/2 z-10 -translate-y-1/2">
       {hidden ? (
         <button type="button" aria-label="Show implementation steps" onClick={toggle} className={TOGGLE_CLASSES}>
-          <PanelRightOpen className="h-3.5 w-3.5" aria-hidden />
+          <PanelRightOpen className="h-7 w-7" aria-hidden />
         </button>
       ) : (
         <RailPanel status={status} onHide={toggle} />
