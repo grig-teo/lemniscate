@@ -5,17 +5,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 // Task-level locking tests for mergeGateTask (merge-gate.ts): the pure
 // decision table lives in tests/merge-gate.test.ts — here we pin everything
 // the decision DRIVES: pending re-enqueue with attempt/ciFixes job identity,
-// the hermes CI-fix path, the rebase-first stale-branch flow (internal LLM
-// and hermes conflict resolution), the actual merge + deploy fan-out, and
-// the record-then-rethrow failure path. Prisma, git, the queue, and
-// providers are mocked; conflict files are real files in a tmp workdir so
-// file rewrites are pinned too.
+// the lemcore CI-fix path, the rebase-first stale-branch flow (lemcore
+// conflict resolution), the actual merge + deploy fan-out, and the
+// record-then-rethrow failure path. Prisma, git, the queue, and providers
+// are mocked; conflict files are real files in a tmp workdir so file
+// rewrites are pinned too.
 
 const mocks = vi.hoisted(() => ({
   config: {
-    AGENT_EXECUTOR: 'internal' as string,
     AGENT_WORKDIR: '/tmp/test-workdirs-gate',
-    AGENT_HERMES_TIMEOUT_MINUTES: 45,
   },
   checkoutTaskBranch: vi.fn(),
   cleanupWorkdir: vi.fn(),
@@ -30,7 +28,7 @@ const mocks = vi.hoisted(() => ({
   llmCall: vi.fn(),
   loadTaskWithRepo: vi.fn(),
   prepareAgentRuntime: vi.fn(),
-  runHermesTask: vi.fn(),
+  runLemcoreTask: vi.fn(),
   enqueueMergeGate: vi.fn(),
   queueDeployment: vi.fn(),
   serviceFindUnique: vi.fn(),
@@ -70,7 +68,7 @@ vi.mock('../src/lib/agent-runtime.js', () => ({
     completionTokens: rt.usedCompletionTokens ?? 0,
   }),
 }));
-vi.mock('../src/lib/hermes-runner.js', () => ({ runHermesTask: mocks.runHermesTask }));
+vi.mock('../src/lib/lemcore/run.js', () => ({ runLemcoreTask: mocks.runLemcoreTask }));
 vi.mock('../src/lib/proposal-scheduler.js', () => ({ enqueueMergeGate: mocks.enqueueMergeGate }));
 vi.mock('../src/lib/deploy/deploy-service.js', () => ({
   queueDeployment: mocks.queueDeployment,
@@ -94,9 +92,9 @@ vi.mock('../src/lib/notifications.js', () => ({
   notifyOncePerTask: vi.fn().mockResolvedValue(undefined),
 }));
 
-// pr-review.js + conflict-resolve.js (parseResolvedFile, hasConflictMarkers,
-// prompt builders) are intentionally NOT mocked: conflict-marker safety is
-// behavior under test.
+// pr-review.js + conflict-resolve.js (hasConflictMarkers, prompt builders)
+// are intentionally NOT mocked: conflict-marker safety is behavior under
+// test.
 import {
   MAX_CI_FIX_ATTEMPTS,
   MAX_REBASE_RETRIES,
@@ -105,7 +103,7 @@ import {
   mergeGateTask,
 } from '../src/lib/merge-gate.js';
 
-const BRANCH = 'lemniscate/feature-x';
+const BRANCH = 'lemniscate/task-1';
 
 const green = { supported: true, green: true, state: 'green' as const };
 const pending = { supported: true, green: false, state: 'pending' as const };
@@ -180,9 +178,15 @@ async function seedConflictedWorkdir(workdir: string) {
   await fs.writeFile(path.join(workdir, 'src/a.ts'), CONFLICTED);
 }
 
+// The lemcore agent resolved the conflict by rewriting the file.
+function lemcoreResolvesConflicts(content: string) {
+  return async (opts: { workdir: string }) => {
+    await fs.writeFile(path.join(opts.workdir, 'src/a.ts'), content);
+  };
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
-  mocks.config.AGENT_EXECUTOR = 'internal';
   mocks.loadTaskWithRepo.mockResolvedValue(stubTask());
   mocks.pullRequestChecksStatus.mockResolvedValue(green);
   mocks.prepareAgentRuntime.mockResolvedValue({
@@ -204,7 +208,7 @@ beforeEach(() => {
   mocks.recordJobFailure.mockResolvedValue('recorded failure');
   mocks.publishTaskEvent.mockResolvedValue(undefined);
   mocks.setTaskStatus.mockResolvedValue(undefined);
-  mocks.runHermesTask.mockResolvedValue(undefined);
+  mocks.runLemcoreTask.mockResolvedValue(undefined);
   mocks.git.mockResolvedValue('');
 });
 
@@ -294,8 +298,7 @@ describe('mergeGateTask pending CI (bounded self re-enqueue)', () => {
 });
 
 describe('mergeGateTask failing CI', () => {
-  it('runs the hermes CI fix and re-enqueues with ciFixes+1', async () => {
-    mocks.config.AGENT_EXECUTOR = 'hermes';
+  it('runs the lemcore CI fix and re-enqueues with ciFixes+1', async () => {
     mocks.pullRequestChecksStatus.mockResolvedValue(failing);
     await mergeGateTask('task-1', 0, 1);
 
@@ -307,15 +310,15 @@ describe('mergeGateTask failing CI', () => {
       [],
       { headers: {} },
     );
-    const opts = mocks.runHermesTask.mock.calls[0]?.[0];
+    const opts = mocks.runLemcoreTask.mock.calls[0]?.[0];
     expect(opts.taskId).toBe('task-1');
-    expect(opts.prompt).toContain('CI');
-    expect(opts.prompt).toContain(BRANCH);
+    expect(opts.promptOverride).toContain('CI');
+    expect(opts.promptOverride).toContain(BRANCH);
     expect(mocks.commitAndPush).toHaveBeenCalledWith(
       expect.objectContaining({ id: 'task-1' }),
       expect.anything(),
       gateWorkdir(0, 1),
-      'fix failing CI checks',
+      'fix failing CI checks (lemcore)',
       ['push', 'origin', BRANCH],
       [],
       { headers: {} },
@@ -324,20 +327,29 @@ describe('mergeGateTask failing CI', () => {
     expect(mocks.mergePullRequest).not.toHaveBeenCalled(); // never merge on red CI
   });
 
-  it('rebases a stale branch instead of burning a CI-fix attempt on red CI', async () => {
-    mocks.config.AGENT_EXECUTOR = 'hermes';
+  it('skips the push (and logs) when the lemcore CI fix produces no changes', async () => {
     mocks.pullRequestChecksStatus.mockResolvedValue(failing);
-    // Stale: merge-base check fails; the rebase itself applies cleanly.
-    mocks.git.mockImplementation(async (args: string[]) => {
-      if (args[0] === 'merge-base') throw new Error('not an ancestor');
-      return '';
-    });
+    mocks.hasMeaningfulChanges.mockResolvedValue(false);
     await mergeGateTask('task-1', 0, 1);
 
-    // No hermes CI fix on a stale branch — the rebase IS the fix attempt.
-    expect(mocks.runHermesTask).not.toHaveBeenCalled();
+    expect(mocks.runLemcoreTask).toHaveBeenCalledTimes(1);
+    expect(mocks.logEvent).toHaveBeenCalledWith('task-1', 'agent produced no CI fix changes');
     expect(mocks.commitAndPush).not.toHaveBeenCalled();
-    const pushes = mocks.git.mock.calls.filter((c) => (c[0] as string[]).includes('push'));
+    // The ciFix counter still advances — an empty fix round still burns budget.
+    expect(mocks.enqueueMergeGate).toHaveBeenCalledWith('task-1', 1, 2, MERGE_GATE_DELAY_MS, 0);
+    expect(mocks.mergePullRequest).not.toHaveBeenCalled();
+  });
+
+  it('rebases a stale branch instead of burning a CI-fix attempt on red CI', async () => {
+    mocks.pullRequestChecksStatus.mockResolvedValue(failing);
+    // Stale: merge-base check fails; the rebase itself applies cleanly.
+    mocks.git.mockImplementation(gitStaleClean());
+    await mergeGateTask('task-1', 0, 1);
+
+    // No lemcore CI fix on a stale branch — the rebase IS the fix attempt.
+    expect(mocks.runLemcoreTask).not.toHaveBeenCalled();
+    expect(mocks.commitAndPush).not.toHaveBeenCalled();
+    const pushes = gitCalls('push');
     expect(pushes).toHaveLength(1);
     expect(pushes[0][0]).toEqual(['push', '--force-with-lease', 'origin', `HEAD:${BRANCH}`]);
     expect(mocks.logEvent).toHaveBeenCalledWith(
@@ -350,14 +362,10 @@ describe('mergeGateTask failing CI', () => {
   });
 
   it('forces a rebase retry with a fresh fix budget after MAX_CI_FIX_ATTEMPTS fixes', async () => {
-    mocks.config.AGENT_EXECUTOR = 'hermes';
     mocks.pullRequestChecksStatus.mockResolvedValue(failing);
-    mocks.git.mockImplementation(async (args: string[]) => {
-      if (args[0] === 'merge-base') throw new Error('not an ancestor');
-      return '';
-    });
+    mocks.git.mockImplementation(gitStaleClean());
     await mergeGateTask('task-1', 0, MAX_CI_FIX_ATTEMPTS);
-    expect(mocks.runHermesTask).not.toHaveBeenCalled();
+    expect(mocks.runLemcoreTask).not.toHaveBeenCalled();
     expect(mocks.logEvent).toHaveBeenCalledWith(
       'task-1',
       expect.stringContaining('rebasing onto main and retrying with a fresh fix budget'),
@@ -367,25 +375,13 @@ describe('mergeGateTask failing CI', () => {
   });
 
   it('gives up to manual only after the rebase retry is spent', async () => {
-    mocks.config.AGENT_EXECUTOR = 'hermes';
     mocks.pullRequestChecksStatus.mockResolvedValue(failing);
     await mergeGateTask('task-1', 0, MAX_CI_FIX_ATTEMPTS, MAX_REBASE_RETRIES);
-    expect(mocks.runHermesTask).not.toHaveBeenCalled();
+    expect(mocks.runLemcoreTask).not.toHaveBeenCalled();
     expect(mocks.enqueueMergeGate).not.toHaveBeenCalled();
     expect(mocks.logEvent).toHaveBeenCalledWith(
       'task-1',
       expect.stringContaining(`CI still failing after ${MAX_CI_FIX_ATTEMPTS} fix attempt(s)`),
-    );
-  });
-
-  it('never CI-fixes on the internal executor — straight to manual', async () => {
-    mocks.pullRequestChecksStatus.mockResolvedValue(failing);
-    await mergeGateTask('task-1');
-    expect(mocks.runHermesTask).not.toHaveBeenCalled();
-    expect(mocks.mergePullRequest).not.toHaveBeenCalled();
-    expect(mocks.logEvent).toHaveBeenCalledWith(
-      'task-1',
-      expect.stringContaining('CI checks are failing — awaiting manual fix'),
     );
   });
 });
@@ -445,14 +441,14 @@ describe('mergeGateTask green CI', () => {
   });
 });
 
-describe('mergeGateTask rebase of a stale branch (internal executor)', () => {
+describe('mergeGateTask rebase of a stale branch (lemcore agent)', () => {
   beforeEach(() => {
     mocks.git.mockImplementation(gitWithRebaseConflict());
-    mocks.llmCall.mockResolvedValue(JSON.stringify({ content: 'resolved content' }));
   });
 
-  it('rebases onto main, resolves conflicts via the LLM, force-pushes, and re-enqueues to wait for CI', async () => {
+  it('lets lemcore rewrite conflicted files, then stages, continues the rebase, force-pushes, re-enqueues', async () => {
     await seedConflictedWorkdir(gateWorkdir());
+    mocks.runLemcoreTask.mockImplementation(lemcoreResolvesConflicts('lemcore resolved'));
     await mergeGateTask('task-1');
 
     expect(mocks.cloneRepository).toHaveBeenCalledWith(
@@ -467,10 +463,13 @@ describe('mergeGateTask rebase of a stale branch (internal executor)', () => {
     // The branch was checked out and rebased onto main.
     expect(gitCalls('checkout')[0][0]).toEqual(['checkout', '-b', 'lemniscate-rebase', 'FETCH_HEAD']);
     expect(gitCalls('rebase').some((c) => (c[0] as string[]).includes('main'))).toBe(true);
-    // The conflicted file was rewritten with the LLM-resolved content and
-    // the rebase continued non-interactively.
+    // The agent got a conflict prompt naming the conflicted file; its
+    // rewrite was staged and the rebase continued non-interactively.
+    const opts = mocks.runLemcoreTask.mock.calls[0]?.[0];
+    expect(opts.promptOverride).toContain('src/a.ts');
     const resolved = await fs.readFile(path.join(gateWorkdir(), 'src/a.ts'), 'utf8');
-    expect(resolved).toBe('resolved content');
+    expect(resolved).toBe('lemcore resolved');
+    expect(mocks.git).toHaveBeenCalledWith(['add', '--', 'src/a.ts'], { cwd: gateWorkdir() });
     const continues = gitCalls('rebase').filter((c) => (c[0] as string[]).includes('--continue'));
     expect(continues).toHaveLength(1);
     expect(continues[0][0]).toContain('core.editor=true');
@@ -487,18 +486,18 @@ describe('mergeGateTask rebase of a stale branch (internal executor)', () => {
     expect(mocks.enqueueMergeGate).toHaveBeenCalledWith('task-1', 1, 0, MERGE_GATE_DELAY_MS, 0);
   });
 
-  it('rebases without any LLM calls when the rebase applies cleanly', async () => {
+  it('rebases without calling the agent when the rebase applies cleanly', async () => {
     mocks.git.mockImplementation(gitStaleClean());
     await mergeGateTask('task-1');
     expect(mocks.mergePullRequest).not.toHaveBeenCalled();
-    expect(mocks.llmCall).not.toHaveBeenCalled();
+    expect(mocks.runLemcoreTask).not.toHaveBeenCalled();
     expect(gitCalls('push')).toHaveLength(1);
     expect(mocks.enqueueMergeGate).toHaveBeenCalledWith('task-1', 1, 0, MERGE_GATE_DELAY_MS, 0);
   });
 
-  it('treats an LLM resolution that keeps conflict markers as a retryable failure', async () => {
+  it('refuses to push when the agent leaves conflict markers behind', async () => {
     await seedConflictedWorkdir(gateWorkdir());
-    mocks.llmCall.mockResolvedValue(JSON.stringify({ content: CONFLICTED }));
+    mocks.runLemcoreTask.mockImplementation(async () => {}); // markers stay in the file
     await expect(mergeGateTask('task-1')).rejects.toThrow(/conflict markers/);
     expect(mocks.recordJobFailure).toHaveBeenCalledWith(
       'merge-gate',
@@ -534,49 +533,6 @@ describe('mergeGateTask rebase of a stale branch (internal executor)', () => {
     expect(gitCalls('checkout')).toHaveLength(1);
     expect(gitCalls('push')).toHaveLength(1);
     expect(mocks.enqueueMergeGate).toHaveBeenCalledWith('task-1', 1, 0, MERGE_GATE_DELAY_MS, 0);
-  });
-});
-
-describe('mergeGateTask rebase of a stale branch (hermes executor)', () => {
-  beforeEach(() => {
-    mocks.config.AGENT_EXECUTOR = 'hermes';
-    mocks.git.mockImplementation(gitWithRebaseConflict());
-  });
-
-  it('lets hermes rewrite conflicted files, then stages, continues the rebase, force-pushes, re-enqueues', async () => {
-    await seedConflictedWorkdir(gateWorkdir());
-    mocks.runHermesTask.mockImplementation(async (opts: { workdir: string }) => {
-      await fs.writeFile(path.join(opts.workdir, 'src/a.ts'), 'hermes resolved');
-    });
-    await mergeGateTask('task-1');
-
-    const opts = mocks.runHermesTask.mock.calls[0]?.[0];
-    expect(opts.prompt).toContain('src/a.ts');
-    expect(mocks.git).toHaveBeenCalledWith(['add', '--', 'src/a.ts'], { cwd: gateWorkdir() });
-    const continues = gitCalls('rebase').filter((c) => (c[0] as string[]).includes('--continue'));
-    expect(continues).toHaveLength(1);
-    expect(mocks.git).toHaveBeenCalledWith(
-      ['push', '--force-with-lease', 'origin', `HEAD:${BRANCH}`],
-      expect.objectContaining({ cwd: gateWorkdir() }),
-    );
-    expect(mocks.enqueueMergeGate).toHaveBeenCalledWith('task-1', 1, 0, MERGE_GATE_DELAY_MS, 0);
-  });
-
-  it('refuses to push when hermes leaves conflict markers behind', async () => {
-    await seedConflictedWorkdir(gateWorkdir());
-    mocks.runHermesTask.mockImplementation(async () => {}); // markers stay in the file
-    await expect(mergeGateTask('task-1')).rejects.toThrow(/conflict markers/);
-    expect(mocks.recordJobFailure).toHaveBeenCalledWith(
-      'merge-gate',
-      'task-1',
-      expect.any(Error),
-      [],
-    );
-    expect(mocks.enqueueMergeGate).not.toHaveBeenCalled();
-    expect(mocks.git).not.toHaveBeenCalledWith(
-      expect.arrayContaining(['push']),
-      expect.anything(),
-    );
   });
 });
 
