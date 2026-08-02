@@ -5,6 +5,7 @@ import { toSelectedTask } from '@/lib/repo-tasks';
 import { useWorkspaceSelection } from '@/lib/selection';
 import { cn, hoverReveal } from '@/lib/utils';
 import { StatusBadge } from '@/components/StatusBadge';
+import { TaskTitle } from '@/components/repo-tree/TaskTitle';
 import { Button } from '@/components/ui/button';
 
 /**
@@ -22,9 +23,7 @@ export function ArchivedTaskRow({ task }: { task: Task }) {
         onClick={() => openArchivedTask(toSelectedTask(task))}
         className="min-w-0 flex-1 rounded px-1 py-0.5 text-left"
       >
-        <span className="block truncate" title={task.title}>
-          {task.title}
-        </span>
+        <TaskTitle title={task.title} className="block" />
       </button>
       <StatusBadge status={task.status} className={cn('px-1.5 py-0 text-[10px] opacity-70', hoverReveal)} />
       <UnarchiveTaskButton task={task} />

@@ -34,6 +34,6 @@ describe('TaskTitle', () => {
     await waitFor(() => {
       expect(screen.getByRole('tooltip')).toBeTruthy();
     });
-    expect(screen.getByRole('tooltip')).toHaveTextContent(longTitle);
+    expect(screen.getByRole('tooltip').textContent).toBe(longTitle);
   });
 });
