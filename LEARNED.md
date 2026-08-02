@@ -7,3 +7,4 @@
 - After changing `backend/prisma/schema.prisma`, run `npm run prisma:generate -w backend` before `typecheck`/tests — the generated client is not regenerated automatically in a fresh checkout.
 - Run the repo's line guard per-package (`npm run check:max-lines` in backend/ and frontend/); running the root script across all dirs ignores the backend baseline file.
 - The backend edit_file/multi_edit tools must reject a missing/blank `path` up-front (path-arg-guard.ts) — an empty path resolves to the workdir root and Node throws raw EISDIR.
+- Tool quirk: in some sessions edit_file/multi_edit resolve to the workdir root and fail with EISDIR regardless of the `path` argument — fall back to a scripted (python/node) in-place edit via bash.
