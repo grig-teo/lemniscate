@@ -220,6 +220,7 @@ export async function runToolCalls(opts: {
         toolStep.outputPreview = result.outputPreview;
         toolStep.detail = result.detail;
         toolStep.durationMs = durationMs;
+        toolStep.diff = result.diff;
         await opts.publishStepEvent(opts.taskId, toolStep);
         opts.messages.push({
           role: 'tool',

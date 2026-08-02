@@ -1,11 +1,17 @@
 import { mkdtemp, writeFile, mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+const publishMock = vi.hoisted(() => ({ publishTaskEvent: vi.fn() }));
+vi.mock('../src/lib/task-events.js', () => ({
+  publishTaskEvent: publishMock.publishTaskEvent,
+}));
 
 import { toolBash, toolGrep, toolGlob, toolReadFile, toolWriteFile } from '../src/lib/lemcore/tools.js';
 import { prepareEditContent } from '../src/lib/lemcore/edit-helpers.js';
-import { executeTool } from '../src/lib/lemcore/loop-tool-runner.js';
+import { executeTool, runToolCalls } from '../src/lib/lemcore/loop-tool-runner.js';
+import { publishStepEvent } from '../src/lib/lemcore/loop-helpers.js';
 
 let workdir: string;
 
@@ -147,6 +153,111 @@ describe('executeTool file-path guard — empty/missing path never reaches fs', 
 
     expect(result.error).toBeUndefined();
     expect(result.outputPreview).toContain('edited ok.ts');
+  });
+});
+
+describe('toolWriteFile — visible write result', () => {
+  it('summarizes the write AND includes the actual content written', async () => {
+    const result = await toolWriteFile(workdir, 'new.txt', 'hello world\nsecond line\n');
+
+    expect(result.outputPreview).toContain('wrote 24 chars to new.txt');
+    expect(result.outputPreview).toContain('hello world');
+    expect(result.outputPreview).toContain('second line');
+  });
+
+  it('carries a git-style added-lines diff for a brand-new file', async () => {
+    const result = await toolWriteFile(workdir, 'fresh.ts', 'export const a = 1;\n');
+
+    expect(result.diff).toBeDefined();
+    expect(result.diff).toContain('--- /dev/null');
+    expect(result.diff).toContain('+++ b/fresh.ts');
+    expect(result.diff).toContain('+export const a = 1;');
+  });
+
+  it('carries an added/removed diff when overwriting an existing file', async () => {
+    await writeFile(path.join(workdir, 'old.txt'), 'before\nshared\n');
+    const result = await toolWriteFile(workdir, 'old.txt', 'after\nshared\n');
+
+    expect(result.diff).toContain('--- a/old.txt');
+    expect(result.diff).toContain('-before');
+    expect(result.diff).toContain('+after');
+  });
+});
+
+describe('runToolCalls — the step event carries the diff for file edits', () => {
+  it('publishes the unified diff in the write_file step event', async () => {
+    const published: { payload: unknown }[] = [];
+    const messages: { role: string; content: string }[] = [];
+    let counter = 0;
+
+    await runToolCalls({
+      taskId: 'task-1',
+      workdir,
+      secrets: [],
+      toolCalls: [
+        {
+          id: 'call-1',
+          type: 'function',
+          function: {
+            name: 'write_file',
+            arguments: JSON.stringify({ path: 'via-loop.txt', content: 'line one\nline two\n' }),
+          },
+        },
+      ],
+      messages: messages as never,
+      consecutiveToolFailures: 0,
+      nextStepId: () => `step-${++counter}`,
+      publishStepEvent: async (_taskId, step) => {
+        published.push({ payload: step });
+      },
+    });
+
+    const finished = published.find(
+      (p) => (p.payload as { status?: string }).status === 'done',
+    )?.payload as { diff?: string };
+    expect(finished.diff).toBeDefined();
+    expect(finished.diff).toContain('+++ b/via-loop.txt');
+    expect(finished.diff).toContain('+line one');
+  });
+});
+
+describe('publishStepEvent — diff reaches the agent_step payload', () => {
+  it('forwards the step diff (size-capped) into the published payload', async () => {
+    publishMock.publishTaskEvent.mockClear();
+    const diff = ['--- a/x.ts', '+++ b/x.ts', '@@ -1 +1 @@', '-old', '+new'].join('\n');
+    await publishStepEvent('task-9', {
+      stepId: 'step-1',
+      status: 'done',
+      kind: 'tool',
+      tool: 'edit_file',
+      title: 'edit_file(x.ts)',
+      outputPreview: 'edited x.ts',
+      diff,
+    });
+
+    expect(publishMock.publishTaskEvent).toHaveBeenCalledWith(
+      'task-9',
+      'agent_step',
+      expect.objectContaining({ diff }),
+    );
+  });
+
+  it('caps a very long diff so the event row stays small', async () => {
+    publishMock.publishTaskEvent.mockClear();
+    const hugeDiff = `+${'y'.repeat(30_000)}`;
+    await publishStepEvent('task-9', {
+      stepId: 'step-2',
+      status: 'done',
+      kind: 'tool',
+      tool: 'write_file',
+      title: 'write_file(big.ts)',
+      outputPreview: 'wrote 30000 chars to big.ts',
+      diff: hugeDiff,
+    });
+
+    const payload = publishMock.publishTaskEvent.mock.calls.at(-1)?.[2] as { diff?: string };
+    expect(payload.diff!.length).toBeLessThan(hugeDiff.length);
+    expect(payload.diff).toContain('truncated');
   });
 });
 

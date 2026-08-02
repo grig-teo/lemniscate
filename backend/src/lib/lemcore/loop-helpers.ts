@@ -11,6 +11,16 @@ export function nextStepId(): string {
   return `step-${++stepCounter}`;
 }
 
+// Cap the diff inside the published agent_step event: the row goes to DB +
+// SSE + every connected console, so multi-MB diffs must announce instead.
+export const STEP_DIFF_MAX_CHARS = 2_000;
+
+function capStepDiff(diff: string | undefined): string | undefined {
+  if (!diff) return undefined;
+  if (diff.length <= STEP_DIFF_MAX_CHARS) return diff;
+  return `${diff.slice(0, STEP_DIFF_MAX_CHARS)}\n… [diff truncated]`;
+}
+
 export async function publishStepEvent(taskId: string, step: LemcoreStep): Promise<void> {
   await publishTaskEvent(taskId, 'agent_step', {
     stepId: step.stepId,
@@ -21,6 +31,7 @@ export async function publishStepEvent(taskId: string, step: LemcoreStep): Promi
     title: step.title,
     detail: step.detail,
     outputPreview: step.outputPreview ? step.outputPreview.slice(0, 2_000) : undefined,
+    diff: capStepDiff(step.diff),
     durationMs: step.durationMs,
     tokensUsed: step.tokensUsed,
   });
