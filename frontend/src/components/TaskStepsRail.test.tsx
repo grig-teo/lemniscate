@@ -51,6 +51,18 @@ describe('TaskStepsRail', () => {
     expect(screen.getByText('Running')).toBeTruthy();
   });
 
+  it('makes both rail toggle icons 2x bigger', () => {
+    render(<TaskStepsRail status="running" />);
+    // Hide toggle icon (PanelRightClose)
+    const hideBtn = screen.getByRole('button', { name: /hide implementation steps/i });
+    expect(hideBtn.querySelector('svg')!.getAttribute('class')).toContain('h-7 w-7');
+
+    // Show toggle icon (PanelRightOpen) — reveal it by hiding first
+    fireEvent.click(hideBtn);
+    const showBtn = screen.getByRole('button', { name: /show implementation steps/i });
+    expect(showBtn.querySelector('svg')!.getAttribute('class')).toContain('h-7 w-7');
+  });
+
   it('persists the hidden preference across mounts', () => {
     // Non-running statuses keep respecting the persisted preference; a live
     // (running) status auto-opens the pane instead (covered below).
