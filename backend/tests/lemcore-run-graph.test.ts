@@ -23,6 +23,7 @@ vi.mock('../src/lib/agent-prompts.js', () => ({
 
 vi.mock('../src/lib/task-skills.js', () => ({
   loadTaskSkills: vi.fn(async () => []),
+  loadAgentsMdTemplate: vi.fn(async () => null),
 }));
 
 vi.mock('../src/lib/lemcore/graph-scan.js', () => ({

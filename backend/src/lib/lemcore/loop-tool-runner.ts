@@ -3,12 +3,13 @@ import type { LlmRuntime } from '../agent-runtime.js';
 import {
   toolReadFile,
   toolWriteFile,
-  toolEditFile,
-  toolMultiEdit,
   toolBash,
+  applySingleEdit,
+  applyMultiEdit,
   type ToolResult,
   type ToolName,
 } from './tools.js';
+import { runEdit } from './edit-router.js';
 import { toolUndoEdit } from './edit-checkpoint.js';
 import { toolTodoWrite } from './todo-store.js';
 import {
@@ -46,19 +47,16 @@ export async function executeTool(
     case 'write_file':
       return toolWriteFile(workdir, String(args.path ?? ''), String(args.content ?? ''), secrets);
     case 'edit_file':
-      return toolEditFile(
-        workdir,
-        String(args.path ?? ''),
-        String(args.search ?? ''),
-        String(args.replace ?? ''),
-        secrets,
+      return runEdit('edit_file', String(args.path ?? ''), workdir, secrets, multiSampleCtx, (original) =>
+        applySingleEdit(String(args.path ?? ''), original, String(args.search ?? ''), String(args.replace ?? '')),
       );
     case 'multi_edit':
-      return toolMultiEdit(
-        workdir,
-        String(args.path ?? ''),
-        Array.isArray(args.edits) ? (args.edits as { search: string; replace: string }[]) : [],
-        secrets,
+      return runEdit('multi_edit', String(args.path ?? ''), workdir, secrets, multiSampleCtx, (original) =>
+        applyMultiEdit(
+          String(args.path ?? ''),
+          original,
+          Array.isArray(args.edits) ? (args.edits as { search: string; replace: string }[]) : [],
+        ),
       );
     case 'bash':
       return toolBash(workdir, String(args.command ?? ''), secrets);
@@ -101,8 +99,10 @@ export async function executeTool(
       return toolUndoEdit(workdir, String(args.path ?? ''), secrets);
     case 'todo_write':
       return toolTodoWrite(workdir, String(args.content ?? ''), secrets);
-    case 'spawn_subagent':
-      return runSpawnSubagent(multiSampleCtx, workdir, secrets, args);
+    case 'spawn_subagent': {
+      const { spawnSubagentTool } = await import('./subagent.js');
+      return spawnSubagentTool(multiSampleCtx, workdir, secrets, args);
+    }
     default:
       return {
         tool: name as ToolName,
@@ -111,25 +111,6 @@ export async function executeTool(
         durationMs: 0,
         error: `unknown tool: ${name}`,
       };
-  }
-}
-async function runSpawnSubagent(
-  ctx: { rt: LlmRuntime; taskId: string; toolCall: ChatToolCall } | undefined,
-  workdir: string, secrets: string[], args: Record<string, unknown>,
-): Promise<ToolResult> {
-  if (!ctx) return {
-    tool: 'spawn_subagent' as ToolName, title: 'spawn_subagent', durationMs: 0,
-    outputPreview: 'Subagent unavailable (no runtime context).',
-    error: 'spawn_subagent requires runtime context',
-  };
-  const { runSubagent } = await import('./subagent.js');
-  const start = Date.now();
-  const prompt = String(args.prompt ?? '');
-  try {
-    const summary = await runSubagent({ rt: ctx.rt, workdir, secrets, taskId: ctx.taskId, prompt });
-    return { tool: 'spawn_subagent' as ToolName, title: `spawn_subagent(${prompt.slice(0, 40)})`, outputPreview: summary, durationMs: Date.now() - start };
-  } catch (err) {
-    return { tool: 'spawn_subagent' as ToolName, title: 'spawn_subagent', outputPreview: `Subagent failed: ${(err as Error).message}`, durationMs: Date.now() - start, error: `subagent error: ${(err as Error).message}` };
   }
 }
 function asStringArray(value: unknown): string[] {
@@ -190,7 +171,14 @@ export async function runToolCalls(opts: {
     await opts.publishStepEvent(opts.taskId, toolStep);
     const toolStart = Date.now();
     try {
-      const result = await executeTool(name, args, opts.workdir, opts.secrets, opts.skills ?? []);
+      // Thread the runtime + per-call context through to executeTool so tools
+      // that need it (spawn_subagent, multi-sample edit verification) actually
+      // receive it. Without this, multiSampleCtx is always undefined and both
+      // features silently hit their "no runtime context" early returns.
+      const multiSampleCtx = opts.rt
+        ? { rt: opts.rt, taskId: opts.taskId, toolCall: tc }
+        : undefined;
+      const result = await executeTool(name, args, opts.workdir, opts.secrets, opts.skills ?? [], multiSampleCtx);
       const durationMs = Date.now() - toolStart;
       if (result.error) {
         // web_search is best-effort: a flaky DDG page should never count

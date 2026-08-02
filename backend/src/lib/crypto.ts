@@ -10,11 +10,18 @@ const ALGORITHM = 'aes-256-gcm';
 const IV_LENGTH = 12; // 96-bit nonce, recommended for GCM
 const VERSION = 'v1';
 
-const key = Buffer.from(config.ENCRYPTION_KEY, 'hex');
+// Lazily derive the key on first use rather than at module load: tests (and
+// any importer) that mock config.js with a partial object otherwise crash at
+// import time when ENCRYPTION_KEY is absent, even if they never encrypt.
+let cachedKey: Buffer | null = null;
+function key(): Buffer {
+  if (!cachedKey) cachedKey = Buffer.from(config.ENCRYPTION_KEY, 'hex');
+  return cachedKey;
+}
 
 export function encrypt(plaintext: string): string {
   const iv = randomBytes(IV_LENGTH);
-  const cipher = createCipheriv(ALGORITHM, key, iv);
+  const cipher = createCipheriv(ALGORITHM, key(), iv);
   const ciphertext = Buffer.concat([cipher.update(plaintext, 'utf8'), cipher.final()]);
   const tag = cipher.getAuthTag();
   return [
@@ -30,7 +37,7 @@ export function decrypt(stored: string): string {
   if (version !== VERSION || !ivB64 || !tagB64 || !ciphertextB64) {
     throw new Error('Malformed encrypted value');
   }
-  const decipher = createDecipheriv(ALGORITHM, key, Buffer.from(ivB64, 'base64'));
+  const decipher = createDecipheriv(ALGORITHM, key(), Buffer.from(ivB64, 'base64'));
   decipher.setAuthTag(Buffer.from(tagB64, 'base64'));
   const plaintext = Buffer.concat([
     decipher.update(Buffer.from(ciphertextB64, 'base64')),
