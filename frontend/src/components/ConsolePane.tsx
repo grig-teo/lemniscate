@@ -104,6 +104,20 @@ export function ConsolePane() {
   const [runDialogOpen, setRunDialogOpen] = React.useState(false);
   const [changesDialogOpen, setChangesDialogOpen] = React.useState(false);
   const [autoOpenPending, setAutoOpenPending] = React.useState(false);
+  // Bumps on every task switch so the right-side overlays (ObjectiveTodoPanel,
+  // TaskStepsRail) get session-unique keys: the raw task id repeats when a task
+  // is reopened, and React corrupts the child list when 3+ same-type siblings
+  // swap to an already-seen key (the old keyed fiber leaks instead of
+  // unmounting — the previous task's panel visibly stacked next to the new
+  // one). Unique-per-mount keys sidestep that React bug; taskId is appended
+  // to keep the key searchable.
+  const overlaySessionRef = React.useRef(0);
+  const overlaySessionTaskRef = React.useRef<string | null>(null);
+  if (overlaySessionTaskRef.current !== taskId) {
+    overlaySessionTaskRef.current = taskId;
+    overlaySessionRef.current += 1;
+  }
+  const overlayKey = `${taskId ?? 'none'}-s${overlaySessionRef.current}`;
   const prevLiveStatusRef = React.useRef<string | null>(liveStatus);
   const autoOpenedForRef = React.useRef<string | null>(null);
   const runTargets = useTaskRunTargets(taskId, autoOpenPending);
@@ -205,17 +219,19 @@ export function ConsolePane() {
         summary={consoleState.changes}
       />
       {/* Objective + TODO checklist panel (top-right). Only shows when the
-          agent has emitted an objective or a todo_write. Keyed on the task so
-          switching tasks resets the derived state. */}
+          agent has emitted an objective or a todo_write. Keyed on the overlay
+          session (unique per task switch) so the previous task's panel always
+          unmounts — replaced, never stacked next to the new one. */}
       <ObjectiveTodoPanel
-        key={taskId ?? 'none'}
+        key={`objective-${overlayKey}`}
         objective={consoleState.objective}
         todoItems={consoleState.todoItems}
       />
-      {/* Keyed on the task so opening another task remounts the rail and the
-          auto-open effect treats an already-running status as a fresh
-          transition, re-showing the steps pane for each live task opened. */}
-      <TaskStepsRail key={taskId ?? 'none'} status={status} />
+      {/* Keyed on the overlay session so opening another task remounts the
+          rail and the auto-open effect treats an already-running status as a
+          fresh transition, re-showing the steps pane for each live task
+          opened. */}
+      <TaskStepsRail key={`steps-${overlayKey}`} status={status} />
     </section>
   );
 }
