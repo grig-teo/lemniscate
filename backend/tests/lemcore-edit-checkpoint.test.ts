@@ -40,4 +40,16 @@ describe('lintAndMaybeRevert — no-lint-config path writes the file', () => {
     );
     expect(await readFile(path.join(workdir, 'run.sh'), 'utf8')).toBe('echo new\n');
   });
+
+  it('attaches a unified diff of the change to the tool result', async () => {
+    await writeFile(path.join(workdir, 'diff.md'), 'alpha\nbeta\ngamma\n');
+    const result = await lintAndMaybeRevert(
+      workdir, 'diff.md', 'alpha\nbeta\ngamma\n', 'alpha\nBETA\ngamma\n', [], Date.now(), 'edit_file',
+    );
+    expect(result.diff).toBeDefined();
+    expect(result.diff).toContain('--- a/diff.md');
+    expect(result.diff).toContain('+++ b/diff.md');
+    expect(result.diff).toContain('-beta');
+    expect(result.diff).toContain('+BETA');
+  });
 });

@@ -89,6 +89,11 @@ describe('runEdit routing', () => {
     // No lint config → accepted, file written.
     expect(result.error).toBeUndefined();
     expect(await readFile(path.join(workdir, 'b.ts'), 'utf8')).toBe('const x = 2;\n');
+    // Show-details diff payload: unified diff of the edit.
+    expect(result.diff).toContain('--- a/b.ts');
+    expect(result.diff).toContain('+++ b/b.ts');
+    expect(result.diff).toContain('-const x = 1;');
+    expect(result.diff).toContain('+const x = 2;');
   });
 
   it('propagates compute validation errors before any write', async () => {
@@ -98,5 +103,22 @@ describe('runEdit routing', () => {
         throw new Error('bad edit');
       }),
     ).rejects.toThrow('bad edit');
+  });
+});
+describe('toolWriteFile diff payload', () => {
+  it('marks a brand-new file as created (diff from /dev/null)', async () => {
+    const result = await toolWriteFile(workdir, 'fresh.ts', 'export const n = 1;\n');
+    expect(result.diff).toContain('--- /dev/null');
+    expect(result.diff).toContain('+++ b/fresh.ts');
+    expect(result.diff).toContain('+export const n = 1;');
+  });
+
+  it('diffs an overwrite against the previous content', async () => {
+    await writeFile(path.join(workdir, 'over.ts'), 'old line\nkeep\n');
+    const result = await toolWriteFile(workdir, 'over.ts', 'new line\nkeep\n');
+    expect(result.diff).toContain('--- a/over.ts');
+    expect(result.diff).toContain('+++ b/over.ts');
+    expect(result.diff).toContain('-old line');
+    expect(result.diff).toContain('+new line');
   });
 });
