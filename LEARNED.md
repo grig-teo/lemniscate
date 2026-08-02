@@ -1,0 +1,1 @@
+- Deps: npm workspaces repo — run `npm install --include=dev` from the repo ROOT (backend/ has no own node_modules; vitest only exists after root install).
