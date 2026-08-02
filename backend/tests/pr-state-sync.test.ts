@@ -190,12 +190,12 @@ describe('syncMergedPullRequests', () => {
     warn.mockRestore();
   });
 
-  it('queries awaiting_review and reviewing_code tasks that have a PR and branch, archived included', async () => {
+  it('queries awaiting_review/reviewing_code/waiting_ci tasks that have a PR and branch, archived included', async () => {
     mocks.taskFindMany.mockResolvedValue([]);
     await syncMergedPullRequests();
     expect(mocks.taskFindMany).toHaveBeenCalledWith({
       where: {
-        status: { in: ['awaiting_review', 'reviewing_code'] },
+        status: { in: ['awaiting_review', 'reviewing_code', 'waiting_ci'] },
         prUrl: { not: null },
         branchName: { not: null },
         repository: { connection: { disconnectedAt: null } },

@@ -20,7 +20,8 @@ function PrRowActions({
   reviewMutation: { isPending: boolean; mutate: (id: string) => void };
   mergeMutation: { isPending: boolean; mutate: (id: string) => void };
 }) {
-  const canAct = status === 'awaiting_review' || status === 'reviewing_code';
+  const canAct =
+    status === 'awaiting_review' || status === 'reviewing_code' || status === 'waiting_ci';
   return (
     <div className="flex items-center gap-1">
       <Button

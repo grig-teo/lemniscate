@@ -203,7 +203,7 @@ export function useBacklogTask() {
   return useTaskAction('backlog');
 }
 
-/** Close a PR and delete its branch from the UI (awaiting_review tasks only). */
+/** Close a PR and delete its branch from the UI (awaiting_review / waiting_ci tasks only). */
 export function useClosePrTask() {
   return useTaskAction('close-pr');
 }

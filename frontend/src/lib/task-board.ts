@@ -20,7 +20,7 @@ export const COLUMN_DEFS: ColumnDef[] = [
   {
     id: 'review',
     title: 'Code Review',
-    statuses: ['awaiting_review', 'reviewing_code'],
+    statuses: ['awaiting_review', 'reviewing_code', 'waiting_ci'],
   },
   { id: 'done', title: 'Done', statuses: ['done', 'failed', 'closed'] },
 ];

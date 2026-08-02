@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
   gitConnectionFindUnique: vi.fn(),
   taskFindFirst: vi.fn(),
   applyTaskPrStateSafe: vi.fn().mockResolvedValue(true),
+  setTaskStatus: vi.fn().mockResolvedValue(undefined),
   enqueueMergeGate: vi.fn().mockResolvedValue(undefined),
   enqueueRunTask: vi.fn().mockResolvedValue(undefined),
   enqueueAddressReview: vi.fn().mockResolvedValue(undefined),
@@ -63,6 +64,10 @@ vi.mock('../src/lib/event-trigger-handler.js', async (importOriginal) => {
 
 vi.mock('../src/lib/redis.js', () => ({
   getRedisClient: () => ({ set: mocks.redisSet }),
+}));
+
+vi.mock('../src/lib/task-events.js', () => ({
+  setTaskStatus: mocks.setTaskStatus,
 }));
 
 vi.mock('../src/lib/metrics.js', () => ({
@@ -264,6 +269,46 @@ describe('POST /api/webhooks/:connectionId', () => {
     expect(res.statusCode).toBe(200);
     expect(res.json().event).toBe('ci_status');
     expect(mocks.enqueueMergeGate).toHaveBeenCalledWith(TASK_ID);
+    await app.close();
+  });
+
+  it('flips a waiting_ci task back to awaiting_review on ci_status', async () => {
+    mocks.taskFindFirst.mockResolvedValue({ ...awaitingTask(), status: 'waiting_ci' });
+    const app = await buildApp();
+    const res = await app.inject({
+      method: 'POST',
+      url: `/api/webhooks/${CONNECTION_ID}`,
+      headers: {
+        'content-type': 'application/json',
+        'x-github-event': 'check_suite',
+        'x-hub-signature-256': githubSig(CHECK_SUITE_BODY),
+        'x-github-delivery': 'deliv-ci-flip',
+      },
+      payload: CHECK_SUITE_BODY,
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().event).toBe('ci_status');
+    expect(mocks.setTaskStatus).toHaveBeenCalledWith(TASK_ID, 'awaiting_review');
+    expect(mocks.enqueueMergeGate).toHaveBeenCalledWith(TASK_ID);
+    await app.close();
+  });
+
+  it('does not touch the status when a ci_status task was not waiting on CI', async () => {
+    const app = await buildApp();
+    const res = await app.inject({
+      method: 'POST',
+      url: `/api/webhooks/${CONNECTION_ID}`,
+      headers: {
+        'content-type': 'application/json',
+        'x-github-event': 'check_suite',
+        'x-hub-signature-256': githubSig(CHECK_SUITE_BODY),
+        'x-github-delivery': 'deliv-ci-no-flip',
+      },
+      payload: CHECK_SUITE_BODY,
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().event).toBe('ci_status');
+    expect(mocks.setTaskStatus).not.toHaveBeenCalled();
     await app.close();
   });
 

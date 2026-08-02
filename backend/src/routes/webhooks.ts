@@ -7,6 +7,7 @@ import { prisma } from '../lib/prisma.js';
 import { enqueueAddressReview, enqueueMergeGate } from '../lib/proposal-scheduler.js';
 import { reviewFeedbackSkipReason } from '../lib/review-feedback.js';
 import { getRedisClient } from '../lib/redis.js';
+import { setTaskStatus } from '../lib/task-events.js';
 import type { WebhookEvent } from '../lib/git-providers/webhook-types.js';
 import { fireEventTrigger } from '../lib/event-trigger-handler.js';
 
@@ -160,6 +161,15 @@ async function dispatchPrStateEvent(
     return { ok: true, event: 'pr_closed' };
   }
   if (event.kind === 'ci_status') {
+    // CI finished on the git host. A waiting_ci task now genuinely awaits
+    // review again: flip it so the awaiting pipeline (review-pr on the final
+    // pushed code, then the merge gate) re-engages. GitHub/GitLab always
+    // report check status on this webhook path, so an early flip cannot
+    // strand a task on a checks-blind provider (those keep returning
+    // supported: false and merge unverified on the review verdict alone).
+    if (task.status === 'waiting_ci') {
+      await setTaskStatus(task.id, 'awaiting_review');
+    }
     await enqueueMergeGate(task.id);
     return { ok: true, event: 'ci_status' };
   }
@@ -183,7 +193,7 @@ async function findAwaitingTask(
 ): Promise<TaskWithConnection | null> {
   return prisma.task.findFirst({
     where: {
-      status: { in: ['awaiting_review', 'reviewing_code'] },
+      status: { in: ['awaiting_review', 'reviewing_code', 'waiting_ci'] },
       branchName: headBranch,
       repository: { fullName: repoFullName, connectionId },
     },

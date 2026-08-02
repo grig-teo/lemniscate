@@ -61,8 +61,8 @@ describe('continueOrFinishReview (single review, single fix)', () => {
       10,
       { promptTokens: 1, completionTokens: 2 },
     );
-    // The fix is the last word: status flips back and the merge gate fires.
-    expect(mocks.setTaskStatus).toHaveBeenCalledWith('task-1', 'awaiting_review');
+    // The fix is the last word: the task waits for CI on the pushed fix.
+    expect(mocks.setTaskStatus).toHaveBeenCalledWith('task-1', 'waiting_ci');
     expect(mocks.enqueueMergeGate).toHaveBeenCalledWith('task-1', 0, 0);
   });
 
@@ -77,7 +77,7 @@ describe('continueOrFinishReview (single review, single fix)', () => {
 
     expect(fix).not.toHaveBeenCalled();
     expect(mocks.persistTokenUsage).not.toHaveBeenCalled();
-    expect(mocks.setTaskStatus).toHaveBeenCalledWith('task-1', 'awaiting_review');
+    expect(mocks.setTaskStatus).toHaveBeenCalledWith('task-1', 'waiting_ci');
     expect(mocks.enqueueMergeGate).toHaveBeenCalledWith('task-1', 0, 0);
   });
 
@@ -91,7 +91,7 @@ describe('continueOrFinishReview (single review, single fix)', () => {
     );
 
     expect(fix).toHaveBeenCalledOnce();
-    expect(mocks.setTaskStatus).toHaveBeenCalledWith('task-1', 'awaiting_review');
+    expect(mocks.setTaskStatus).toHaveBeenCalledWith('task-1', 'waiting_ci');
     expect(mocks.enqueueMergeGate).not.toHaveBeenCalled();
     expect(mocks.logEvent).toHaveBeenCalledWith(
       'task-1',
@@ -105,7 +105,7 @@ describe('finishReview', () => {
 
   it('does not enqueue merge gate when autoMergePr is off', async () => {
     await finishReview(task(false), { verdict: 'approve', summary: 'ok', issues: [] });
-    expect(mocks.setTaskStatus).toHaveBeenCalledWith('task-1', 'awaiting_review');
+    expect(mocks.setTaskStatus).toHaveBeenCalledWith('task-1', 'waiting_ci');
     expect(mocks.enqueueMergeGate).not.toHaveBeenCalled();
   });
 });

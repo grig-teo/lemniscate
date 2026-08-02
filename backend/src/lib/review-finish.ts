@@ -14,12 +14,18 @@ import { setTaskStatus } from './task-events.js';
 // review ends — there is no re-review loop (previously this re-reviewed up to
 // 4 times per task).
 
-/** After the fix (or on approve): back to awaiting_review + optional merge gate. */
+/**
+ * After the fix (or on approve): waiting_ci (checks run on the pushed code) +
+ * optional merge gate. The agent just pushed the reviewed branch — CI is
+ * (re)running on the git host, so the task waits for CI checks, not for
+ * review. A ci_status webhook (or the next merge-gate re-check) flips it back
+ * to awaiting_review, which re-runs review-pr on the final code before merge.
+ */
 export async function finishReview(
   task: TaskWithRepo | (Task & { repository: { autoMergePr: boolean } }),
   review: PrReview,
 ): Promise<void> {
-  await setTaskStatus(task.id, 'awaiting_review');
+  await setTaskStatus(task.id, 'waiting_ci');
   if (!task.repository.autoMergePr) {
     await logEvent(
       task.id,

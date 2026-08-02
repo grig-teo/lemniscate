@@ -23,10 +23,18 @@ describe('boardColumns status→column mapping', () => {
     expect(cols[1].tasks.map((t) => t.id)).toEqual(['queued', 'running', 'awaiting_plan_approval']);
   });
 
-  it('maps awaiting_review/reviewing_code to Code Review', () => {
-    const cols = boardColumns([task('awaiting_review'), task('reviewing_code')]);
+  it('maps awaiting_review/reviewing_code/waiting_ci to Code Review', () => {
+    const cols = boardColumns([
+      task('awaiting_review'),
+      task('reviewing_code'),
+      task('waiting_ci'),
+    ]);
     expect(cols[2].id).toBe('review');
-    expect(cols[2].tasks.map((t) => t.id)).toEqual(['awaiting_review', 'reviewing_code']);
+    expect(cols[2].tasks.map((t) => t.id)).toEqual([
+      'awaiting_review',
+      'reviewing_code',
+      'waiting_ci',
+    ]);
   });
 
   it('maps done/failed/closed to Done', () => {

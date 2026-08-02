@@ -136,7 +136,7 @@ function groupByRepository(tasks: TaskWithConnection[]): TaskWithConnection[][] 
 export async function syncMergedPullRequests(): Promise<void> {
   const tasks = await prisma.task.findMany({
     where: {
-      status: { in: ['awaiting_review', 'reviewing_code'] },
+      status: { in: ['awaiting_review', 'reviewing_code', 'waiting_ci'] },
       prUrl: { not: null },
       branchName: { not: null },
       repository: { connection: { disconnectedAt: null } },
@@ -173,7 +173,7 @@ const MAX_FEEDBACK_COMMENTS_PER_TASK = 5;
 export async function pollReviewFeedback(): Promise<void> {
   const tasks = await prisma.task.findMany({
     where: {
-      status: { in: ['awaiting_review', 'reviewing_code'] },
+      status: { in: ['awaiting_review', 'reviewing_code', 'waiting_ci'] },
       archivedAt: null,
       branchName: { not: null },
       repository: { autoAddressReview: true, connection: { disconnectedAt: null } },

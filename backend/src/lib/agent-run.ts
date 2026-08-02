@@ -399,7 +399,7 @@ export async function runTask(taskId: string): Promise<void> {
     // the task is paused; it is removed once done (merged), failed, or cancelled.
     const status = (await prisma.task.findUnique({ where: { id: taskId }, select: { status: true } }))
       ?.status;
-    if (status === 'awaiting_review' || status === 'reviewing_code') {
+    if (status === 'awaiting_review' || status === 'reviewing_code' || status === 'waiting_ci') {
       await logEvent(taskId, 'workdir kept until the pull request is merged').catch(() => {});
     } else if (status !== 'paused') {
       await cleanupWorkdir(workdir, taskId);
