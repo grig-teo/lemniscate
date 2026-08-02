@@ -14,6 +14,7 @@ const mocks = vi.hoisted(() => ({
   commitAndPush: vi.fn(),
   hasDirtyWorkdir: vi.fn(),
   runLemcoreLoop: vi.fn(),
+  loadTranscript: vi.fn(() => null),
   continueOrFinishReview: vi.fn(),
   fetchReviewDiff: vi.fn(),
   requestReviewDirect: vi.fn(),
@@ -26,7 +27,10 @@ vi.mock('../src/lib/agent-git.js', () => ({
   commitAndPush: mocks.commitAndPush,
   hasDirtyWorkdir: mocks.hasDirtyWorkdir,
 }));
-vi.mock('../src/lib/lemcore/loop.js', () => ({ runLemcoreLoop: mocks.runLemcoreLoop }));
+vi.mock('../src/lib/lemcore/loop.js', () => ({
+  runLemcoreLoop: mocks.runLemcoreLoop,
+  loadTranscript: (...a: unknown[]) => mocks.loadTranscript(...a),
+}));
 vi.mock('../src/lib/review-finish.js', () => ({ continueOrFinishReview: mocks.continueOrFinishReview }));
 vi.mock('../src/lib/agent-review.js', () => ({
   fetchReviewDiff: mocks.fetchReviewDiff,
@@ -111,5 +115,45 @@ describe('runLemcoreReview — no verdict file', () => {
     expect(mocks.requestReviewDirect).not.toHaveBeenCalled();
     expect(mocks.continueOrFinishReview).toHaveBeenCalledTimes(1);
     expect((await readdir(workdir)).length).toBe(0);
+  });
+});
+
+describe('runLemcoreReview — transcript resume', () => {
+  it('continues a re-enqueued review from the saved transcript instead of restarting', async () => {
+    const transcript = [{ role: 'user' as const, content: 'earlier review progress' }];
+    mocks.loadTranscript.mockReturnValueOnce(transcript);
+    mocks.runLemcoreLoop.mockResolvedValue('');
+
+    await runLemcoreReview(
+      task(),
+      rt(),
+      'lemniscate/branch',
+      0,
+      workdir,
+      'https://clone',
+      [],
+      { username: 'u', token: 't' },
+    );
+
+    const opts = mocks.runLemcoreLoop.mock.calls[0]![0] as { resumeTranscript?: unknown };
+    expect(opts.resumeTranscript).toEqual(transcript);
+  });
+
+  it('passes no resumeTranscript when no transcript exists (fresh review)', async () => {
+    mocks.runLemcoreLoop.mockResolvedValue('');
+
+    await runLemcoreReview(
+      task(),
+      rt(),
+      'lemniscate/branch',
+      0,
+      workdir,
+      'https://clone',
+      [],
+      { username: 'u', token: 't' },
+    );
+
+    const opts = mocks.runLemcoreLoop.mock.calls[0]![0] as { resumeTranscript?: unknown };
+    expect(opts.resumeTranscript).toBeUndefined();
   });
 });
