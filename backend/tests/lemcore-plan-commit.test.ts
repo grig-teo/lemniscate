@@ -31,4 +31,10 @@ describe('lemcore plan-first workflow', () => {
   it('never force-pushes or rewrites history', () => {
     expect(prompt).toContain('--force');
   });
+
+  it('requires the objective, plan, and TODO items to use plain language for non-technical readers', () => {
+    expect(prompt).toMatch(/plain, everyday language/i);
+    expect(prompt).toMatch(/non-technical/i);
+    expect(prompt).toMatch(/every TODO item in plain, everyday language/i);
+  });
 });
