@@ -12,10 +12,16 @@ import { ConsoleFooterStatusBar } from '@/components/console/ConsoleFooterStatus
 import { ConsoleLog } from '@/components/console/ConsoleLog';
 import { LemcoreRunView } from '@/components/console/LemcoreRunView';
 import { ErrorBanner } from '@/components/console/ErrorBanner';
+import { ArchivedPane } from '@/components/console/ArchivedPane';
 import { ArchivedTaskDetail } from '@/components/console/ArchivedTaskDetail';
 import { ProposalDetail } from '@/components/console/ProposalDetail';
 import { TaskStepsRail } from '@/components/TaskStepsRail';
 import { ComposerCard, TaskComposerFab } from '@/components/console/TaskComposer';
+import { ServiceDetail } from '@/components/services/ServiceDetail';
+import { PrListPane } from '@/components/PrListPane';
+import { TaskBoard } from '@/components/task-board/TaskBoard';
+import { GitlemRepoDetail } from '@/components/gitlem/GitlemRepoDetail';
+import { GitlemReposGrid } from '@/components/gitlem/GitlemReposGrid';
 import { useTaskConsole } from '@/components/console/useTaskConsole';
 import { ObjectiveTodoPanel } from '@/components/console/ObjectiveTodoPanel';
 import { RunTaskDialog } from '@/components/devices/RunTaskDialog';
@@ -64,7 +70,8 @@ function EmptyConsole() {
  * reachable via the header's run-on-device button.
  */
 export function ConsolePane() {
-  const { selectedTask, liveStatus } = useWorkspaceSelection();
+  const { selectedTask, liveStatus, archivedRepoId, archivedTask, selectedServiceId, prReviewRepoId, gitlemView, taskBoardRepoId } =
+    useWorkspaceSelection();
   const taskId = selectedTask?.id ?? null;
   const consoleState = useTaskConsole(taskId);
 
@@ -131,6 +138,13 @@ export function ConsolePane() {
     }
   }, [autoOpenPending, taskId, runTargets.data, runTargets.isError]);
 
+  if (taskBoardRepoId) return <TaskBoard repositoryId={taskBoardRepoId} />;
+  if (gitlemView && gitlemView !== 'grid') return <GitlemRepoDetail name={gitlemView} />;
+  if (gitlemView === 'grid') return <GitlemReposGrid />;
+  if (selectedServiceId) return <ServiceDetail serviceId={selectedServiceId} />;
+  if (prReviewRepoId) return <PrListPane repositoryId={prReviewRepoId} />;
+  if (archivedTask) return <ArchivedTaskDetail task={archivedTask} />;
+  if (archivedRepoId) return <ArchivedPane repositoryId={archivedRepoId} />;
   if (!selectedTask) return <EmptyConsole />;
 
   const showTaskDetail = isStartableTask(selectedTask) && status === 'pending';
