@@ -1,5 +1,4 @@
 export const MAX_TURNS = 60;
-export const MAX_TOOL_FAILURES = 2;
 // Consecutive empty assistant replies (no content, no tool calls) tolerated
 // before the run aborts. Some providers (e.g. z.ai GLM) intermittently return
 // finish_reason "stop" with an empty message once the reasoning budget is

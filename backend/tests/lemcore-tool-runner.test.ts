@@ -124,11 +124,36 @@ describe('runToolCalls → executeTool runtime-context plumbing', () => {
       // no rt
     });
 
-    // spawn_subagent is a soft failure: must NOT count toward MAX_TOOL_FAILURES.
+    // spawn_subagent is a soft failure: must NOT count as a tool failure.
     expect(failures).toBe(0);
     // ctx is undefined when rt is absent.
     expect(spawnSubagentMock.mock.calls[0]![0]).toBeUndefined();
     expect(messages.some((m) => m.role === 'tool' && /no runtime context/i.test(m.content))).toBe(true);
+  });
+});
+
+describe('runToolCalls → unlimited tool failures', () => {
+  it('never aborts, no matter how many consecutive failures occur', async () => {
+    const messages: import('../src/lib/lemcore/loop-types.js').LemcoreMessage[] = [];
+
+    // 5 consecutive failing reads — well past the old MAX_TOOL_FAILURES=2
+    // abort threshold. The run must NOT throw; the model keeps seeing the
+    // errors and can reroute.
+    const failures = await runToolCalls({
+      taskId: 't6',
+      workdir,
+      secrets: [],
+      toolCalls: Array.from({ length: 5 }, (_, i) =>
+        tc('read_file', { path: `missing-${i}.txt` }),
+      ),
+      messages,
+      consecutiveToolFailures: 0,
+      nextStepId,
+      publishStepEvent: noopPublish,
+    });
+
+    expect(failures).toBe(5);
+    expect(messages.filter((m) => m.role === 'tool' && m.content.startsWith('Error:'))).toHaveLength(5);
   });
 });
 

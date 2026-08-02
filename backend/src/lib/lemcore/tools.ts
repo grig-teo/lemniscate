@@ -163,7 +163,7 @@ export { prepareEditContent, applySingleEdit, applyMultiEdit } from './edit-help
 
 // Only true infra failures (timeout, spawn error) are tool errors; a non-zero
 // exit (grep no-match, missing file, failing tests) is a normal result the
-// agent should see and act on — not a consecutive failure toward MAX_TOOL_FAILURES.
+// agent should see and act on — not a counted tool failure.
 function isRealBashError(err: Error | null): boolean {
   if (!err) return false;
   const e = err as unknown as { killed?: boolean; signal?: string; code?: string | number };
