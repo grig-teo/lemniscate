@@ -350,10 +350,16 @@ test('human review feedback produces a follow-up commit (poll fallback)', async 
     const deadline = Date.now() + REVIEW_TIMEOUT_MS;
     let headSha = beforeSha;
     while (headSha === beforeSha) {
-      assert.ok(
-        Date.now() < deadline,
-        `no follow-up commit on ${EXPECTED_BRANCH} within ${REVIEW_TIMEOUT_MS}ms`,
-      );
+      if (Date.now() >= deadline) {
+        // Diagnose a stuck address-review job from the task's own event log.
+        const eventsResponse = await api('GET', `/tasks/${task.id}/events`, { cookie: true });
+        const kinds = (eventsResponse.json ?? [])
+          .map((event) => `${event.kind}:${event.payload?.line ?? event.payload?.title ?? event.payload?.status ?? ''}`)
+          .join('\n');
+        assert.fail(
+          `no follow-up commit on ${EXPECTED_BRANCH} within ${REVIEW_TIMEOUT_MS}ms; task events:\n${kinds}`,
+        );
+      }
       await sleep(2000);
       headSha = (await git(['ls-remote', CLONE_URL, `refs/heads/${EXPECTED_BRANCH}`])).split(/\s/)[0];
     }
