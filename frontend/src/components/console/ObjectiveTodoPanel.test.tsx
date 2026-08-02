@@ -48,6 +48,18 @@ describe('ObjectiveTodoPanel', () => {
     expect(pendingLi.className).not.toContain('line-through');
   });
 
+  it('shows the plan as a dot-and-line timeline, not check-mark boxes', () => {
+    render(<ObjectiveTodoPanel objective="x" todoItems={ITEMS} />);
+    const list = screen.getByRole('list', { name: /plan/i });
+    // No check icons / boxes in the plan list (the only svg in the panel is
+    // outside the list); each item gets a dot connected by a vertical line.
+    expect(list.querySelector('svg')).toBeNull();
+    expect(list.querySelector('[role="checkbox"]')).toBeNull();
+    expect(list.querySelectorAll('[data-testid="todo-dot"]')).toHaveLength(3);
+    // The last item has no line below it — nothing left to connect to.
+    expect(list.querySelectorAll('[data-testid="todo-line"]')).toHaveLength(2);
+  });
+
   it('shows green progress when all items are done', () => {
     render(
       <ObjectiveTodoPanel
