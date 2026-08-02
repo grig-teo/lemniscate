@@ -276,12 +276,15 @@ export async function commitAndPush(
   secrets: string[],
   auth?: GitAuth,
 ): Promise<void> {
-  const commitMessage = await generateCommitMessage(rt, task, summary);
   // Review verdicts / transcripts are agent scratch, never repo content.
   await scrubAgentScratchFiles(workdir);
   await git(['add', '-A'], { cwd: workdir, taskId: task.id });
-  await git(['commit', '-m', commitMessage], { cwd: workdir, taskId: task.id });
-  await logEvent(task.id, `committed: ${commitMessage}`);
+  // The agent may have committed per-step already (lemcore prompt) — commit only what's still dirty.
+  if ((await git(['status', '--porcelain'], { cwd: workdir, taskId: task.id })).trim()) {
+    const commitMessage = await generateCommitMessage(rt, task, summary);
+    await git(['commit', '-m', commitMessage], { cwd: workdir, taskId: task.id });
+    await logEvent(task.id, `committed: ${commitMessage}`);
+  }
   await git(pushArgs, { cwd: workdir, secrets, taskId: task.id, ...(auth ? { auth } : {}) });
 }
 

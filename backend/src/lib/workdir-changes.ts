@@ -30,7 +30,14 @@ export async function hasMeaningfulChanges(workdir: string): Promise<boolean> {
     .split('\n')
     .map((line) => porcelainPath(line))
     .filter((p): p is string => p !== null);
-  return paths.some((p) => !isPreRunAttachment(p));
+  if (paths.some((p) => !isPreRunAttachment(p))) return true;
+  // The lemcore prompt encourages committing per step, so a fully committed
+  // agent leaves a CLEAN workdir — count commits not present on any remote
+  // too, or such a run looks like "no changes produced" and falsely fails.
+  // Workdirs without remotes (unit tests, odd setups) use the dirty check only.
+  if (!(await git(['remote'], { cwd: workdir })).trim()) return false;
+  const ahead = (await git(['rev-list', '--count', 'HEAD', '--not', '--remotes'], { cwd: workdir })).trim();
+  return Number(ahead) > 0;
 }
 
 // Extracts the repo-relative path from one `git status --porcelain` line.
