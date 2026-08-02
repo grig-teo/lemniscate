@@ -228,6 +228,16 @@ async function executeLemcoreTask(opts: {
       prompt = `${prompt}\n\n# Learned from previous runs\n${learned}`;
     }
   } catch { /* no LEARNED.md yet — fine */ }
+  // Repo context digest: an LLM-written architecture map generated once per
+  // default-branch HEAD (repo-digest.ts). Injected so the agent starts with
+  // repo knowledge instead of spending exploration turns from zero.
+  const digest = task.repository?.contextDigest?.trim();
+  if (digest) {
+    const sha = task.repository?.contextDigestSha?.slice(0, 7) ?? 'unknown';
+    prompt =
+      `${prompt}\n\n# Repository digest (auto-generated at ${sha}; ` +
+      `a map, not ground truth — verify details with graph/grep before editing)\n${digest}`;
+  }
   const { section: skillsSection, skills: lemcoreSkills } = await materializeTaskSkills(task, workdir);
   const resumeTranscript = loadResumeTranscript(workdir, resume, promptOverride);
   if (resumeTranscript) {

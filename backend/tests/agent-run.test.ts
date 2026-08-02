@@ -93,6 +93,11 @@ vi.mock('../src/lib/task-claim.js', () => ({
 }));
 vi.mock('../src/lib/pull-requests.js', () => ({ openPullRequest: mocks.openPullRequest }));
 vi.mock('../src/lib/repo-context.js', () => ({ buildRepoContext: mocks.buildRepoContext }));
+// The repo-digest side quest (LLM call + prisma write) is not under test here.
+vi.mock('../src/lib/repo-digest.js', () => ({
+  ensureRepoDigest: vi.fn(async () => null),
+  withRepoDigest: (context: string) => context,
+}));
 vi.mock('../src/lib/task-events.js', () => ({ setTaskStatus: mocks.setTaskStatus }));
 vi.mock('../src/lib/hermes-runner.js', () => ({ runHermesTask: mocks.runHermesTask }));
 vi.mock('../src/lib/agent-run-hermes.js', async () => {
