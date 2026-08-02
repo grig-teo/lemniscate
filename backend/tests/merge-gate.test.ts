@@ -2,14 +2,14 @@ import { describe, expect, it, vi } from 'vitest';
 
 // Unit tests for the merge-gate decision function: auto-merge only happens
 // on green checks, pending waits (bounded), failing triggers a bounded
-// hermes CI fix, everything else falls back to manual.
+// lemcore CI fix, everything else falls back to manual.
 
 vi.mock('../src/config.js', () => ({
-  config: { AGENT_WORKDIR: '/tmp/test-workdirs', AGENT_EXECUTOR: 'hermes', AGENT_HERMES_TIMEOUT_MINUTES: 45 },
+  config: { AGENT_WORKDIR: '/tmp/test-workdirs' },
 }));
 vi.mock('../src/lib/agent-git.js', () => ({}));
 vi.mock('../src/lib/agent-runtime.js', () => ({}));
-vi.mock('../src/lib/hermes-runner.js', () => ({}));
+vi.mock('../src/lib/lemcore/run.js', () => ({}));
 vi.mock('../src/lib/proposal-scheduler.js', () => ({}));
 // deploy-service imports lib/crypto at module load, which reads
 // config.ENCRYPTION_KEY — absent from the partial config mock above.
@@ -38,38 +38,32 @@ const unsupported = { supported: false, green: true, state: 'green' as const };
 
 describe('mergeGateAction', () => {
   it('merges when checks are green', () => {
-    expect(mergeGateAction(green, 0, 0, 'hermes')).toBe('merge');
+    expect(mergeGateAction(green, 0, 0)).toBe('merge');
   });
 
   it('merges unverified when the provider has no checks API', () => {
-    expect(mergeGateAction(unsupported, 0, 0, 'hermes')).toBe('merge');
+    expect(mergeGateAction(unsupported, 0, 0)).toBe('merge');
   });
 
   it('waits while checks are pending', () => {
-    expect(mergeGateAction(pending, 0, 0, 'hermes')).toBe('wait');
-    expect(mergeGateAction(pending, MERGE_GATE_MAX_ATTEMPTS - 1, 0, 'hermes')).toBe('wait');
+    expect(mergeGateAction(pending, 0, 0)).toBe('wait');
+    expect(mergeGateAction(pending, MERGE_GATE_MAX_ATTEMPTS - 1, 0)).toBe('wait');
   });
 
   it('gives up to manual after too many pending re-checks', () => {
-    expect(mergeGateAction(pending, MERGE_GATE_MAX_ATTEMPTS, 0, 'hermes')).toBe('manual');
+    expect(mergeGateAction(pending, MERGE_GATE_MAX_ATTEMPTS, 0)).toBe('manual');
   });
 
-  it('fixes failing checks with hermes', () => {
-    expect(mergeGateAction(failing, 0, 0, 'hermes')).toBe('fix-ci');
-    expect(mergeGateAction(failing, 0, MAX_CI_FIX_ATTEMPTS - 1, 'hermes')).toBe('fix-ci');
+  it('fixes failing checks with lemcore', () => {
+    expect(mergeGateAction(failing, 0, 0)).toBe('fix-ci');
+    expect(mergeGateAction(failing, 0, MAX_CI_FIX_ATTEMPTS - 1)).toBe('fix-ci');
   });
 
   it('forces one rebase + fresh fix budget when CI fixes are exhausted', () => {
-    expect(mergeGateAction(failing, 0, MAX_CI_FIX_ATTEMPTS, 'hermes')).toBe('rebase-retry');
-    expect(mergeGateAction(failing, 0, MAX_CI_FIX_ATTEMPTS, 'lemcore')).toBe('rebase-retry');
+    expect(mergeGateAction(failing, 0, MAX_CI_FIX_ATTEMPTS)).toBe('rebase-retry');
   });
 
   it('gives up to manual only after the rebase retry is spent too', () => {
-    expect(mergeGateAction(failing, 0, MAX_CI_FIX_ATTEMPTS, 'hermes', MAX_REBASE_RETRIES)).toBe('manual');
-  });
-
-  it('never CI-fixes on the internal executor', () => {
-    expect(mergeGateAction(failing, 0, 0, 'internal')).toBe('manual');
-    expect(mergeGateAction(failing, 0, MAX_CI_FIX_ATTEMPTS, 'internal')).toBe('manual');
+    expect(mergeGateAction(failing, 0, MAX_CI_FIX_ATTEMPTS, MAX_REBASE_RETRIES)).toBe('manual');
   });
 });

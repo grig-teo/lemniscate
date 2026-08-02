@@ -1,17 +1,15 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-// Core agent executor resolution (lib/agent-executor.ts): the per-user
-// override stored on User.agentExecutor (Settings → Agent) wins; otherwise
-// the deployment default from the AGENT_EXECUTOR env var applies. A failed
-// user lookup must never break a job — it falls back to the env default.
+// Core agent executor resolution (lib/agent-executor.ts): lemcore is the
+// only agent. Values previously stored on User.agentExecutor ('hermes' /
+// 'internal' from older deployments) are ignored — resolution always lands
+// on lemcore, and a failed user lookup must never break a job.
 
 const mocks = vi.hoisted(() => ({
-  config: { AGENT_EXECUTOR: 'hermes' as string },
   userFindUnique: vi.fn(),
   logger: { warn: vi.fn(), error: vi.fn(), info: vi.fn(), debug: vi.fn() },
 }));
 
-vi.mock('../src/config.js', () => ({ config: mocks.config }));
 vi.mock('../src/lib/logger.js', () => ({
   logger: mocks.logger,
   createLogger: vi.fn(() => mocks.logger),
@@ -29,24 +27,23 @@ import {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mocks.config.AGENT_EXECUTOR = 'hermes';
   mocks.userFindUnique.mockResolvedValue({ agentExecutor: null });
 });
 
 describe('AGENT_EXECUTORS', () => {
-  it('offers hermes, internal, and lemcore options', () => {
-    expect(AGENT_EXECUTORS).toEqual(['hermes', 'internal', 'lemcore']);
+  it('offers lemcore only', () => {
+    expect(AGENT_EXECUTORS).toEqual(['lemcore']);
   });
 });
 
 describe('parseAgentExecutor', () => {
-  it('accepts the known executors', () => {
-    expect(parseAgentExecutor('hermes')).toBe('hermes');
-    expect(parseAgentExecutor('internal')).toBe('internal');
+  it('accepts lemcore', () => {
     expect(parseAgentExecutor('lemcore')).toBe('lemcore');
   });
 
-  it('rejects null, undefined, and unknown values', () => {
+  it('rejects the removed executors and unknown values', () => {
+    expect(parseAgentExecutor('hermes')).toBeNull();
+    expect(parseAgentExecutor('internal')).toBeNull();
     expect(parseAgentExecutor(null)).toBeNull();
     expect(parseAgentExecutor(undefined)).toBeNull();
     expect(parseAgentExecutor('codex')).toBeNull();
@@ -55,34 +52,33 @@ describe('parseAgentExecutor', () => {
 });
 
 describe('defaultAgentExecutor', () => {
-  it('returns the AGENT_EXECUTOR env value', () => {
-    mocks.config.AGENT_EXECUTOR = 'internal';
-    expect(defaultAgentExecutor()).toBe('internal');
+  it('returns lemcore', () => {
+    expect(defaultAgentExecutor()).toBe('lemcore');
   });
 });
 
 describe('resolveAgentExecutor', () => {
-  it('returns the user override when one is stored', async () => {
-    mocks.userFindUnique.mockResolvedValue({ agentExecutor: 'internal' });
-    await expect(resolveAgentExecutor('user-1')).resolves.toBe('internal');
+  it('returns lemcore when the user has a lemcore override stored', async () => {
+    mocks.userFindUnique.mockResolvedValue({ agentExecutor: 'lemcore' });
+    await expect(resolveAgentExecutor('user-1')).resolves.toBe('lemcore');
     expect(mocks.userFindUnique).toHaveBeenCalledWith({
       where: { id: 'user-1' },
       select: { agentExecutor: true },
     });
   });
 
-  it('falls back to the env default when the user has no override', async () => {
-    await expect(resolveAgentExecutor('user-1')).resolves.toBe('hermes');
+  it('returns lemcore when the user has no override', async () => {
+    await expect(resolveAgentExecutor('user-1')).resolves.toBe('lemcore');
   });
 
-  it('falls back to the env default when the stored value is unknown', async () => {
-    mocks.userFindUnique.mockResolvedValue({ agentExecutor: 'codex' });
-    await expect(resolveAgentExecutor('user-1')).resolves.toBe('hermes');
+  it('returns lemcore when a removed executor is still stored', async () => {
+    mocks.userFindUnique.mockResolvedValue({ agentExecutor: 'hermes' });
+    await expect(resolveAgentExecutor('user-1')).resolves.toBe('lemcore');
   });
 
-  it('falls back to the env default when the lookup fails (and warns)', async () => {
+  it('returns lemcore when the lookup fails (and warns)', async () => {
     mocks.userFindUnique.mockRejectedValue(new Error('db down'));
-    await expect(resolveAgentExecutor('user-1')).resolves.toBe('hermes');
+    await expect(resolveAgentExecutor('user-1')).resolves.toBe('lemcore');
     expect(mocks.logger.warn).toHaveBeenCalledOnce();
   });
 });

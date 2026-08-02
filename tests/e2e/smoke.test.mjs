@@ -51,8 +51,8 @@ const REVIEW_TIMEOUT_MS = Number(process.env.E2E_REVIEW_TIMEOUT_SECONDS ?? 180) 
 const REPO_FULL_NAME = 'e2e-user/e2e-repo';
 const CLONE_URL = `${GITSTUB_URL}/${REPO_FULL_NAME}.git`;
 const EXPECTED_BRANCH = 'lemniscate/e2e-smoke';
+const EXPECTED_MARKER = 'E2E_SMOKE.md';
 const EXPECTED_PR_URL = `${GITSTUB_URL}/${REPO_FULL_NAME}/pulls/1`;
-const EXPECTED_SUMMARY = 'Stub LLM applied the e2e smoke change';
 
 assert.ok(BACKEND_URL && WORKER_HEALTH_URL && FRONTEND_URL && GITSTUB_URL && GITSTUB_API_URL, 'E2E_*_URL env vars are required');
 assert.ok(PAT_TOKEN && REVIEWER_PAT && METRICS_TOKEN, 'E2E_PAT, E2E_REVIEWER_PAT and E2E_METRICS_TOKEN are required');
@@ -230,9 +230,17 @@ test('full task lifecycle: queued -> running -> awaiting_review with an asserted
     const lines = events
       .filter((event) => event.kind === 'log')
       .map((event) => event.payload.line);
+    // lemcore emits structured agent_step events: the write_file tool call
+    // for the marker file is the stub LLM's visible output.
+    const steps = events.filter((event) => event.kind === 'agent_step');
     assert.ok(
-      lines.some((line) => line.includes(`LLM proposed 1 change(s): ${EXPECTED_SUMMARY}`)),
-      `console missing stub summary; lines:\n${lines.join('\n')}`,
+      steps.some(
+        (event) =>
+          event.payload?.tool === 'write_file' &&
+          typeof event.payload?.title === 'string' &&
+          event.payload.title.includes(EXPECTED_MARKER),
+      ),
+      `console missing the write_file(${EXPECTED_MARKER}) step; steps:\n${steps.map((s) => s.payload?.title).join('\n')}`,
     );
     assert.ok(
       lines.some((line) => line.includes(`pushed branch ${EXPECTED_BRANCH}`)),
@@ -342,10 +350,16 @@ test('human review feedback produces a follow-up commit (poll fallback)', async 
     const deadline = Date.now() + REVIEW_TIMEOUT_MS;
     let headSha = beforeSha;
     while (headSha === beforeSha) {
-      assert.ok(
-        Date.now() < deadline,
-        `no follow-up commit on ${EXPECTED_BRANCH} within ${REVIEW_TIMEOUT_MS}ms`,
-      );
+      if (Date.now() >= deadline) {
+        // Diagnose a stuck address-review job from the task's own event log.
+        const eventsResponse = await api('GET', `/tasks/${task.id}/events`, { cookie: true });
+        const kinds = (eventsResponse.json ?? [])
+          .map((event) => `${event.kind}:${event.payload?.line ?? event.payload?.title ?? event.payload?.status ?? ''}`)
+          .join('\n');
+        assert.fail(
+          `no follow-up commit on ${EXPECTED_BRANCH} within ${REVIEW_TIMEOUT_MS}ms; task events:\n${kinds}`,
+        );
+      }
       await sleep(2000);
       headSha = (await git(['ls-remote', CLONE_URL, `refs/heads/${EXPECTED_BRANCH}`])).split(/\s/)[0];
     }
@@ -367,12 +381,14 @@ test('human review feedback produces a follow-up commit (poll fallback)', async 
     for (;;) {
       const eventsResponse = await api('GET', `/tasks/${task.id}/events`, { cookie: true });
       assert.equal(eventsResponse.status, 200);
-      lines = eventsResponse.json
+      const freshEvents = eventsResponse.json;
+      lines = freshEvents
         .filter((event) => event.kind === 'log')
         .map((event) => event.payload.line);
       const done =
         lines.some((line) => /^addressing review comment rc-\d+ from @e2e-reviewer/.test(line)) &&
-        lines.some((line) => line.includes('Stub LLM addressed the review comment')) &&
+        // The lemcore fix iteration's own completion line proves the fix landed.
+        lines.some((line) => line.includes(`pushed review fixes to ${EXPECTED_BRANCH}`)) &&
         lines.some((line) => /^addressed review comment rc-\d+$/.test(line));
       if (done) break;
       assert.ok(Date.now() < deadline, `console missing the address-review lines; lines:\n${lines.join('\n')}`);

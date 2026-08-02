@@ -1,5 +1,4 @@
 import { promises as fs } from 'node:fs';
-import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Repository, GitConnection } from '@prisma/client';
 
@@ -10,9 +9,7 @@ import type { Repository, GitConnection } from '@prisma/client';
 
 const mocks = vi.hoisted(() => ({
   config: {
-    AGENT_EXECUTOR: 'internal' as string,
     AGENT_WORKDIR: '/tmp/test-workdirs',
-    AGENT_HERMES_TIMEOUT_MINUTES: 45,
   },
   repositoryFindUnique: vi.fn(),
   repositoryUpdate: vi.fn(),
@@ -25,7 +22,6 @@ const mocks = vi.hoisted(() => ({
   cloneRepository: vi.fn(),
   cleanupWorkdir: vi.fn(),
   buildRepoContext: vi.fn(),
-  runHermesTask: vi.fn(),
 }));
 
 vi.mock('../src/config.js', () => ({ config: mocks.config }));
@@ -53,13 +49,10 @@ vi.mock('../src/lib/agent-prompts.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../src/lib/agent-prompts.js')>()),
   requestProposals: mocks.requestProposals,
 }));
-vi.mock('../src/lib/hermes-runner.js', () => ({ runHermesTask: mocks.runHermesTask }));
 vi.mock('../src/lib/proposal-scheduler.js', () => ({ enqueueRunTask: mocks.enqueueRunTask }));
 
 import {
-  buildHermesProposalPrompt,
   generateProposals,
-  parseProposalsFile,
   pendingProposalState,
   sortByPriority,
   stampProposalFailure,
@@ -100,7 +93,6 @@ function stubHappyPath(
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mocks.config.AGENT_EXECUTOR = 'internal';
   mocks.taskFindMany.mockResolvedValue([]);
 });
 
@@ -240,129 +232,6 @@ describe('pendingProposalState', () => {
   });
 });
 
-// AGENT_EXECUTOR=hermes: the hermes agent explores the clone and writes
-// .lemniscate-proposals.json; a missing/invalid file falls back to the
-// direct LLM request so the top-up still works.
-describe('generateProposals with AGENT_EXECUTOR=hermes', () => {
-  function stubHermesPath(): void {
-    mocks.config.AGENT_EXECUTOR = 'hermes';
-    mocks.repositoryFindUnique.mockResolvedValue({
-      ...stubRepository(),
-      skillSlugs: ['skill-a'],
-    });
-    mocks.prepareAgentRuntime.mockResolvedValue({
-      cloneUrl: 'https://example/repo.git',
-      rt: {
-        apiKey: 'sk-test',
-        cfg: {
-          baseUrl: 'https://llm.example/v1',
-          model: 'model-x',
-          contextWindow: 128_000,
-          systemPromptExtra: 'Focus on tests.',
-        },
-      },
-    });
-    mocks.buildRepoContext.mockResolvedValue({ text: 'CTX', files: [] });
-    mocks.skillFindMany.mockResolvedValue([
-      { name: 'Skill A', slug: 'skill-a', content: 'Do things well' },
-    ]);
-    mocks.taskCreate.mockImplementation((args: { data: { title: string } }) =>
-      Promise.resolve({ id: `task-${args.data.title}` }),
-    );
-  }
-
-  function hermesWritesFile(content: string): void {
-    mocks.runHermesTask.mockImplementation(async (opts: { workdir: string }) => {
-      await fs.mkdir(opts.workdir, { recursive: true });
-      await fs.writeFile(path.join(opts.workdir, '.lemniscate-proposals.json'), content);
-    });
-  }
-
-  it('runs hermes without a taskId and creates proposals from the written file', async () => {
-    stubHermesPath();
-    hermesWritesFile(JSON.stringify([proposal(1), proposal(2)]));
-    await generateProposals('repo-1');
-
-    expect(mocks.runHermesTask).toHaveBeenCalledTimes(1);
-    const call = mocks.runHermesTask.mock.calls[0]?.[0];
-    expect(call.taskId).toBeUndefined();
-    expect(call.llm).toEqual({
-      baseUrl: 'https://llm.example/v1',
-      apiKey: 'sk-test',
-      model: 'model-x',
-      contextWindow: 128_000,
-    });
-    expect(call.timeoutMs).toBe(45 * 60_000);
-    expect(call.prompt).toContain('### Skill A (skill-a)');
-    expect(call.prompt).toContain('Focus on tests.');
-    expect(mocks.requestProposals).not.toHaveBeenCalled();
-    expect(mocks.taskCreate).toHaveBeenCalledTimes(2);
-  });
-
-  it('falls back to the direct LLM request when hermes writes no file', async () => {
-    stubHermesPath();
-    mocks.runHermesTask.mockResolvedValue(undefined);
-    mocks.requestProposals.mockResolvedValue([proposal(1)]);
-    await generateProposals('repo-1');
-
-    expect(mocks.requestProposals).toHaveBeenCalled();
-    expect(mocks.taskCreate).toHaveBeenCalledTimes(1);
-  });
-
-  it('falls back to the direct LLM request when the file is invalid', async () => {
-    stubHermesPath();
-    hermesWritesFile('the agent wrote prose instead of JSON');
-    mocks.requestProposals.mockResolvedValue([proposal(1)]);
-    await generateProposals('repo-1');
-
-    expect(mocks.requestProposals).toHaveBeenCalled();
-    expect(mocks.taskCreate).toHaveBeenCalledTimes(1);
-  });
-});
-
-describe('parseProposalsFile', () => {
-  it('parses a plain JSON array, defaulting missing category/priority/effort', () => {
-    expect(parseProposalsFile('[{"title":"T","prompt":"P"}]')).toEqual([
-      { title: 'T', prompt: 'P', category: 'code quality', priority: 'medium', effort: 'medium' },
-    ]);
-  });
-
-  it('keeps valid fields and falls back on unknown ones', () => {
-    const raw = '[{"title":"A","prompt":"P","category":"security","priority":"critical","effort":"small"},' +
-      '{"title":"B","prompt":"P","category":"nonsense","priority":"urgent","effort":"huge"}]';
-    expect(parseProposalsFile(raw)).toEqual([
-      { title: 'A', prompt: 'P', category: 'security', priority: 'critical', effort: 'small' },
-      { title: 'B', prompt: 'P', category: 'code quality', priority: 'medium', effort: 'medium' },
-    ]);
-  });
-
-  it('parses JSON wrapped in markdown fences', () => {
-    const raw = '```json\n[{"title":"T","prompt":"P","category":"testing"}]\n```';
-    expect(parseProposalsFile(raw)).toEqual([
-      { title: 'T', prompt: 'P', category: 'testing', priority: 'medium', effort: 'medium' },
-    ]);
-  });
-
-  it('keeps the features category from the hermes-written file', () => {
-    expect(parseProposalsFile('[{"title":"Add SSO","prompt":"P","category":"features"}]')).toEqual([
-      { title: 'Add SSO', prompt: 'P', category: 'features', priority: 'medium', effort: 'medium' },
-    ]);
-  });
-
-  it('parses JSON embedded in surrounding prose', () => {
-    const raw = 'Here are the proposals:\n[{"title":"T","prompt":"P"}]\nDone.';
-    expect(parseProposalsFile(raw)).toEqual([
-      { title: 'T', prompt: 'P', category: 'code quality', priority: 'medium', effort: 'medium' },
-    ]);
-  });
-
-  it('returns null for malformed JSON or schema mismatches', () => {
-    expect(parseProposalsFile('not json at all')).toBeNull();
-    expect(parseProposalsFile('[{"title":"T"}]')).toBeNull();
-    expect(parseProposalsFile('{"title":"T","prompt":"P"}')).toBeNull();
-  });
-});
-
 describe('sortByPriority', () => {
   it('orders critical first and keeps the input array unchanged', () => {
     const input = [
@@ -373,43 +242,6 @@ describe('sortByPriority', () => {
     const sorted = sortByPriority(input);
     expect(sorted.map((p) => p.priority)).toEqual(['critical', 'high', 'low']);
     expect(input[0]?.priority).toBe('low');
-  });
-});
-
-describe('buildHermesProposalPrompt', () => {
-  it('includes the skills section and owner instructions when provided', () => {
-    const prompt = buildHermesProposalPrompt({
-      maxProposals: 5,
-      skillsSection: '## Active skills\n\n### Skill A (skill-a)\nDo things well',
-      systemPromptExtra: 'Focus on tests.',
-    });
-    expect(prompt).toContain('.lemniscate-proposals.json');
-    expect(prompt).toContain('up to 5');
-    expect(prompt).toContain('"priority": "critical"|"high"|"medium"|"low"');
-    expect(prompt).toContain('### Skill A (skill-a)');
-    expect(prompt).toContain('Focus on tests.');
-    expect(prompt).toContain('Do NOT');
-  });
-
-  it('omits empty extras', () => {
-    const prompt = buildHermesProposalPrompt({
-      maxProposals: 5,
-      skillsSection: '',
-      systemPromptExtra: null,
-    });
-    expect(prompt).not.toContain('Additional instructions');
-    expect(prompt).not.toContain('Active skills');
-  });
-
-  it('requires features proposals for new implementations', () => {
-    const prompt = buildHermesProposalPrompt({
-      maxProposals: 5,
-      skillsSection: '',
-      systemPromptExtra: null,
-    });
-    expect(prompt).toContain('features');
-    expect(prompt).toContain('at least one `features` proposal');
-    expect(prompt).toContain('NEW implementations');
   });
 });
 

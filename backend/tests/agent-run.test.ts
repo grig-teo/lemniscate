@@ -4,24 +4,19 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
   config: {
-    AGENT_EXECUTOR: 'hermes' as string,
     AGENT_WORKDIR: '/tmp/test-workdirs',
     AGENT_BRANCH_PREFIX: 'lemniscate/',
-    AGENT_HERMES_TIMEOUT_MINUTES: 45,
   },
-  applyChanges: vi.fn(),
   cleanupWorkdir: vi.fn(),
   cloneRepository: vi.fn(),
   commitAndPush: vi.fn(),
   git: vi.fn(),
-  hasDirtyWorkdir: vi.fn(),
   hasMeaningfulChanges: vi.fn(),
   logEvent: vi.fn(),
   persistTokenUsage: vi.fn(),
   recordJobFailure: vi.fn(),
   buildPrBody: vi.fn(),
   generateBranchName: vi.fn(),
-  requestChanges: vi.fn(),
   loadTaskWithRepo: vi.fn(),
   prepareAgentRuntime: vi.fn(),
   taskUpdate: vi.fn(),
@@ -32,12 +27,9 @@ const mocks = vi.hoisted(() => ({
   claimTaskForRun: vi.fn(),
   RUN_CLAIMABLE_STATUSES: ['queued', 'pending'],
   openPullRequest: vi.fn(),
-  buildRepoContext: vi.fn(),
   setTaskStatus: vi.fn(),
-  runHermesTask: vi.fn(),
   runLemcoreTask: vi.fn(),
   closeIfAlreadyDone: vi.fn(async () => false),
-  resolveAgentExecutor: vi.fn(),
   notify: vi.fn(),
   notifyTaskCompleted: vi.fn(),
   logger: { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn(), child: vi.fn() },
@@ -49,21 +41,16 @@ vi.mock('../src/lib/logger.js', () => ({
   createLogger: vi.fn(() => mocks.logger),
 }));
 vi.mock('../src/lib/agent-git.js', () => ({
-  applyChanges: mocks.applyChanges,
   cleanupWorkdir: mocks.cleanupWorkdir,
   cloneRepository: mocks.cloneRepository,
   commitAndPush: mocks.commitAndPush,
   git: mocks.git,
-  hasDirtyWorkdir: mocks.hasDirtyWorkdir,
   logEvent: mocks.logEvent,
   persistTokenUsage: mocks.persistTokenUsage,
   recordJobFailure: mocks.recordJobFailure,
 }));
 vi.mock('../src/lib/workdir-changes.js', () => ({
   hasMeaningfulChanges: mocks.hasMeaningfulChanges,
-}));
-vi.mock('../src/lib/agent-prompts.js', () => ({
-  requestChanges: mocks.requestChanges,
 }));
 vi.mock('../src/lib/agent-naming.js', () => ({
   buildPrBody: mocks.buildPrBody,
@@ -95,7 +82,6 @@ vi.mock('../src/lib/task-claim.js', () => ({
   RUN_CLAIMABLE_STATUSES: mocks.RUN_CLAIMABLE_STATUSES,
 }));
 vi.mock('../src/lib/pull-requests.js', () => ({ openPullRequest: mocks.openPullRequest }));
-vi.mock('../src/lib/repo-context.js', () => ({ buildRepoContext: mocks.buildRepoContext }));
 // The repo-digest side quest (LLM call + prisma write) is not under test here.
 vi.mock('../src/lib/repo-digest.js', () => ({
   ensureRepoDigest: vi.fn(async () => null),
@@ -106,20 +92,6 @@ vi.mock('../src/lib/preflight-check.js', () => ({
   closeIfAlreadyDone: (...a: unknown[]) => mocks.closeIfAlreadyDone(...a),
 }));
 vi.mock('../src/lib/task-events.js', () => ({ setTaskStatus: mocks.setTaskStatus }));
-vi.mock('../src/lib/hermes-runner.js', () => ({ runHermesTask: mocks.runHermesTask }));
-vi.mock('../src/lib/agent-run-hermes.js', async () => {
-  const actual = await vi.importActual<typeof import('../src/lib/agent-run-hermes.js')>(
-    '../src/lib/agent-run-hermes.js',
-  );
-  return actual;
-});
-vi.mock('../src/lib/agent-executor.js', () => ({
-  resolveAgentExecutor: mocks.resolveAgentExecutor,
-  parseAgentExecutor: (v: unknown) =>
-    v === 'hermes' || v === 'internal' || v === 'lemcore' ? v : null,
-  defaultAgentExecutor: () => 'hermes',
-  AGENT_EXECUTORS: ['hermes', 'internal', 'lemcore'],
-}));
 vi.mock('../src/lib/lemcore/run.js', () => ({ runLemcoreTask: mocks.runLemcoreTask }));
 vi.mock('../src/lib/notifications.js', () => ({
   notify: mocks.notify,
@@ -128,10 +100,8 @@ vi.mock('../src/lib/notifications.js', () => ({
 
 import { runTask } from '../src/lib/agent-run.js';
 
-// Executor branch selection in run-task: 'hermes' delegates the
-// implementation step to the Hermes CLI (skipping the internal
-// context/propose/apply loop) while branch/commit/push/PR stay unchanged;
-// 'internal' keeps the existing LLM change loop.
+// run-task delegates the implementation step to the lemcore agent (the only
+// agent runtime) while branch/commit/push/PR stay with run-task itself.
 
 function stubTask() {
   return {
@@ -165,8 +135,6 @@ function stubRuntime() {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mocks.config.AGENT_EXECUTOR = 'hermes';
-  mocks.resolveAgentExecutor.mockResolvedValue('hermes');
   mocks.runLemcoreTask.mockResolvedValue({ changed: true });
   mocks.loadTaskWithRepo.mockResolvedValue(stubTask());
   mocks.prepareAgentRuntime.mockResolvedValue({ cloneUrl: 'https://clone', rt: stubRuntime() });
@@ -190,37 +158,24 @@ beforeEach(() => {
   // The real git() returns stdout (a string); default to '' so callers that
   // chain .catch on the result (pushBranch's best-effort fetch) work.
   mocks.git.mockResolvedValue('');
-  mocks.runHermesTask.mockResolvedValue(undefined);
   // Post-run status read for the workdir-retention check: the happy-path
   // flows above end in awaiting_review.
   mocks.taskFindUnique.mockResolvedValue({ status: 'awaiting_review' });
 });
 
-describe('runTask with resolveAgentExecutor=hermes', () => {
-  it('runs the hermes CLI instead of the internal LLM change loop', async () => {
+describe('runTask lemcore implementation step', () => {
+  it('runs the lemcore agent on the task workdir', async () => {
     await runTask('task-1');
 
-    expect(mocks.runHermesTask).toHaveBeenCalledTimes(1);
-    const opts = mocks.runHermesTask.mock.calls[0]?.[0];
-    expect(opts.workdir).toBe(path.join('/tmp/test-workdirs', 'task-1'));
+    expect(mocks.runLemcoreTask).toHaveBeenCalledTimes(1);
+    const opts = mocks.runLemcoreTask.mock.calls[0]?.[0];
     expect(opts.taskId).toBe('task-1');
-    expect(opts.timeoutMs).toBe(45 * 60_000);
-    expect(opts.llm).toEqual({
-      baseUrl: 'https://llm.example/v1',
-      apiKey: 'sk-test',
-      model: 'model-x',
-      contextWindow: 128_000,
-    });
-    expect(opts.prompt).toContain('Add feature X');
-    expect(opts.prompt).toContain('Implement feature X');
-    expect(opts.prompt).toContain('Follow house style');
-    expect(opts.prompt).toContain('Do NOT git commit');
-    expect(mocks.buildRepoContext).not.toHaveBeenCalled();
-    expect(mocks.requestChanges).not.toHaveBeenCalled();
-    expect(mocks.applyChanges).not.toHaveBeenCalled();
+    expect(opts.workdir).toBe(path.join('/tmp/test-workdirs', 'task-1'));
+    expect(opts.task.title).toBe('Add feature X');
+    expect(opts.resume).toBe(false);
   });
 
-  it('keeps the existing branch/commit/push/PR flow after hermes', async () => {
+  it('keeps the branch/commit/push/PR flow after lemcore', async () => {
     await runTask('task-1');
 
     expect(mocks.generateBranchName).toHaveBeenCalled();
@@ -255,30 +210,43 @@ describe('runTask with resolveAgentExecutor=hermes', () => {
     });
   });
 
-  it('does not commit/push when hermes left the workdir clean (and never marks done)', async () => {
+  it('does not commit/push when lemcore left the workdir clean (and never marks done)', async () => {
     // A clean workdir with no open PR used to be marked 'done' — a green task
     // with zero deliverable. It now retries once then fails; either way the
     // run never commits, pushes, or opens a PR, and is never 'done'.
+    mocks.runLemcoreTask.mockResolvedValue({ changed: false });
     mocks.hasMeaningfulChanges.mockResolvedValue(false);
     mocks.taskFindUnique.mockResolvedValue({ status: 'queued' });
     await runTask('task-1');
 
-    expect(mocks.runHermesTask).toHaveBeenCalled();
+    expect(mocks.runLemcoreTask).toHaveBeenCalled();
     expect(mocks.commitAndPush).not.toHaveBeenCalled();
     expect(mocks.openPullRequest).not.toHaveBeenCalled();
     expect(mocks.setTaskStatus).not.toHaveBeenCalledWith('task-1', 'done');
   });
 
   it('returns to awaiting_review instead of done when a PR is already open', async () => {
-    // A duplicate/resumed run that finds nothing new must not close the
-    // pipeline: the open PR continues through review/merge — 'done' is only
-    // for merged work (or no-PR flows).
+    // A duplicate/resumed run that produces nothing new must not flip a task
+    // with an open PR to done — the PR keeps flowing through review/merge.
+    mocks.runLemcoreTask.mockResolvedValue({ changed: false });
     mocks.hasMeaningfulChanges.mockResolvedValue(false);
     mocks.loadTaskWithRepo.mockResolvedValue({ ...stubTask(), prUrl: 'https://pr/1' });
     await runTask('task-1');
 
     expect(mocks.setTaskStatus).toHaveBeenCalledWith('task-1', 'awaiting_review');
     expect(mocks.setTaskStatus).not.toHaveBeenCalledWith('task-1', 'done');
+    expect(mocks.openPullRequest).not.toHaveBeenCalled();
+  });
+
+  it('closes immediately when the pre-flight check says ALREADY_DONE', async () => {
+    mocks.closeIfAlreadyDone.mockResolvedValueOnce(true);
+    await runTask('task-1');
+
+    expect(mocks.closeIfAlreadyDone).toHaveBeenCalledTimes(1);
+    // No agent run, no commits, no PR — the whole implementation is skipped.
+    expect(mocks.runLemcoreTask).not.toHaveBeenCalled();
+    expect(mocks.commitAndPush).not.toHaveBeenCalled();
+    expect(mocks.openPullRequest).not.toHaveBeenCalled();
   });
 
   it('emits the task-completed hook after a successful run', async () => {
@@ -302,59 +270,10 @@ describe('runTask with resolveAgentExecutor=hermes', () => {
   });
 
   it('does not emit the task-completed hook when the run fails', async () => {
-    mocks.runHermesTask.mockRejectedValueOnce(new Error('boom'));
+    mocks.runLemcoreTask.mockRejectedValueOnce(new Error('boom'));
     await runTask('task-1');
     expect(mocks.recordJobFailure).toHaveBeenCalled();
     expect(mocks.notifyTaskCompleted).not.toHaveBeenCalled();
-  });
-});
-
-describe('runTask with resolveAgentExecutor=internal', () => {
-  it('keeps the existing LLM propose/apply loop and never spawns hermes', async () => {
-    mocks.resolveAgentExecutor.mockResolvedValue('internal');
-    mocks.buildRepoContext.mockResolvedValue({ text: 'ctx', files: [] });
-    mocks.requestChanges.mockResolvedValue({
-      summary: 'did stuff',
-      changes: [{ path: 'a.ts', action: 'create', content: 'x' }],
-    });
-    mocks.applyChanges.mockResolvedValue(1);
-
-    await runTask('task-1');
-
-    expect(mocks.runHermesTask).not.toHaveBeenCalled();
-    expect(mocks.requestChanges).toHaveBeenCalled();
-    expect(mocks.applyChanges).toHaveBeenCalled();
-    expect(mocks.commitAndPush).toHaveBeenCalled();
-    expect(mocks.openPullRequest).toHaveBeenCalled();
-  });
-});
-
-
-describe('runTask with resolveAgentExecutor=lemcore', () => {
-  it('runs lemcore even when the deployment default is hermes', async () => {
-    mocks.config.AGENT_EXECUTOR = 'hermes';
-    mocks.resolveAgentExecutor.mockResolvedValue('lemcore');
-    await runTask('task-1');
-
-    expect(mocks.resolveAgentExecutor).toHaveBeenCalledWith('user-1');
-    expect(mocks.runLemcoreTask).toHaveBeenCalledTimes(1);
-    expect(mocks.runHermesTask).not.toHaveBeenCalled();
-    expect(mocks.requestChanges).not.toHaveBeenCalled();
-    expect(mocks.commitAndPush).toHaveBeenCalled();
-    expect(mocks.openPullRequest).toHaveBeenCalled();
-  });
-
-  it('closes immediately when the pre-flight check says ALREADY_DONE', async () => {
-    mocks.closeIfAlreadyDone.mockResolvedValueOnce(true);
-    await runTask('task-1');
-
-    expect(mocks.closeIfAlreadyDone).toHaveBeenCalledTimes(1);
-    // No executor, no commits, no PR — the whole implementation is skipped.
-    expect(mocks.runLemcoreTask).not.toHaveBeenCalled();
-    expect(mocks.runHermesTask).not.toHaveBeenCalled();
-    expect(mocks.requestChanges).not.toHaveBeenCalled();
-    expect(mocks.commitAndPush).not.toHaveBeenCalled();
-    expect(mocks.openPullRequest).not.toHaveBeenCalled();
   });
 });
 
@@ -363,7 +282,7 @@ describe('runTask on an empty repository', () => {
     mocks.cloneRepository.mockResolvedValue({ emptyRepo: true });
     await runTask('task-1');
 
-    expect(mocks.runHermesTask).toHaveBeenCalledTimes(1);
+    expect(mocks.runLemcoreTask).toHaveBeenCalledTimes(1);
     expect(mocks.generateBranchName).not.toHaveBeenCalled();
     expect(mocks.taskUpdate).toHaveBeenCalledWith({
       where: { id: 'task-1' },
@@ -396,8 +315,8 @@ describe('runTask resumption after an interrupted run', () => {
       'task-1',
       expect.stringContaining('resuming task'),
     );
-    const opts = mocks.runHermesTask.mock.calls[0]?.[0];
-    expect(opts.prompt).toContain('RESUMED RUN');
+    const opts = mocks.runLemcoreTask.mock.calls[0]?.[0];
+    expect(opts.resume).toBe(true);
     expect(mocks.commitAndPush).toHaveBeenCalled();
     expect(mocks.openPullRequest).toHaveBeenCalledWith(
       expect.anything(),
@@ -416,8 +335,8 @@ describe('runTask resumption after an interrupted run', () => {
 
     expect(mocks.cloneRepository).toHaveBeenCalled();
     expect(mocks.generateBranchName).toHaveBeenCalled();
-    const opts = mocks.runHermesTask.mock.calls[0]?.[0];
-    expect(opts.prompt).not.toContain('RESUMED RUN');
+    const opts = mocks.runLemcoreTask.mock.calls[0]?.[0];
+    expect(opts.resume).toBe(false);
   });
 });
 
@@ -432,7 +351,7 @@ describe('runTask exactly-once claim', () => {
     await Promise.all([runTask('task-1'), runTask('task-1')]);
 
     expect(mocks.claimTaskForRun).toHaveBeenCalledTimes(2);
-    expect(mocks.runHermesTask).toHaveBeenCalledTimes(1);
+    expect(mocks.runLemcoreTask).toHaveBeenCalledTimes(1);
     expect(mocks.commitAndPush).toHaveBeenCalledTimes(1);
     expect(mocks.openPullRequest).toHaveBeenCalledTimes(1);
   });
@@ -443,7 +362,7 @@ describe('runTask exactly-once claim', () => {
     await runTask('task-1');
 
     expect(mocks.cloneRepository).not.toHaveBeenCalled();
-    expect(mocks.runHermesTask).not.toHaveBeenCalled();
+    expect(mocks.runLemcoreTask).not.toHaveBeenCalled();
     expect(mocks.commitAndPush).not.toHaveBeenCalled();
     expect(mocks.cleanupWorkdir).not.toHaveBeenCalledWith(
       path.join('/tmp/test-workdirs', 'task-1'),
@@ -470,8 +389,6 @@ describe('runTask push over a same-named remote branch (rerun)', () => {
   it('fetches the task branch and force-pushes-with-lease', async () => {
     await runTask('task-1');
 
-    // Lease has to reflect the remote's current tip, so fetch the branch
-    // into a tracking ref before the push (a fresh shallow clone has none).
     expect(mocks.git).toHaveBeenCalledWith(
       ['fetch', 'origin', '+refs/heads/lemniscate/add-feature-x:refs/remotes/origin/lemniscate/add-feature-x'],
       expect.objectContaining({ cwd: workdir }),
@@ -517,30 +434,30 @@ describe('runTask no-changes retry (prevent premature done)', () => {
   // (requeue + stronger prompt), then 'failed' if still empty. 'done' is
   // reserved for runs that produced something.
 
-  it('requeues one retry when hermes left the workdir clean, then completes', async () => {
-    // Attempt 1: clean workdir → requeue. Attempt 2: dirty → normal PR flow.
-    mocks.hasMeaningfulChanges.mockResolvedValueOnce(false).mockResolvedValue(true);
+  it('requeues one retry when lemcore left the workdir clean, then completes', async () => {
+    // Attempt 1: no changes → requeue. Attempt 2: changed → normal PR flow.
+    mocks.runLemcoreTask
+      .mockResolvedValueOnce({ changed: false })
+      .mockResolvedValue({ changed: true });
     mocks.taskFindUnique.mockResolvedValue({ status: 'queued' }); // settle check sees requeue
     await runTask('task-1');
 
-    // Two implementation passes (the retry), both hermes.
-    expect(mocks.runHermesTask).toHaveBeenCalledTimes(2);
-    // The retry prompt nudges the agent that the previous attempt was empty.
-    const retryPrompt = mocks.runHermesTask.mock.calls[1]?.[0]?.prompt ?? '';
-    expect(retryPrompt).toContain('previous attempt finished without changing a single file');
+    // Two implementation passes (the retry), both lemcore.
+    expect(mocks.runLemcoreTask).toHaveBeenCalledTimes(2);
     // The requeue happened: status flipped to 'queued' and the job re-enqueued.
     expect(mocks.setTaskStatus).toHaveBeenCalledWith('task-1', 'queued');
     expect(mocks.enqueueRunTask).toHaveBeenCalledWith('task-1');
+    expect(mocks.openPullRequest).toHaveBeenCalledTimes(1);
   });
 
   it('fails the task after the final attempt instead of marking done', async () => {
     // Both attempts leave the worktree clean and no PR exists: the run ends
     // 'failed' with a clear message — never 'done'.
-    mocks.hasMeaningfulChanges.mockResolvedValue(false);
+    mocks.runLemcoreTask.mockResolvedValue({ changed: false });
     mocks.taskFindUnique.mockResolvedValue({ status: 'queued' });
     await runTask('task-1');
 
-    expect(mocks.runHermesTask).toHaveBeenCalledTimes(2);
+    expect(mocks.runLemcoreTask).toHaveBeenCalledTimes(2);
     expect(mocks.setTaskStatus).not.toHaveBeenCalledWith('task-1', 'done');
     expect(mocks.setTaskStatus).toHaveBeenCalledWith(
       'task-1',
@@ -553,11 +470,11 @@ describe('runTask no-changes retry (prevent premature done)', () => {
   it('stands down when the requeued task is no longer claimable (cancelled mid-run)', async () => {
     // Attempt 1 requeues; by the settle check the task left the claimable
     // states (user cancelled) — the retry must not run.
-    mocks.hasMeaningfulChanges.mockResolvedValueOnce(false);
+    mocks.runLemcoreTask.mockResolvedValue({ changed: false });
     mocks.taskFindUnique.mockResolvedValue({ status: 'failed' }); // cancelled → failed
     await runTask('task-1');
 
-    expect(mocks.runHermesTask).toHaveBeenCalledTimes(1);
+    expect(mocks.runLemcoreTask).toHaveBeenCalledTimes(1);
     expect(mocks.notifyTaskCompleted).not.toHaveBeenCalled();
   });
 });
@@ -593,14 +510,14 @@ describe('runTask workdir retention', () => {
   });
 
   it('removes the workdir when the run fails', async () => {
-    mocks.runHermesTask.mockRejectedValue(new Error('agent crashed'));
+    mocks.runLemcoreTask.mockRejectedValue(new Error('agent crashed'));
     mocks.taskFindUnique.mockResolvedValue({ status: 'failed' });
     await runTask('task-1');
 
     expect(mocks.setTaskStatus).toHaveBeenCalledWith(
       'task-1',
       'failed',
-      expect.objectContaining({ error: 'recorded failure' }),
+      expect.objectContaining({ errorCode: expect.any(String) }),
     );
     expect(mocks.cleanupWorkdir).toHaveBeenCalledWith(
       path.join('/tmp/test-workdirs', 'task-1'),

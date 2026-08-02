@@ -5,6 +5,7 @@ import {
   BRANCH_SLUG_REPLY,
   COMMIT_MESSAGE_REPLY,
   completionContent,
+  completionResponse,
   messageText,
   // The router is a plain .mjs fixture module shared with the container
   // image (tests/e2e/gitstub/Dockerfile COPYs it); it has no type
@@ -80,5 +81,66 @@ describe('e2e mock LLM scenario router', () => {
   it('falls back to the fixture for empty/missing messages', () => {
     expect(completionContent([], fixture)).toBe(fixture);
     expect(completionContent(undefined, fixture)).toBe(fixture);
+  });
+});
+
+describe('e2e mock LLM lemcore routing (function-calling)', () => {
+  it('first turn with tools gets a write_file tool call for the smoke file', () => {
+    const routed = completionResponse([userMessage('Add the e2e smoke marker file.')], true, fixture);
+    expect(routed.type).toBe('tool_calls');
+    expect(routed.name).toBe('write_file');
+    expect(routed.arguments.path).toBe('E2E_SMOKE.md');
+    expect(routed.arguments.content).toContain('e2e smoke run');
+  });
+
+  it('routes the review-fix prompt (with tools) to the fix file', () => {
+    const routed = completionResponse(
+      [userMessage('# Original task\nx\n\n# Code review feedback\nchange it')],
+      true,
+      fixture,
+      fixFixture,
+    );
+    expect(routed.type).toBe('tool_calls');
+    expect(routed.arguments.path).toBe('E2E_REVIEW_FIX.md');
+    expect(routed.arguments.content).toContain('addressing a human review comment');
+  });
+
+  it('routes buildAgentFixPrompt (review loop + address-review) to the fix file', () => {
+    // The lemcore fix iteration's prompt has no '# Code review feedback'
+    // heading — its marker is the 'requested changes' line.
+    const routed = completionResponse(
+      [userMessage('# Original task\nx\n\nThe review of your implementation requested changes. Address every issue below.')],
+      true,
+      fixture,
+      fixFixture,
+    );
+    expect(routed.type).toBe('tool_calls');
+    expect(routed.arguments.path).toBe('E2E_REVIEW_FIX.md');
+  });
+
+  it('answers with plain content once a tool result is in the transcript', () => {
+    const routed = completionResponse(
+      [userMessage('Add the file'), { role: 'tool', content: 'wrote 42 chars' }],
+      true,
+      fixture,
+    );
+    expect(routed.type).toBe('content');
+  });
+
+  it('answers the pre-flight and digest prompts with plain content (never tool calls)', () => {
+    const preflight = completionResponse(
+      [userMessage('Decide whether a coding task still needs implementation')],
+      true,
+      fixture,
+    );
+    expect(preflight.type).toBe('content');
+    expect(preflight.content).toContain('IMPLEMENT');
+    const digest = completionResponse(
+      [userMessage('Write a concise architecture digest for the repository x')],
+      true,
+      fixture,
+    );
+    expect(digest.type).toBe('content');
+    expect(digest.content).toContain('Repository digest');
   });
 });

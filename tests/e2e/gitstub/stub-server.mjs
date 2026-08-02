@@ -14,7 +14,7 @@ import { createServer } from 'node:http';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
-import { completionContent } from './llm-router.mjs';
+import { completionResponse } from './llm-router.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const CHANGES_FIXTURE = readFileSync(path.join(HERE, 'llm-fixture.json'), 'utf8').trim();
@@ -47,7 +47,22 @@ async function llmHandler(req, res) {
   } catch {
     return sendJson(res, 400, { error: 'invalid JSON body' });
   }
-  const content = completionContent(body.messages ?? [], CHANGES_FIXTURE, FIX_FIXTURE);
+  const hasTools = Array.isArray(body.tools) && body.tools.length > 0;
+  const routed = completionResponse(body.messages ?? [], hasTools, CHANGES_FIXTURE, FIX_FIXTURE);
+  const message =
+    routed.type === 'tool_calls'
+      ? {
+          role: 'assistant',
+          content: null,
+          tool_calls: [
+            {
+              id: 'call_e2e_stub_1',
+              type: 'function',
+              function: { name: routed.name, arguments: JSON.stringify(routed.arguments) },
+            },
+          ],
+        }
+      : { role: 'assistant', content: routed.content };
   return sendJson(res, 200, {
     id: 'chatcmpl-e2e-stub',
     object: 'chat.completion',
@@ -56,8 +71,8 @@ async function llmHandler(req, res) {
     choices: [
       {
         index: 0,
-        message: { role: 'assistant', content },
-        finish_reason: 'stop',
+        message,
+        finish_reason: routed.type === 'tool_calls' ? 'tool_calls' : 'stop',
       },
     ],
     usage: { prompt_tokens: 42, completion_tokens: 17, total_tokens: 59 },
