@@ -220,6 +220,13 @@ model Repository {
   // refreshed on every repo sync from the provider root listing; null until
   // the first successful detection (see lib/repo-platform.ts).
   platform      String?
+  // Repo context digest: an LLM-written architecture map of the default
+  // branch, regenerated automatically when a run observes a new default
+  // HEAD (contextDigestSha). Injected into every task prompt so the agent
+  // starts with repo knowledge instead of exploring from zero.
+  contextDigest    String?
+  contextDigestSha String?
+  contextDigestAt  DateTime?
   llmConfigId   String?
   // LLM config used by the review-pr job (review + fix iterations); null =
   // the standard resolution (task → repo llmConfigId → user default).

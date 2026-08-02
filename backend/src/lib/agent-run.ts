@@ -14,6 +14,7 @@ import {
 } from './agent-git.js';
 import { hasMeaningfulChanges } from './workdir-changes.js';
 import { pushTaskBranch, recordChangedPaths } from './agent-publish.js';
+import { ensureRepoDigest, withRepoDigest } from './repo-digest.js';
 import {
   buildPrBody,
   buildSkillsSection,
@@ -108,13 +109,8 @@ async function logContextManifest(
   files: Array<{ path: string; chars: number }>,
   totalChars: number,
 ): Promise<void> {
-  for (const file of files) {
-    await logEvent(taskId, `read ${file.path} (${file.chars} chars)`);
-  }
-  await logEvent(
-    taskId,
-    `repository context ready: ${files.length} key file(s), ${totalChars} chars`,
-  );
+  for (const f of files) await logEvent(taskId, `read ${f.path} (${f.chars} chars)`);
+  await logEvent(taskId, `repository context ready: ${files.length} key file(s), ${totalChars} chars`);
 }
 
 // Resolves the task's skills to a system-prompt section; logs which skills
@@ -140,7 +136,10 @@ async function proposeTaskChanges(
   );
   await logContextManifest(task.id, files, repoContext.length);
   const skillsSection = await taskSkillsSection(task);
-  const result = await requestChanges(rt, task, repoContext, undefined, skillsSection);
+  // Repo context digest (one per default-branch HEAD): the model starts with
+  // an architecture map instead of exploring from zero.
+  const context = withRepoDigest(repoContext, task.repository.contextDigest);
+  const result = await requestChanges(rt, task, context, undefined, skillsSection);
   await logEvent(task.id, `LLM proposed ${result.changes.length} change(s): ${result.summary}`);
   await logEvent(task.id, `LLM usage so far: ~${rt.usedTokens} tokens`);
   return result;
@@ -255,6 +254,7 @@ async function prepareFreshRun(
   const branchName = emptyRepo
     ? await prepareEmptyRepoBranch(task)
     : await createTaskBranch(task, rt, workdir);
+  if (!emptyRepo) await ensureRepoDigest(task, rt, workdir);
   return { branchName, emptyRepo };
 }
 
