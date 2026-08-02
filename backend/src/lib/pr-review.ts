@@ -116,7 +116,7 @@ export function buildFixUserPrompt(input: {
 // ---------------------------------------------------------------------------
 // Human review feedback (address-review job): a human-written PR comment is
 // shaped into the same PrReview the self-review flow produces, so the fix
-// machinery (buildHermesFixPrompt / buildFixUserPrompt) is reused verbatim.
+// machinery (buildAgentFixPrompt / buildFixUserPrompt) is reused verbatim.
 // ---------------------------------------------------------------------------
 
 const MAX_HUMAN_COMMENT_CHARS = 4_000;
@@ -154,9 +154,9 @@ export function reviewFromHumanComment(comment: {
 
 // Verdict file the hermes review run writes into the workdir. Read and
 // deleted by agent-review.ts before any fix commit so it never ships.
-export const HERMES_REVIEW_FILENAME = '.lemniscate-review.json';
+export const AGENT_REVIEW_FILENAME = '.lemniscate-review.json';
 
-export function buildHermesReviewPrompt(input: {
+export function buildAgentReviewPrompt(input: {
   taskTitle: string;
   taskPrompt: string | null;
   baseBranch: string;
@@ -172,21 +172,21 @@ export function buildHermesReviewPrompt(input: {
     'Steps:',
     `1. Inspect the changes: run \`git diff origin/${input.baseBranch} HEAD\` (two dots — the clone is shallow, there is no merge base) and read the affected files.`,
     '2. Decide whether the implementation correctly and completely implements the task: correctness, missing pieces, regressions, unrelated changes.',
-    `3. Write your verdict as JSON to the file ${HERMES_REVIEW_FILENAME} with exactly this shape:`,
+    `3. Write your verdict as JSON to the file ${AGENT_REVIEW_FILENAME} with exactly this shape:`,
     '{"verdict": "approve" | "changes_requested", "summary": "<one paragraph>", "issues": [{"path": "<file>", "severity": "blocking" | "nit", "comment": "<what must change>"}]}',
     'Use "approve" only when the change is correct, minimal, and safe to merge. Omit "path" for general issues. Use "issues": [] when approving.',
     REVIEW_SEVERITY_RULES,
     PROMPT_INJECTION_GUARD,
     SECRETS_HANDLING_GUARD,
     '',
-    `Do NOT git commit, push, or create branches. Do NOT modify any file other than ${HERMES_REVIEW_FILENAME}.`,
+    `Do NOT git commit, push, or create branches. Do NOT modify any file other than ${AGENT_REVIEW_FILENAME}.`,
     ...(input.systemPromptExtra
       ? ['', 'Additional instructions from the repository owner:', input.systemPromptExtra]
       : []),
   ].join('\n');
 }
 
-export function buildHermesFixPrompt(input: {
+export function buildAgentFixPrompt(input: {
   taskTitle: string;
   taskPrompt: string | null;
   review: PrReview;
@@ -214,7 +214,7 @@ export function buildHermesFixPrompt(input: {
   ].join('\n');
 }
 
-export function buildHermesConflictPrompt(input: {
+export function buildAgentConflictPrompt(input: {
   baseBranch: string;
   headBranch: string;
   conflictedPaths: string[];
@@ -240,7 +240,7 @@ export function buildHermesConflictPrompt(input: {
   ].join('\n');
 }
 
-export function buildHermesCiFixPrompt(input: {
+export function buildAgentCiFixPrompt(input: {
   taskTitle: string;
   baseBranch: string;
   headBranch: string;

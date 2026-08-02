@@ -12,9 +12,9 @@ import { continueOrFinishReview } from '../review-finish.js';
 import { fetchReviewDiff, requestReview } from '../agent-review.js';
 import { runLemcoreLoop } from './loop.js';
 import {
-  buildHermesReviewPrompt,
-  buildHermesFixPrompt,
-  HERMES_REVIEW_FILENAME,
+  buildAgentReviewPrompt,
+  buildAgentFixPrompt,
+  AGENT_REVIEW_FILENAME,
   parsePrReview,
   type PrReview,
 } from '../pr-review.js';
@@ -40,7 +40,7 @@ export async function runLemcoreReview(
   );
   await logEvent(task.id, `reviewing pull request (attempt ${attempt + 1}) with lemcore`);
 
-  const prompt = buildHermesReviewPrompt({
+  const prompt = buildAgentReviewPrompt({
     taskTitle: task.title,
     taskPrompt: task.prompt,
     baseBranch: task.repository.defaultBranch,
@@ -68,7 +68,7 @@ export async function runLemcoreReview(
   });
 
   let review: PrReview | null = null;
-  const reviewFile = path.join(workdir, HERMES_REVIEW_FILENAME);
+  const reviewFile = path.join(workdir, AGENT_REVIEW_FILENAME);
   try {
     const raw = await fs.readFile(reviewFile, 'utf8');
     review = parsePrReview(raw);
@@ -76,7 +76,7 @@ export async function runLemcoreReview(
   } catch {
     await logEvent(
       task.id,
-      `no valid ${HERMES_REVIEW_FILENAME} from lemcore, falling back to a direct LLM review`,
+      `no valid ${AGENT_REVIEW_FILENAME} from lemcore, falling back to a direct LLM review`,
     );
     review = await requestReview(rt, task, await fetchReviewDiff(task, headBranch));
   }
@@ -101,7 +101,7 @@ async function runLemcoreFixIteration(
   auth: GitAuth,
 ): Promise<void> {
   await logEvent(task.id, 'applying review fixes with the lemcore agent');
-  const prompt = buildHermesFixPrompt({
+  const prompt = buildAgentFixPrompt({
     taskTitle: task.title,
     taskPrompt: task.prompt,
     review,

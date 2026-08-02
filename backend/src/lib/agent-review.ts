@@ -30,7 +30,7 @@ import { hasMeaningfulChanges } from './workdir-changes.js';
 import { getPullRequestDiff } from './pull-requests.js';
 import {
   buildFixUserPrompt,
-  HERMES_REVIEW_FILENAME,
+  AGENT_REVIEW_FILENAME,
   type PrReview,
 } from './pr-review.js';
 import { requestReviewWithRetry } from './review-request.js';
@@ -241,7 +241,7 @@ async function executeHermesReview(
   if (!review) {
     await logEvent(
       task.id,
-      `no valid ${HERMES_REVIEW_FILENAME} from hermes, falling back to a direct LLM review`,
+      `no valid ${AGENT_REVIEW_FILENAME} from hermes, falling back to a direct LLM review`,
     );
     review = await requestReview(rt, task, await fetchReviewDiff(task, headBranch));
   }

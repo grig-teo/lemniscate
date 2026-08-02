@@ -90,7 +90,7 @@ vi.mock('../src/lib/prisma.js', () => ({
 
 // pr-review.js (parsePrReview, prompt builders) is intentionally NOT mocked:
 // verdict parsing is the behavior under test.
-import { HERMES_REVIEW_FILENAME } from '../src/lib/pr-review.js';
+import { AGENT_REVIEW_FILENAME } from '../src/lib/pr-review.js';
 import { reviewTask } from '../src/lib/agent-review.js';
 
 const BRANCH = 'lemniscate/feature-x';
@@ -141,7 +141,7 @@ function hermesWritesReviewFile(content: string | null) {
   return async (opts: { workdir: string }) => {
     if (content === null) return;
     await fs.mkdir(opts.workdir, { recursive: true });
-    await fs.writeFile(path.join(opts.workdir, HERMES_REVIEW_FILENAME), content);
+    await fs.writeFile(path.join(opts.workdir, AGENT_REVIEW_FILENAME), content);
   };
 }
 
@@ -443,7 +443,7 @@ describe('reviewTask on the hermes executor', () => {
     expect(opts.timeoutMs).toBe(45 * 60_000);
     expect(opts.prompt).toContain('Add feature X');
     // Leftover verdict files would dirty the workdir and ride into the fix commit.
-    expect(existsSync(path.join(workdirFor(0), HERMES_REVIEW_FILENAME))).toBe(false);
+    expect(existsSync(path.join(workdirFor(0), AGENT_REVIEW_FILENAME))).toBe(false);
     expect(mocks.llmCall).not.toHaveBeenCalled(); // no fallback needed
     expect(mocks.enqueueMergeGate).toHaveBeenCalledWith('task-1', 0, 0);
   });

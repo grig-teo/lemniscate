@@ -10,9 +10,9 @@ import {
 import type { LlmRuntime, TaskWithRepo } from './agent-runtime.js';
 import { runHermesTask } from './hermes-runner.js';
 import {
-  buildHermesFixPrompt,
-  buildHermesReviewPrompt,
-  HERMES_REVIEW_FILENAME,
+  buildAgentFixPrompt,
+  buildAgentReviewPrompt,
+  AGENT_REVIEW_FILENAME,
   parsePrReview,
   type PrReview,
 } from './pr-review.js';
@@ -33,7 +33,7 @@ function hermesLlm(rt: LlmRuntime) {
 // Reads and ALWAYS deletes the verdict file — left behind, it would dirty
 // the workdir and ride along into the fix commit.
 async function readHermesReviewFile(workdir: string): Promise<PrReview | null> {
-  const file = path.join(workdir, HERMES_REVIEW_FILENAME);
+  const file = path.join(workdir, AGENT_REVIEW_FILENAME);
   const text = await fs.readFile(file, 'utf8').catch(() => null);
   await fs.rm(file, { force: true });
   if (!text) return null;
@@ -57,7 +57,7 @@ export async function requestReviewViaHermes(
   await logEvent(task.id, 'reviewing pull request with the hermes agent');
   await runHermesTask({
     workdir,
-    prompt: buildHermesReviewPrompt({
+    prompt: buildAgentReviewPrompt({
       taskTitle: task.title,
       taskPrompt: task.prompt,
       baseBranch: task.repository.defaultBranch,
@@ -87,7 +87,7 @@ export async function runHermesFixIteration(
   await logEvent(task.id, 'applying review fixes with the hermes agent');
   await runHermesTask({
     workdir,
-    prompt: buildHermesFixPrompt({
+    prompt: buildAgentFixPrompt({
       taskTitle: task.title,
       taskPrompt: task.prompt,
       review,

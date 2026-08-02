@@ -29,7 +29,7 @@ import { notify } from './notifications.js';
 // follow-up commit on the same branch. Enqueued by the webhook receiver
 // (pr_review_comment) and the pr-state-sync poll fallback, gated per repo by
 // autoAddressReview (default off). The fix itself is the review loop's own
-// machinery (applyReviewFixes → buildHermesFixPrompt), so the agent treats
+// machinery (applyReviewFixes → buildAgentFixPrompt), so the agent treats
 // human feedback exactly like its own review's change requests.
 
 // The kept run workdir (<AGENT_WORKDIR>/<taskId>) survives while the task

@@ -106,6 +106,12 @@ const CLEAN_CODE_LINES = [
   '- Flag any tradeoffs made (e.g., performance vs. readability) instead of silently picking one.',
 ];
 
+const COMPLETION_SUMMARY_LINES = [
+  'Completion summary:',
+  '- When the task is done, end the run with a completion summary as your final reply: describe in detail what was implemented, fixed, or otherwise changed — the goal, the main changes and where they were made, and how they were verified (tests, builds, checks run).',
+  '- This final reply is the closing entry of the agent console log, so write it as a clear, self-contained report a reader can understand without scrolling back through the whole run.',
+];
+
 const COMMIT_LINES = [
   'Commit and push after each TODO mark:',
   '- You run on a task branch that backs an open pull request. After marking a TODO item done, check `git status --porcelain`; if that step changed files, stage them and make a commit with a descriptive message, then `git push` so the open pull request updates.',
@@ -139,6 +145,8 @@ export function lemcoreSystemPrompt(): string {
     ...GOAL_LINES,
     '',
     ...CLEAN_CODE_LINES,
+    '',
+    ...COMPLETION_SUMMARY_LINES,
     '',
     ...PLAN_LINES,
     '',

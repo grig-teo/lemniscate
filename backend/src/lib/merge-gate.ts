@@ -32,7 +32,7 @@ import { enqueueMergeGate } from './proposal-scheduler.js';
 import { queueDeployment } from './deploy/deploy-service.js';
 import { prisma } from './prisma.js';
 import { mergePullRequest, pullRequestChecksStatus, type PrChecksStatus } from './pull-requests.js';
-import { buildHermesCiFixPrompt } from './pr-review.js';
+import { buildAgentCiFixPrompt } from './pr-review.js';
 import { setTaskStatus } from './task-events.js';
 import { errorMessage } from './utils.js';
 
@@ -68,7 +68,7 @@ async function runCiFixViaHermes(ctx: GateContext): Promise<void> {
     secrets,
     auth,
   );
-  const ciPrompt = buildHermesCiFixPrompt({
+  const ciPrompt = buildAgentCiFixPrompt({
     taskTitle: task.title,
     baseBranch: task.repository.defaultBranch,
     headBranch,
