@@ -2,8 +2,7 @@
 // loop-tool-runner.ts (the tool dispatcher). Extracted from tools.ts to keep
 // that module under the 300-line guard. Single source of truth for edit
 // validation: search-found + exactly-one-match + literal $ handling.
-import { promises as fs } from 'node:fs';
-import { jailPath } from './tools.js';
+import { jailPath, readFileTarget } from './tools.js';
 import { checkpointEdit } from './edit-checkpoint.js';
 
 /**
@@ -17,7 +16,7 @@ export async function prepareEditContent(
   compute: (original: string) => string,
 ): Promise<{ originalContent: string; newContent: string }> {
   const absPath = jailPath(workdir, relPath);
-  const originalContent = await fs.readFile(absPath, 'utf8');
+  const originalContent = await readFileTarget(absPath, relPath, 'edit_file');
   const newContent = compute(originalContent);
   checkpointEdit(workdir, relPath, originalContent);
   return { originalContent, newContent };
