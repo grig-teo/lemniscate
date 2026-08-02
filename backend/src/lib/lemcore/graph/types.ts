@@ -69,6 +69,11 @@ export interface LemcoreCodebaseGraph {
   nodes: GraphNode[];
   edges: GraphEdge[];
   files: string[];
+  /**
+   * Symbol names per file path (from the fallback scan's regex extraction).
+   * Used by buildRepoMap to show key definitions in the repo map.
+   */
+  fileSymbols?: Map<string, string[]>;
   /** Compact architecture / status text from the tool, when available. */
   architectureText?: string;
   /** Max hop depth used when expanding neighborhoods (session default). */

@@ -6,6 +6,7 @@ import { loadTaskSkills, loadAgentsMdTemplate } from '../task-skills.js';
 import { toLemcoreSkills, buildSkillsPromptSection, type LemcoreSkill } from './skills.js';
 import type { LlmRuntime, TaskWithRepo } from '../agent-runtime.js';
 import { buildLemcoreImplContext } from './graph-context.js';
+import { buildRepoMap } from './repo-map.js';
 import { selectAgentsMd, readRootAgentsMd } from '../repo-context.js';
 import { clearGraphSession } from './graph/session.js';
 import { scanRepositoryGraph } from './graph-scan.js';
@@ -44,12 +45,14 @@ export function appendGraphContext(
   basePrompt: string,
   scanSummary: string,
   implContext: string,
+  repoMap = '',
 ): string {
   const graphBlock = implContext.trim() || scanSummary.trim();
+  const mapBlock = repoMap.trim() ? `${repoMap.trim()}\n\n` : '';
   return [
     basePrompt.trimEnd(),
     '',
-    graphBlock,
+    mapBlock + graphBlock,
     '',
     'Use the codebase graph summary above for navigation. Prefer graph_* tools and selective file reads over dumping large source corpora.',
   ].join('\n');
@@ -130,7 +133,15 @@ async function prepareGraphBackedPrompt(
     );
   }
   const basePrompt = promptOverride ?? lemcorePrompt(task, rt, resume);
-  return appendGraphContext(basePrompt, graphScan.summaryText, implContext.text);
+  // Repo map: a stable PageRank-ranked overview of the codebase (files +
+  // symbols). Prepend it to the graph block so the model always has a compact
+  // structural index, even before it calls any graph tool. Only meaningful for
+  // the fallback scan (which extracts symbols); code-review-graph source
+  // already ships its own architecture text.
+  const repoMap = graphScan.graph.fileSymbols
+    ? buildRepoMap(graphScan.graph)
+    : '';
+  return appendGraphContext(basePrompt, graphScan.summaryText, implContext.text, repoMap);
 }
 
 function loadResumeTranscript(
@@ -233,6 +244,11 @@ async function executeLemcoreTask(opts: {
     resumeTranscript,
     skillsSection,
     skills: lemcoreSkills,
+    // Implementation runs gate on the project's tests before accepting the
+    // final reply; promptOverride runs (CI-fix, rebase) gate too — they're
+    // implementation-adjacent. Review runs skip it (they finish via the
+    // review-file path and systemPromptOverride).
+    verifyGate: true,
   });
 
   // Attachments/skills and agent scratch must not count as a produced change:

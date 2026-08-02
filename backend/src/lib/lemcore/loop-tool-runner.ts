@@ -4,11 +4,11 @@ import {
   toolReadFile,
   toolWriteFile,
   toolBash,
-  applySingleEdit,
-  applyMultiEdit,
+  toolThink,
   type ToolResult,
   type ToolName,
 } from './tools.js';
+import { applySingleEdit, applyMultiEdit } from './edit-helpers.js';
 import { runEdit } from './edit-router.js';
 import { toolUndoEdit } from './edit-checkpoint.js';
 import { toolTodoWrite } from './todo-store.js';
@@ -99,6 +99,8 @@ export async function executeTool(
       return toolUndoEdit(workdir, String(args.path ?? ''), secrets);
     case 'todo_write':
       return toolTodoWrite(workdir, String(args.content ?? ''), secrets);
+    case 'think':
+      return toolThink(String(args.thought ?? ''));
     case 'spawn_subagent': {
       const { spawnSubagentTool } = await import('./subagent.js');
       return spawnSubagentTool(multiSampleCtx, workdir, secrets, args);
