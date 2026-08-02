@@ -35,7 +35,7 @@ export async function runEdit(
   if (ctx) {
     return verifyEditWithFallback({
       workdir, rt: ctx.rt, taskId: ctx.taskId, toolCall: ctx.toolCall,
-      originalContent, primaryNewContent: newContent, secrets,
+      relPath, originalContent, primaryNewContent: newContent, secrets,
     });
   }
   return lintAndMaybeRevert(workdir, relPath, originalContent, newContent, secrets, startMs, toolName);
